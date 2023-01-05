@@ -5,6 +5,7 @@ import jax.numpy as jnp
 from .frame import Frame
 from .module import Module
 
+
 class Scene(Module):
     frame: Frame = eqx.static_field()
     sources: list
@@ -14,9 +15,9 @@ class Scene(Module):
         self.sources = sources
 
     def __call__(self):
-        model = jnp.zeros((5, 30, 30))#tuple(_.item() for _ in self.frame.bbox.shape))
+        model = jnp.zeros(self.frame.bbox.shape)
         # TODO!!!
-        #def insert_model(k, model):
+        # def insert_model(k, model):
         #    model_ = self.sources[k]() # only model inside its bbox
         # model = jax.lax.dynamic_update_slice(model, model_, self.sources[k].bbox.shape)
         # model = jax.lax.fori_loop(0, len(self.sources), insert_model, model)

@@ -1,6 +1,8 @@
 import equinox as eqx
+
 from .bbox import Box
 from .module import Parameter, Module
+
 
 class Morphology(Module):
     bbox: Box = eqx.static_field()
@@ -8,7 +10,7 @@ class Morphology(Module):
 
     def set_center(self, center):
         object.__setattr__(self, 'center', center)
-        center_ = center.value.astype(int)
+        center_ = tuple(_.item() for _ in center.value.astype(int))
         self.bbox.set_center(center_)
 
 
