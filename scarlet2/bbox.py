@@ -207,7 +207,7 @@ class Box:
         return hash((self.shape, self.origin))
 
 
-def overlapped_slices(bbox1, bbox2):
+def overlap_slices(bbox1, bbox2, return_boxes=False):
     """Slices of bbox1 and bbox2 that overlap
 
     Parameters
@@ -225,6 +225,8 @@ def overlapped_slices(bbox1, bbox2):
     overlap = bbox1 & bbox2
     _bbox1 = overlap - bbox1.origin
     _bbox2 = overlap - bbox2.origin
+    if return_boxes:
+        return _bbox1, _bbox2
     slices = (
         _bbox1.slices,
         _bbox2.slices,

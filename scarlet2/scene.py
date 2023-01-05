@@ -2,6 +2,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from .bbox import overlap_slices
 from .frame import Frame
 from .module import Module
 
@@ -16,11 +17,15 @@ class Scene(Module):
 
     def __call__(self):
         model = jnp.zeros(self.frame.bbox.shape)
-        # TODO!!!
-        # def insert_model(k, model):
-        #    model_ = self.sources[k]() # only model inside its bbox
-        # model = jax.lax.dynamic_update_slice(model, model_, self.sources[k].bbox.shape)
-        # model = jax.lax.fori_loop(0, len(self.sources), insert_model, model)
         for source in self.sources:
-            model = jax.lax.dynamic_update_slice(model, source(), source.bbox.shape)
+            model_ = source()
+
+            # cut out region from model, add single source model
+            bbox, bbox_ = overlap_slices(self.frame.bbox, source.bbox, return_boxes=True)
+            sub_model = jax.lax.dynamic_slice(model, bbox.start, bbox.shape)
+            sub_model_ = jax.lax.dynamic_slice(model_, bbox_.start, bbox_.shape)
+            sub_model += sub_model_
+
+            # add model_ back in full model
+            model = jax.lax.dynamic_update_slice(model, sub_model, bbox.start)
         return model
