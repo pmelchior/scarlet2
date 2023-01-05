@@ -8,7 +8,7 @@ class Morphology(Module):
 
     def set_center(self, center):
         object.__setattr__(self, 'center', center)
-        center_ = tuple(p.item() for p in center.value.astype(int))
+        center_ = center.value.astype(int)
         self.bbox.set_center(center_)
 
 

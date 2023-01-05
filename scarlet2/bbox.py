@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import jax
 import jax.numpy as jnp
 
 @dataclass
@@ -16,15 +17,14 @@ class Box:
     - 3D shapes denote (Channels, Height, Width)
     """
 
-    # TODO: implement as integer jax arrays to simplify arithmetic
-    shape: tuple
-    origin: tuple
+    shape: jax.numpy.ndarray
+    origin: jax.numpy.ndarray
 
     def __init__(self, shape, origin=None):
-        self.shape = tuple(shape)
+        self.shape = jnp.array(shape).astype(int)
         if origin is None:
-            origin = (0,) * len(shape)
-        self.origin = tuple(origin)
+            origin = jnp.zeros(len(self.shape), dtype=int)
+        self.origin = jnp.array(origin)
 
     @staticmethod
     def from_bounds(*bounds):
@@ -40,8 +40,8 @@ class Box:
         bbox: :class:`scarlet.bbox.Box`
             A new box bounded by the input bounds.
         """
-        shape = tuple(max(0, cmax - cmin) for cmin, cmax in bounds)
-        origin = (cmin for cmin, cmax in bounds)
+        shape = jnp.array([max(0, cmax - cmin) for cmin, cmax in bounds])
+        origin = jnp.array([cmin for cmin, cmax in bounds])
         return Box(shape, origin=origin)
 
     def contains(self, p):
@@ -71,38 +71,33 @@ class Box:
     def stop(self):
         """Tuple of stop coordinates
         """
-        return tuple(o + s for o, s in zip(self.origin, self.shape))
+        return self.origin + self.shape
 
     @property
     def center(self):
         """Tuple of center coordinates
         """
-        return tuple(o + s / 2 for o, s in zip(self.origin, self.shape))
+        return self.origin + self.shape / 2
 
     @property
     def bounds(self):
         """Bounds of the box
         """
-        return tuple((o, o + s) for o, s in zip(self.origin, self.shape))
-
-    @property
-    def slices(self):
-        """Bounds of the box as slices
-        """
-        return tuple([slice(o, o + s) for o, s in zip(self.origin, self.shape)])
+        return jnp.stack((self.start, self.stop), axis=1)
 
     def set_center(self, pos):
         """Center box at given position
         """
-        self.origin = tuple(p - c for p, c in zip(pos, self.center))
+        self.origin = pos - self.center
 
-    def grow(self, radius):
-        """Grow the Box by the given radius in each direction
+    def grow(self, delta):
+        """Grow the Box by the given delta in each direction
         """
-        if not hasattr(radius, "__iter__"):
-            radius = [radius]*self.D
-        origin = tuple([self.origin[d]-radius[d] for d in range(self.D)])
-        shape = tuple([self.shape[d]+2*radius[d] for d in range(self.D)])
+        if not hasattr(delta, "__iter__"):
+            radius = [delta] * self.D
+        delta = jnp.array(delta)
+        origin = self.origin - delta
+        shape = self.shape + 2*delta
         return Box(shape, origin=origin)
 
     def __or__(self, other):
@@ -155,42 +150,33 @@ class Box:
         return Box.from_bounds(*bounds)
 
     def __getitem__(self, i):
-        s_ = self.shape[i]
-        o_ = self.origin[i]
-        if not hasattr(s_, "__iter__"):
-            s_ = (s_,)
-            o_ = (o_,)
-        return Box(s_, origin=o_)
+        return Box(self.shape[i], origin=self.origin[i])
 
     def __repr__(self):
         result = "<Box shape={0}, origin={1}>"
         return result.format(self.shape, self.origin)
 
     def __iadd__(self, offset):
-        if not hasattr(offset, "__iter__"):
-            offset = (offset,) * self.D
-        self.origin = tuple([a + o for a, o in zip(self.origin, offset)])
+        self.origin = self.origin + offset
         return self
 
     def __add__(self, offset):
-        return self.copy().__iadd__(offset)
+        return self.__copy__().__iadd__(offset)
 
     def __isub__(self, offset):
-        if not hasattr(offset, "__iter__"):
-            offset = (offset,) * self.D
-        self.origin = tuple([a - o for a, o in zip(self.origin, offset)])
+        self.origin = self.origin - offset
         return self
 
     def __sub__(self, offset):
-        return self.copy().__isub__(offset)
+        return self.__copy__().__isub__(offset)
 
     def __imatmul__(self, bbox):
-        bounds = self.bounds + bbox.bounds
+        bounds = jnp.concatenate((self.bounds, bbox.bounds))
         self = Box.from_bounds(*bounds)
         return self
 
     def __matmul__(self, bbox):
-        return self.copy().__imatmul__(bbox)
+        return self.__copy__().__imatmul__(bbox)
 
     def __copy__(self):
         return Box(self.shape, origin=self.origin)
@@ -205,28 +191,3 @@ class Box:
 
     def __hash__(self):
         return hash((self.shape, self.origin))
-
-
-def overlapped_slices(bbox1, bbox2):
-    """Slices of bbox1 and bbox2 that overlap
-
-    Parameters
-    ----------
-    bbox1: `~scarlet.bbox.Box`
-    bbox2: `~scarlet.bbox.Box`
-
-    Returns
-    -------
-    slices: tuple of slices
-        The slice of an array bounded by `bbox1` and
-        the slice of an array bounded by `bbox2` in the
-        overlapping region.
-    """
-    overlap = bbox1 & bbox2
-    _bbox1 = overlap - bbox1.origin
-    _bbox2 = overlap - bbox2.origin
-    slices = (
-        _bbox1.slices,
-        _bbox2.slices,
-    )
-    return slices
