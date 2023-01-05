@@ -77,7 +77,7 @@ class Box:
     def center(self):
         """Tuple of center coordinates
         """
-        return self.origin + self.shape / 2
+        return self.origin + self.shape // 2
 
     @property
     def bounds(self):
@@ -190,4 +190,4 @@ class Box:
         return self.shape == other.shape and self.origin == other.origin
 
     def __hash__(self):
-        return hash((self.shape, self.origin))
+        return hash(tuple(_.item() for _ in self.shape) + tuple(_.item() for _ in self.origin))

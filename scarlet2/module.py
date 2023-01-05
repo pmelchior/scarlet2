@@ -30,7 +30,7 @@ class Parameter(eqx.Module):
 class Module(eqx.Module):
     @property
     def parameters(self):
-        return tuple(p for p in self.tree_flatten()[0] if isinstance(p, Parameter))
+        return tuple(p for p in self.tree_flatten()[0] if isinstance(p, (Parameter, Module)))
 
     def log_prior(self):
         return sum(p.prior.log_prob(p.value) for p in self.parameters)
