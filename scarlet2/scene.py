@@ -13,10 +13,28 @@ class Scene(Module):
 
     def __init__(self, frame, sources):
         self.frame = frame
+        # TODO: scene does not report sources as parameters because pytrees treat lists as nodes, not leaves
         self.sources = sources
 
     def __call__(self):
         model = jnp.zeros(self.frame.bbox.shape)
+        # TODO: below does not work because one cannot access a list (self.sources) in jitted functions
+        # def insert_model(k, model):
+        #     source = self.sources[k]
+        #     model_ = source() # only model inside its bbox
+        #
+        #     # cut out region from model, add single source model
+        #     bbox, bbox_ = overlap_slices(self.frame.bbox, source.bbox, return_boxes=True)
+        #     sub_model = jax.lax.dynamic_slice(model, bbox.start, bbox.shape)
+        #     sub_model_ = jax.lax.dynamic_slice(model_, bbox_.start, bbox_.shape)
+        #     sub_model += sub_model_
+        #
+        #     # add model_ back in full model
+        #     model = jax.lax.dynamic_update_slice(model, sub_model, bbox.start)
+        #     return model
+        #
+        # model = jax.lax.fori_loop(0, 2, insert_model, model)
+
         for source in self.sources:
             model_ = source()
 

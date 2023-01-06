@@ -1,13 +1,13 @@
-import equinox as eqx
 import jax
-from .bbox import Box
+
 from .module import Module, Parameter
-#from .morphology import Morphology
-#from .spectrum import Spectrum
+from .morphology import Morphology
+from .spectrum import Spectrum
+
 
 class Source(Module):
-    spectrum: Parameter
-    morphology: Parameter
+    spectrum: Spectrum
+    morphology: Morphology
 
     def __init__(self, center, spectrum, morphology):
         self.spectrum = spectrum
