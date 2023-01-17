@@ -33,8 +33,7 @@ def transform(image, fft_shape, axes=None):
         raise ValueError(msg.format(fft_shape, axes))
 
     image = _pad(image, fft_shape, axes)
-    # TODO: can we avoid the shifting operation?
-    image_fft = jnp.fft.rfftn(jnp.fft.ifftshift(image, axes), axes=axes)
+    image_fft = jnp.fft.rfftn(image, axes=axes)
     return image_fft
 
 
@@ -66,7 +65,6 @@ def inverse(image_fft, fft_shape, image_shape, axes=None):
 
     image = jnp.fft.irfftn(image_fft, fft_shape, axes=axes)
     # Shift the center of the image from the bottom left to the center
-    # TODO: can we avoid the shifting operation?
     image = jnp.fft.fftshift(image, axes=axes)
     # Trim the image to remove the padding added
     # to reduce fft artifacts
@@ -122,17 +120,22 @@ def _kspace_op(image, kernel, f, padding=3, axes=None):
         except TypeError:
             axes = (axes,)
 
-    # TODO: allow image but esp kernel be given as FFT already
-    # needs to check that fft_shapes are the same
-    fft_shape = _get_fast_shape(image.shape, kernel.shape, padding=padding, axes=axes)
+    # assumes kernel FFT has been computed with large enough shape to cover also image
+    if kernel.dtype in (jnp.complex64, jnp.complex128):
+        fft_shape = [kernel.shape[ax] for ax in axes]
+        fft_shape[-1] = 2 * (fft_shape[-1] - 1)  # real-valued FFT has 1/2 of the frequencies
+        kernel_fft = kernel
+    else:
+        fft_shape = _get_fast_shape(image.shape, kernel.shape, padding=padding, axes=axes)
+        kernel_fft = transform(kernel, fft_shape, axes=axes)
+
     image_fft = transform(image, fft_shape, axes=axes)
-    kernel_fft = transform(kernel, fft_shape, axes=axes)
     image_fft_ = f(image_fft, kernel_fft)
     image_ = inverse(image_fft_, fft_shape, image.shape, axes=axes)
     return image_
 
 
-def _get_fast_shape(im_or_shape1, im_or_shape2, axes=None, padding=3, max=False):
+def _get_fast_shape(im_or_shape1, im_or_shape2, axes=None, padding=3, max_shape=False):
     """Return the fast fft shapes for each spatial axis
 
     Calculate the fast fft shape for each dimension in
@@ -163,7 +166,7 @@ def _get_fast_shape(im_or_shape1, im_or_shape2, axes=None, padding=3, max=False)
             axes = (axes,)
 
     # Set the combined shape based on the total dimensions
-    combine_shapes = lambda s1, s2: max(s1, s2) if max else s1 + s2
+    combine_shapes = lambda s1, s2: max(s1, s2) if max_shape else s1 + s2
     shape = [combine_shapes(shape1[ax], shape2[ax]) + padding for ax in axes]
     # Use the next fastest shape in each dimension
     # TODO: check what jnp actually uses for FFTs
