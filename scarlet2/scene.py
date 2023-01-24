@@ -22,6 +22,7 @@ class Scene(Module):
 
     def __call__(self):
         model = jnp.zeros(self.frame.bbox.shape)
+
         # TODO: below does not work because one cannot access a list (self.sources) in jitted functions
         # def insert_model(k, model):
         #     source = self.sources[k]

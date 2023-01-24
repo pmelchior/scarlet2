@@ -33,6 +33,7 @@ def transform(image, fft_shape, axes=None):
         raise ValueError(msg.format(fft_shape, axes))
 
     image = _pad(image, fft_shape, axes)
+    image = jnp.fft.ifftshift(image, axes)
     image_fft = jnp.fft.rfftn(image, axes=axes)
     return image_fft
 
@@ -72,7 +73,7 @@ def inverse(image_fft, fft_shape, image_shape, axes=None):
     return image
 
 
-def convolve(image, kernel, padding=3, axes=None):
+def convolve(image, kernel, padding=3, axes=None, fft_shape=None, return_fft=False):
     """Convolve image with a kernel
 
     Parameters
@@ -87,10 +88,11 @@ def convolve(image, kernel, padding=3, axes=None):
     axes: tuple or None
         Axes that contain the spatial information for the PSFs.
     """
-    return _kspace_op(image, kernel, operator.mul, padding=padding, axes=axes)
+    return _kspace_op(image, kernel, operator.mul, padding=padding, axes=axes, fft_shape=fft_shape,
+                      return_fft=return_fft)
 
 
-def deconvolve(image, kernel, padding=3, axes=None):
+def deconvolve(image, kernel, padding=3, axes=None, fft_shape=None, return_fft=False):
     """Deconvolve image with a kernel
 
     This is usually unstable. Treat with caution!
@@ -108,12 +110,13 @@ def deconvolve(image, kernel, padding=3, axes=None):
         Axes that contain the spatial information for the PSFs.
     """
 
-    return _kspace_op(image, kernel, operator.truediv, padding=padding, axes=axes)
+    return _kspace_op(image, kernel, operator.truediv, padding=padding, fft_shape=fft_shape, axes=axes,
+                      return_fft=return_fft)
 
 
-def _kspace_op(image, kernel, f, padding=3, axes=None):
+def _kspace_op(image, kernel, f, padding=3, axes=None, fft_shape=None, return_fft=False):
     if axes is None:
-        axes = range(len(image_fft.shape))
+        axes = range(len(image.shape))
     else:
         try:
             iter(axes)
@@ -126,11 +129,14 @@ def _kspace_op(image, kernel, f, padding=3, axes=None):
         fft_shape[-1] = 2 * (fft_shape[-1] - 1)  # real-valued FFT has 1/2 of the frequencies
         kernel_fft = kernel
     else:
-        fft_shape = _get_fast_shape(image.shape, kernel.shape, padding=padding, axes=axes)
+        if fft_shape is None:
+            fft_shape = _get_fast_shape(image.shape, kernel.shape, padding=padding, axes=axes)
         kernel_fft = transform(kernel, fft_shape, axes=axes)
 
     image_fft = transform(image, fft_shape, axes=axes)
     image_fft_ = f(image_fft, kernel_fft)
+    if return_fft:
+        return image_fft_
     image_ = inverse(image_fft_, fft_shape, image.shape, axes=axes)
     return image_
 
