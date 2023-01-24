@@ -4,7 +4,7 @@ from .frame import Frame
 from .module import Parameter, Module
 from .morphology import Morphology, ArrayMorphology
 from .observation import Observation
-from .psf import PSF, ArrayPSF
+from .psf import PSF, ArrayPSF, GaussianPSF
 from .scene import Scene
 from .source import Source
 from .spectrum import Spectrum, ArraySpectrum
