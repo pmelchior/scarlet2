@@ -17,10 +17,33 @@ class ArrayPSF(Parameter, PSF):
 
 
 class GaussianPSF(PSF):
-    sigma: (float, jnp.ndarray, Parameter)
-    center: (jnp.ndarray, Parameter)
+    sigma: Parameter
+    center: Parameter
     bbox: Box = eqx.static_field()
     integrate: bool = True
+
+    def __init__(self, sigma, center, bbox=None, integrate=True):
+
+        if not isinstance(sigma, Parameter):
+            sigma = Parameter(sigma, fixed=True)
+        self.sigma = sigma
+        if not isinstance(center, Parameter):
+            center = Parameter(center, fixed=True)
+        self.center = center
+
+        if bbox is None:
+            sigmas = self.sigma()
+            max_sigma = jnp.max(sigmas)
+            size = 10 * max_sigma
+            if size % 2 == 0:
+                size += 1
+            shape = (len(sigmas), size, size)
+            center_int = jnp.floor(self.center()).astype(int)
+            origin = (0, center_int[0] - size // 2, center_int[1] - size // 2)
+            bbox = Box(shape, origin=origin)
+        self.bbox = bbox
+
+        self.integrate = integrate
 
     def __call__(self):
         # grid positions in X/Y
@@ -35,10 +58,7 @@ class GaussianPSF(PSF):
         else:
             f = lambda x, s: jnp.exp(-(x ** 2) / (2 * s ** 2)) / (jnp.sqrt(2 * jnp.pi) * s)
 
-        if isinstance(self.sigma, float):
-            psf = jnp.outer(f(_Y - self.center[0], self.sigma),
-                            f(_X - self.center[1], self.sigma))
-        else:
-            psf = jnp.stack([jnp.outer(f(_Y - self.center[0], s), f(_X - self.center[1], s)) for s in self.sigma],
-                            axis=0)
+        center = self.center()
+        sigma = self.sigma()
+        psf = jnp.stack([jnp.outer(f(_Y - center[0], s), f(_X - center[1], s)) for s in sigma], axis=0)
         return psf
