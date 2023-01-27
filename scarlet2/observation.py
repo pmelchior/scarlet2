@@ -48,6 +48,7 @@ class Observation():
                 self.renderer = NoRenderer()
             else:
                 assert self.frame.psf is not None and frame.psf is not None
+                assert isinstance(frame.psf.sigma(), float), "Model frame PSF needs to have single sigma value"
                 if self.frame.wcs is frame.wcs:
                     # same or None wcs: ConvolutionRenderer
                     self.renderer = ConvolutionRenderer(frame, self.frame)

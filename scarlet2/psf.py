@@ -17,12 +17,12 @@ class ArrayPSF(Parameter, PSF):
 
 
 class GaussianPSF(PSF):
-    sigma: Parameter
     center: Parameter
+    sigma: Parameter
     bbox: Box = eqx.static_field()
     integrate: bool = True
 
-    def __init__(self, sigma, center, bbox=None, integrate=True):
+    def __init__(self, center, sigma, bbox=None, integrate=True):
 
         if not isinstance(sigma, Parameter):
             sigma = Parameter(sigma, fixed=True)
@@ -32,14 +32,19 @@ class GaussianPSF(PSF):
         self.center = center
 
         if bbox is None:
-            sigmas = self.sigma()
-            max_sigma = jnp.max(sigmas)
-            size = 10 * max_sigma
+            sigma = self.sigma()
+            len_sigma = 0 if isinstance(sigma, float) else len(sigma)
+            max_sigma = jnp.max(sigma)
+            # explicit call to int() to avoid bbox sizes being jax-traced
+            size = 10 * int(jnp.ceil(max_sigma))
             if size % 2 == 0:
                 size += 1
-            shape = (len(sigmas), size, size)
-            center_int = jnp.floor(self.center()).astype(int)
-            origin = (0, center_int[0] - size // 2, center_int[1] - size // 2)
+            center_int = jnp.floor(self.center())
+            shape = (size, size)
+            origin = (int(center_int[0]) - size // 2, int(center_int[1]) - size // 2)
+            if len_sigma:
+                shape = (len_sigma, *shape)
+                origin = (0, *origin)
             bbox = Box(shape, origin=origin)
         self.bbox = bbox
 
@@ -60,5 +65,9 @@ class GaussianPSF(PSF):
 
         center = self.center()
         sigma = self.sigma()
-        psf = jnp.stack([jnp.outer(f(_Y - center[0], s), f(_X - center[1], s)) for s in sigma], axis=0)
+        len_sigma = 0 if isinstance(sigma, float) else len(sigma)
+        if len_sigma:
+            psf = jnp.stack([jnp.outer(f(_Y - center[0], s), f(_X - center[1], s)) for s in sigma], axis=0)
+        else:
+            psf = jnp.outer(f(_Y - center[0], sigma), f(_X - center[1], sigma))
         return psf

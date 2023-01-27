@@ -1,3 +1,5 @@
+import jax.numpy as jnp
+
 from .fft import convolve, deconvolve, _get_fast_shape
 from .module import Module
 
@@ -15,8 +17,8 @@ class NoRenderer(Renderer):
 class ConvolutionRenderer(Renderer):
 
     def __init__(self, frame, obs_frame):
-        # create PSf model
-        psf_model = frame.psf()
+        # create PSF model
+        psf_model = jnp.tile(frame.psf(), (obs_frame.bbox.shape[0], 1, 1))
         # make sure fft uses a shape large enough to cover the convolved model
         fft_shape = _get_fast_shape(frame.bbox.shape, psf_model.shape, padding=3, axes=(-2, -1))
         # compute and store diff kernel in Fourier space
