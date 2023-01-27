@@ -1,21 +1,14 @@
-import equinox as eqx
 import jax.numpy as jnp
 
-class Constraint(eqx.Module):
+class Constraint:
     def check(self, x):
-        return NotImplementedError
-    def transform(self, x):
-        return NotImplementedError
-    def inverse(self, x):
         return NotImplementedError
 
-class NoConstraint(Constraint):
-    def check(self, x):
-        return jnp.ones(x.shape, dtype=jnp.bool)
     def transform(self, x):
-        return x
+        return NotImplementedError
+
     def inverse(self, x):
-        return x
+        return NotImplementedError
 
 class PositiveConstraint(Constraint):
     def check(self, x):

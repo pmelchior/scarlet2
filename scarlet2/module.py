@@ -1,31 +1,24 @@
-import distrax
 import equinox as eqx
 import jax
 
-from .constraint import Constraint, NoConstraint
-from .prior import NoPrior
+from .constraint import Constraint
+from .distribution import Distribution
 
 
 class Parameter(eqx.Module):
     value: jax.numpy.ndarray
-    constraint: Constraint = eqx.static_field() # needs to be static to avoid copy during filtering
-    prior: distrax.Distribution = eqx.static_field()
-    fixed: bool
-
-    def __init__(self, value, constraint=None, prior=None, fixed=False):
-        self.value = value
-        if constraint is None:
-            constraint = NoConstraint()
-        self.constraint = constraint
-        if prior is None:
-            prior = NoPrior()
-        self.prior = prior
-        self.fixed = fixed
+    constraint: (Constraint, None) = None
+    prior: (Distribution, None) = None
+    fixed: bool = False
 
     def __call__(self):
+        if self.constraint is None:
+            return self.value
         return self.constraint.transform(self.value)
 
     def log_prior(self):
+        if self.prior is None:
+            return 0
         return self.prior.log_prob(self.value)
 
 
@@ -52,4 +45,4 @@ class Module(eqx.Module):
         return ps
 
     def log_prior(self):
-        return sum(p.prior.log_prob(p.value) for p in self.parameters)
+        return sum(p.log_prior() for p in self.parameters)
