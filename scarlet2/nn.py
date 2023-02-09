@@ -6,8 +6,8 @@
 # log-likelihood of the prior, so we are really         #
 # combining two independed gradient finding methods for #
 # log-likelihood, one via promixal gradient descent,    #
-# and one directly by taking the grad of the data       # 
-# w.r.t the prior p(x) of independent galaxies          #
+# and one directly by taking the grad of the prior p(x) # 
+# w.r.t the data (x=input image)                        #
 # ----------------------------------------------------- #
 from scorenet import ScoreNet32, ScoreNet64
 import jax
