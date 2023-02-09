@@ -6,7 +6,8 @@
 # log-likelihood of the prior, so we are really         #
 # combining two independed gradient finding methods for #
 # log-likelihood, one via promixal gradient descent,    #
-# and one directl by taking the approx grad of the data #
+# and one directly by taking the grad of the data       # 
+# w.r.t the prior p(x) of independent galaxies          #
 # ----------------------------------------------------- #
 from scorenet import ScoreNet32, ScoreNet64
 import jax
@@ -72,9 +73,8 @@ class NNPrior(Distribution):
     
     # calculate the total gradient
     # TODO: perhaps make w a function of how close we are to convergence
-    # explicilty cast to float for jax.grad to work
     # TODO: perhaps normalise nn.grad and log_prob grad so same
-    # in magnitude, hence making choosing values for w and m easier
+    # in magnitude, hence making choosing values for w1 and w2 easier
     def total_grad(self, x):
         x = jnp.float32(x) # cast to float32 for jax.grad
         init_size = x.shape
