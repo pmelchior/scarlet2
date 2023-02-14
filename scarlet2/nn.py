@@ -1,10 +1,9 @@
 # -------------------------------------------------- #
 # This class is used to calculate the gradient       #
 # of the log-probability via calling the nn prior    #
-#  ScoreNet model.                                   #
+# ScoreNet model.                                   #
 # -------------------------------------------------- #
 from scorenet import ScoreNet32, ScoreNet64
-import jax
 import jax.numpy as jnp
 from jax import custom_vjp
 from distribution import Distribution # import base classe
