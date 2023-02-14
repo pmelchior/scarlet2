@@ -6,7 +6,7 @@
 from scorenet import ScoreNet32, ScoreNet64
 import jax
 import jax.numpy as jnp
-from jax import custom_jvp
+from jax import custom_vjp
 from distribution import Distribution # import base classe
 
 # TODO: Currently will fail on image sizes over 64x64, think of how
@@ -47,7 +47,7 @@ def pad_back(x, pad_lo, pad_hi):
         x = x[pad_lo:-pad_hi, pad_lo:-pad_hi]
     return x
 
-# calculate score function alone
+# calculate score function (jacobian of log-probability)
 def calc_grad(x):
     # perform padding if needed
     x = jnp.float32(x) # cast to float32
@@ -64,19 +64,23 @@ def calc_grad(x):
     if pad: nn_grad = pad_back(nn_grad, pad_lo, pad_hi)
     return nn_grad
 
-
 # inheritance from Distribution class
 class NNPrior(Distribution):
 
-    @custom_jvp 
+    # construct custom vector-jacobian product 
+    @custom_vjp
     def log_prob(x):
         return 0.0
-            
-    # https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html
-    @log_prob.defjvp
-    def log_prob_jvp(primals, tangents):
-        x, = primals
-        x_dot = tangents
-        primal_out  = 0.0 #log_prob(x)
-        tangent_out = calc_grad(x) 
-        return primal_out, tangent_out
+    
+    def log_prob_fwd(x):
+    # Returns primal output and residuals to be used in backward pass by f_bwd
+        nn_grad = calc_grad(x)
+        return 0.0, nn_grad # cannot directly call log_prob in Class object
+    
+    def log_prob_bwd(res, g):
+        nn_grad = res # Get residuals computed in f_fwd
+        vjp = (g * nn_grad,) # create the vector (g) jacobian (nn_grad) product
+        return vjp
+        
+    # register the custom vjp    
+    log_prob.defvjp(log_prob_fwd, log_prob_bwd)
