@@ -72,3 +72,12 @@ class Observation():
             self.renderer = renderer
 
         return self
+    
+    # Matt addition, make __eq__ and __hash__ method for JIT compile to make obs hashable
+    # def __eq__(self, other):
+    #     # Equality Comparison between two objects
+    #     return self.data == other.data and self.weights == other.weights and self.frame == other.frame and self.renderer == other.renderer 
+
+    # def __hash__(self):
+    #     # hash(custom_object)
+    #     return hash((self.data))

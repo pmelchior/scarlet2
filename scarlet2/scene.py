@@ -62,3 +62,4 @@ class Scene(Module):
 
     def __exit__(self, exc_type, exc_value, traceback):
         Scenery.scene = None
+    

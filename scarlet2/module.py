@@ -10,6 +10,9 @@ class Parameter(eqx.Module):
     constraint: (Constraint, None) = None
     prior: (Distribution, None) = None
     fixed: bool = False
+    
+    # testing explicitly placing prior here
+    
 
     def __call__(self):
         if self.constraint is None:
@@ -17,6 +20,7 @@ class Parameter(eqx.Module):
         return self.constraint.transform(self.value)
 
     def log_prior(self):
+        #self.prior = nn
         if self.prior is None:
             return 0
         return self.prior.log_prob(self.value)

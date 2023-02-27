@@ -1,9 +1,11 @@
 # -------------------------------------------------- #
 # This class is used to calculate the gradient       #
 # of the log-probability via calling the nn prior    #
-# ScoreNet model.                                   #
+# ScoreNet model. A custom vjp is created to return  #
+# the nn prior when calling jax.grad()               #
 # -------------------------------------------------- #
-from scorenet import ScoreNet32, ScoreNet64
+
+from galaxygrad import ScoreNet32, ScoreNet64 # (https://pypi.org/project/galaxygrad/0.0.4/) 
 import jax.numpy as jnp
 from jax import custom_vjp
 from distribution import Distribution # import base classe
@@ -13,6 +15,7 @@ from distribution import Distribution # import base classe
 
 # pad up for ScoreNet
 def pad_fwd(x):
+    """Zero-pads the input image to the nearest 32 or 64 pixels"""
     data_size = x.shape[1]
     pad = True
     if data_size <= 32:
@@ -40,6 +43,7 @@ def pad_fwd(x):
     
 # reverse pad back to original size
 def pad_back(x, pad_lo, pad_hi):
+    """Removes the zero-padding from the input image"""
     if jnp.ndim(x) > 2: 
         x[0] = x[pad_lo:-pad_hi, pad_lo:-pad_hi]
     else:
@@ -65,8 +69,10 @@ def calc_grad(x):
 
 # inheritance from Distribution class
 class NNPrior(Distribution):
-
+    """Prior distribution based on a neural network"""
     # construct custom vector-jacobian product 
+    
+    # TODO: These may need to be moved outside of the class
     @custom_vjp
     def log_prob(x):
         return 0.0
