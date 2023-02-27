@@ -8,7 +8,7 @@
 from galaxygrad import ScoreNet32, ScoreNet64 # (https://pypi.org/project/galaxygrad/0.0.4/) 
 import jax.numpy as jnp
 from jax import custom_vjp
-from distribution import Distribution # import base classe
+from .distribution import Distribution # import base classe
 
 # TODO: Currently will fail on image sizes over 64x64, think of how
 # I want to handle this, could train a higher res model?
