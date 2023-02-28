@@ -16,4 +16,4 @@ class PositiveConstraint(Constraint):
     def transform(self, x):
         return jnp.exp(x)
     def inverse(self, x):
-        return np.log(x)
+        return jnp.log(x)
