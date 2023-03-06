@@ -9,6 +9,7 @@ from galaxygrad import ScoreNet32, ScoreNet64 # (https://pypi.org/project/galaxy
 import jax.numpy as jnp
 from jax import custom_vjp
 from .distribution import Distribution # import base class
+import jax.scipy as jsp
 
 # TODO: Currently will fail on image sizes over 64x64, think of how
 # I want to handle this, could train a higher res model?
@@ -53,26 +54,31 @@ def pad_back(x, pad_lo, pad_hi):
 # calculate score function (jacobian of log-probability)
 def calc_grad(x):
     # perform padding if needed
+    t = 0.0 # corresponds to noise free gradient
     x = jnp.float32(x) # cast to float32
     x, ScoreNet, pad_lo, pad_hi, pad = pad_fwd(x)
     assert (x.shape[1] % 32) == 0, f"image size must be 32 or 64, got: {x.shape[1]}"
     # Scorenet needs (n, 64, 64) or (n, 32, 32)
     if jnp.ndim(x) == 2:
         x = jnp.expand_dims(x, axis=0)
-        nn_grad = ScoreNet(x)
+        nn_grad = ScoreNet(x, t=t)
         nn_grad = jnp.squeeze(nn_grad, axis=0)
     else:
-        nn_grad = ScoreNet(x)
+        nn_grad = ScoreNet(x, t=t)
     # return to original size
     if pad: nn_grad = pad_back(nn_grad, pad_lo, pad_hi)
-    return nn_grad
+    # gaussian filter to smooth the gradient (minimised artifacts)
+    x = jnp.linspace(-4, 4, 9) # kernal dims
+    scale = 1.25
+    window = jsp.stats.norm.pdf(x,loc=0, scale=scale) * jsp.stats.norm.pdf(x[:, None],loc=0, scale=scale) # Gaussian kernal
+    smooth_grad = jsp.signal.convolve(nn_grad, window, mode='same')
+    return smooth_grad
 
 # inheritance from Distribution class
 class NNPrior(Distribution):
     """Prior distribution based on a neural network"""
     # construct custom vector-jacobian product 
     
-    # TODO: These may need to be moved outside of the class
     @custom_vjp
     def log_prob(x):
         return 0.0

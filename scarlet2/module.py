@@ -1,6 +1,5 @@
 import equinox as eqx
 import jax
-
 from .constraint import Constraint
 from .distribution import Distribution
 
@@ -11,19 +10,17 @@ class Parameter(eqx.Module):
     prior: (Distribution, None) = None
     fixed: bool = False
     
-    # testing explicitly placing prior here
     
-
     def __call__(self):
         if self.constraint is None:
             return self.value
         return self.constraint.transform(self.value)
 
     def log_prior(self):
-        #self.prior = nn
         if self.prior is None:
-            return 0
+            return 0.0
         return self.prior.log_prob(self.value)
+        #return 10 #self.prior.log_prob()
 
 
 # flatten nested lists/tuples, from https://stackoverflow.com/a/64938679
