@@ -20,7 +20,6 @@ class Parameter(eqx.Module):
         if self.prior is None:
             return 0.0
         return self.prior.log_prob(self.value)
-        #return 10 #self.prior.log_prob()
 
 
 # flatten nested lists/tuples, from https://stackoverflow.com/a/64938679

@@ -29,17 +29,34 @@ class Observation():
             return model
         return self.renderer(model)
 
+    # Matt's log-likelihood function
     def log_likelihood(self, model):
         # rendered model
         model_ = self.render(model)
-        # normalization of the single-pixel likelihood:
-        # 1 / [(2pi)^1/2 (sigma^2)^1/2]
-        # with inverse variance weights: sigma^2 = 1/weight
-        # full likelihood is sum over all (unmasked) pixels in data
+        # take the frobenius norm of the difference between the model and data
+        # need to add the sum of the log of non-zero weights
+        # Lognorm = -1/2 D * log(2*pi) - 1/2 sum_i log(w_i)
+        tol = 1e-9
+        w_sum = jnp.sum( jnp.log(self.weights + tol) ) 
         D = jnp.prod(jnp.asarray(self.data.shape)) - jnp.sum(self.weights == 0)
-        log_norm = D / 2 * jnp.log(2 * jnp.pi)
+        #log_norm = D / ( jnp.log(jnp.sqrt( 2 * jnp.pi )))
+        log_norm = -1/2 * D * jnp.log(2 * jnp.pi) - 1/ 2 * w_sum
         log_like = -jnp.sum(self.weights * (model_ - self.data) ** 2) / 2
-        return log_like - log_norm
+        return log_like + log_norm
+    
+    # Peters log-likelihood function
+    # def log_likelihood(self, model):
+    #     # rendered model
+    #     model_ = self.render(model)
+    #     # normalization of the single-pixel likelihood:
+    #     # 1 / [(2pi)^1/2 (sigma^2)^1/2]
+    #     # with inverse variance weights: sigma^2 = 1/weight
+    #     # full likelihood is sum over all (unmasked) pixels in data
+    #     D = jnp.prod(jnp.asarray(self.data.shape)) - jnp.sum(self.weights == 0)
+    #     print("D: ", D)
+    #     log_norm = D / 2 * jnp.log(2 * jnp.pi)
+    #     log_like = -jnp.sum(self.weights * (model_ - self.data) ** 2) / 2
+    #     return log_like - log_norm
 
     def match(self, frame, renderer=None):
         # choose the renderer
