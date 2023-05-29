@@ -1,6 +1,8 @@
+import equinox as eqx
 import jax.numpy as jnp
 
-class Constraint:
+
+class Constraint(eqx.Module):
     def check(self, x):
         return NotImplementedError
 
