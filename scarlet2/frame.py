@@ -12,7 +12,7 @@ class Frame:
     bbox: Box
     psf: PSF = None
     wcs: astropy.wcs.wcs = None
-    channels: (list, tuple) = None
+    channels: list = None
 
     def __hash__(self):
         return hash(self.bbox)
