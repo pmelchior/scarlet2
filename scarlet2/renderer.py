@@ -18,7 +18,11 @@ class ConvolutionRenderer(Renderer):
 
     def __init__(self, frame, obs_frame):
         # create PSF model
-        psf_model = jnp.tile(frame.psf(), (obs_frame.bbox.shape[0], 1, 1))
+        psf = frame.psf()
+        if len(psf.shape) == 2:  # only one image for all bands
+            psf_model = jnp.tile(psf, (obs_frame.bbox.shape[0], 1, 1))
+        else:
+            psf_model = psf
         # make sure fft uses a shape large enough to cover the convolved model
         fft_shape = _get_fast_shape(frame.bbox.shape, psf_model.shape, padding=3, axes=(-2, -1))
         # compute and store diff kernel in Fourier space
