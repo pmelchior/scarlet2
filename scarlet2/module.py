@@ -21,28 +21,12 @@ class Parameter(eqx.Module):
             return 0
         return self.prior.log_prob(self.value)
 
-
-# flatten nested lists/tuples, from https://stackoverflow.com/a/64938679
-def flatten(l):
-    if isinstance(l, (tuple, list)):
-        for x in l:
-            yield from flatten(x)
-    else:
-        yield l
-
-
 class Module(eqx.Module):
     @property
     def parameters(self):
-        ps = tuple()
-        # need explicit flattening because tree_flatten leaves lists in place
-        for x in tuple(flatten(self.tree_flatten()[0])):
-            if isinstance(x, Parameter):
-                ps = ps + (x,)
-            # recursively add parameters of submodules
-            elif isinstance(x, Module):
-                ps = ps + x.parameters
-        return ps
-
-    def log_prior(self):
-        return sum(p.log_prior() for p in self.parameters)
+        # tree_flatten to terminate at Parameters
+        is_leaf = lambda node: isinstance(node, Parameter)
+        # but it traverses also other paths that don't end with Parameters, need to filter for those again
+        # and remove fixed parameters
+        return [p for p in jax.tree_util.tree_flatten(self, is_leaf)[0] if
+                isinstance(p, Parameter) and p.fixed is not True]
