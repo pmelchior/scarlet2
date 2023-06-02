@@ -8,13 +8,16 @@
 from galaxygrad import ScoreNet32, ScoreNet64 # (https://pypi.org/project/galaxygrad/0.0.4/) 
 import jax.numpy as jnp
 from jax import custom_vjp
-from .distribution import Distribution # import base class
 import jax.scipy as jsp
+from jax import jit
+import equinox as eqx
+from .distribution import Distribution # import base class
 
 # TODO: Currently will fail on image sizes over 64x64, think of how
 # I want to handle this, could train a higher res model?
 
 # pad up for ScoreNet
+#@jit
 def pad_fwd(x):
     """Zero-pads the input image to the nearest 32 or 64 pixels"""
     data_size = x.shape[1]
@@ -68,11 +71,14 @@ def calc_grad(x):
     # return to original size
     if pad: nn_grad = pad_back(nn_grad, pad_lo, pad_hi)
     # gaussian filter to smooth the gradient (minimised artifacts)
-    x = jnp.linspace(-4, 4, 9) # kernal dims
-    scale = 1.25
+    x = jnp.linspace(-10,10,nn_grad.shape[0])#jnp.linspace(-4, 4, 9) # kernal dims
+    scale = 0.75
     window = jsp.stats.norm.pdf(x,loc=0, scale=scale) * jsp.stats.norm.pdf(x[:, None],loc=0, scale=scale) # Gaussian kernal
     smooth_grad = jsp.signal.convolve(nn_grad, window, mode='same')
     return smooth_grad
+    # Testing out some things for smoother gradients
+    #return nn_grad
+
 
 # inheritance from Distribution class
 class NNPrior(Distribution):
