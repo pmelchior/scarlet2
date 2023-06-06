@@ -16,18 +16,27 @@ from .distribution import Distribution # import base class
 # TODO: Currently will fail on image sizes over 64x64, think of how
 # I want to handle this, could train a higher res model?
 
+# TODO: Add a selection for galaxygrad pretrained model, or to call
+# the custom prior to train the model "once"
+
 # pad up for ScoreNet
 #@jit
-def pad_fwd(x):
+def pad_fwd(x, scorenet_path):
     """Zero-pads the input image to the nearest 32 or 64 pixels"""
     data_size = x.shape[1]
     pad = True
-    if data_size <= 32:
-        pad_gap = 32 - data_size
-        ScoreNet = ScoreNet32
+    
+    # Define the correct neural network to use
+    if scorenet_path == 'None':
+        if data_size <= 32:
+            pad_gap = 32 - data_size
+            ScoreNet = ScoreNet32 
+        else:
+            pad_gap = 64 - data_size
+            ScoreNet = ScoreNet64
+            
     else:
-        pad_gap = 64 - data_size
-        ScoreNet = ScoreNet64
+        ScoreNet = scorenet_path
     # dont pad if we dont need to
     if pad_gap == 0:
         pad = False
@@ -55,11 +64,11 @@ def pad_back(x, pad_lo, pad_hi):
     return x
 
 # calculate score function (jacobian of log-probability)
-def calc_grad(x):
+def calc_grad(x, scorenet_path):
     # perform padding if needed
     t = 0.0 # corresponds to noise free gradient
     x = jnp.float32(x) # cast to float32
-    x, ScoreNet, pad_lo, pad_hi, pad = pad_fwd(x)
+    x, ScoreNet, pad_lo, pad_hi, pad = pad_fwd(x, scorenet_path)
     assert (x.shape[1] % 32) == 0, f"image size must be 32 or 64, got: {x.shape[1]}"
     # Scorenet needs (n, 64, 64) or (n, 32, 32)
     if jnp.ndim(x) == 2:
@@ -84,6 +93,15 @@ def calc_grad(x):
 class NNPrior(Distribution):
     """Prior distribution based on a neural network"""
     # construct custom vector-jacobian product 
+    def __init__(self, path='None'):
+        global model_path 
+        model_path = path
+        
+    """
+    Note, I cannot pass "self" to the functions below
+    as the jax custom_vjp decorator cannot handle them
+    hence the use of a global variable to pass the path
+    """
     
     @custom_vjp
     def log_prob(x):
@@ -91,7 +109,7 @@ class NNPrior(Distribution):
     
     def log_prob_fwd(x):
     # Returns primal output and residuals to be used in backward pass by f_bwd
-        nn_grad = calc_grad(x)
+        nn_grad = calc_grad(x, model_path)
         return 0.0, nn_grad # cannot directly call log_prob in Class object
     
     def log_prob_bwd(res, g):
@@ -101,3 +119,5 @@ class NNPrior(Distribution):
         
     # register the custom vjp    
     log_prob.defvjp(log_prob_fwd, log_prob_bwd)
+    
+    del model_path # remove global variable
