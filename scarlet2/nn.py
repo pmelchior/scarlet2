@@ -5,7 +5,7 @@
 # the nn prior when calling jax.grad()               #
 # -------------------------------------------------- #
 
-from galaxygrad import ScoreNet32, ScoreNet64 # (https://pypi.org/project/galaxygrad/0.0.4/) 
+from galaxygrad import ScoreNet32, ScoreNet64, ScoreNetZTF # (https://pypi.org/project/galaxygrad/0.0.4/) 
 import jax.numpy as jnp
 from jax import custom_vjp
 import jax.scipy as jsp
@@ -19,7 +19,7 @@ def pad_fwd(x, trained_model):
     data_size = x.shape[1]
     pad = True
     
-    # Define the correct neural network to use
+    # select the HSC trained model
     if trained_model == 'None':
         if data_size <= 32:
             pad_gap = 32 - data_size
@@ -27,7 +27,12 @@ def pad_fwd(x, trained_model):
         else:
             pad_gap = 64 - data_size
             ScoreNet = ScoreNet64
-            
+    
+    # select the ZTF trained model
+    elif trained_model == 'ztf':
+        ScoreNet = ScoreNetZTF
+        
+    # select the custom trained model
     else:
         ScoreNet = trained_model
     # dont pad if we dont need to
@@ -73,8 +78,8 @@ def calc_grad(x, trained_model):
     # return to original size
     if pad: nn_grad = pad_back(nn_grad, pad_lo, pad_hi)
     # gaussian filter to smooth the gradient (minimised artifacts)
-    x = jnp.linspace(-10,10,nn_grad.shape[0])#jnp.linspace(-4, 4, 9) # kernal dims
-    scale = 0.75
+    x = jnp.linspace(-4, 4, 9)  #jnp.linspace(-10,10,nn_grad.shape[0])#jnp.linspace(-4, 4, 9) # kernal dims
+    scale = 1.2 #0.75
     window = jsp.stats.norm.pdf(x,loc=0, scale=scale) * jsp.stats.norm.pdf(x[:, None],loc=0, scale=scale) # Gaussian kernal
     smooth_grad = jsp.signal.convolve(nn_grad, window, mode='same')
     return smooth_grad
