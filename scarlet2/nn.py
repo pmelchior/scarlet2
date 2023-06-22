@@ -5,7 +5,7 @@
 # the nn prior when calling jax.grad()               #
 # -------------------------------------------------- #
 
-from galaxygrad import HSC_ScoreNet32, HSC_ScoreNet64, ZTF_ScoreNet40 # (https://pypi.org/project/galaxygrad/0.0.10/) 
+from galaxygrad import HSC_ScoreNet32, HSC_ScoreNet64, ZTF_ScoreNet40,HSC_LogNet32, HSC_LogNet64, ZTF_LogNet40 # (https://pypi.org/project/galaxygrad/0.0.10/) 
 #from galaxygrad import ScoreNet32, ScoreNet64 # depreciated
 import jax.numpy as jnp
 from jax import custom_vjp
@@ -15,7 +15,7 @@ import equinox as eqx
 from .distribution import Distribution # import base class
 
 
-def pad_fwd(x, trained_model):
+def pad_fwd(x, trained_model, log_space):
     """Zero-pads the input image to the nearest 32 or 64 pixels"""
     data_size = x.shape[1]
     pad = True
@@ -24,16 +24,24 @@ def pad_fwd(x, trained_model):
     if trained_model in ('hsc', 'None'):
         if data_size <= 32:
             pad_gap = 32 - data_size
-            ScoreNet = HSC_ScoreNet32
+            if log_space:
+                ScoreNet = HSC_LogNet32
+            else:
+                ScoreNet = HSC_ScoreNet32
         else:
             pad_gap = 64 - data_size
-            ScoreNet = HSC_ScoreNet64
+            if log_space:
+                ScoreNet = HSC_LogNet64
+            else:
+                ScoreNet = HSC_ScoreNet64
 
     
     # select the ZTF trained model
     elif trained_model == 'ztf':
-        ScoreNet = ZTF_ScoreNet40
-        
+        if log_space:
+            ScoreNet = ZTF_LogNet40
+        else:
+            ScoreNet = ZTF_ScoreNet40
     # select the custom trained model
     else:
         ScoreNet = trained_model
@@ -49,9 +57,15 @@ def pad_fwd(x, trained_model):
     # perform the zero-padding
     if pad:
         if jnp.ndim(x) == 3:
-            x[0] = jnp.pad(x[0], ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant', constant_values=0) #'constant'
+            if log_space:
+                x[0] = jnp.pad(x[0], ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant', constant_values=-6) # minimum value of log-space
+            else:
+                x[0] = jnp.pad(x[0], ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant', constant_values=0) 
         else:
-            x = jnp.pad(x, ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant', constant_values=0)
+            if log_space:
+                x = jnp.pad(x, ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant', constant_values=-6)       # minimum value of log-space
+            else:
+                x = jnp.pad(x, ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant', constant_values=0)
     return x, ScoreNet, pad_lo, pad_hi , pad
     
 # reverse pad back to original size
@@ -64,11 +78,11 @@ def pad_back(x, pad_lo, pad_hi):
     return x
 
 # calculate score function (jacobian of log-probability)
-def calc_grad(x, trained_model):
+def calc_grad(x, trained_model, log_space):
     # perform padding if needed
     t = 0.0 # corresponds to noise free gradient
     x = jnp.float32(x) # cast to float32
-    x, ScoreNet, pad_lo, pad_hi, pad = pad_fwd(x, trained_model)
+    x, ScoreNet, pad_lo, pad_hi, pad = pad_fwd(x, trained_model, log_space)
     assert (x.shape[1] % 32) == 0, f"image size must be 32 or 64, got: {x.shape[1]}"
     # Scorenet needs (n, 64, 64) or (n, 32, 32)
     if jnp.ndim(x) == 2:
@@ -93,9 +107,11 @@ def calc_grad(x, trained_model):
 class NNPrior(Distribution):
     """Prior distribution based on a neural network"""
     # construct custom vector-jacobian product 
-    def __init__(self, trained_model='None'):
+    def __init__(self, trained_model='None', log_space=False):
         global custom_model 
+        global log_flag
         custom_model = trained_model
+        log_flag = log_space
         
     """
     Note, I cannot pass "self" to the functions below
@@ -109,7 +125,7 @@ class NNPrior(Distribution):
     
     def log_prob_fwd(x):
     # Returns primal output and residuals to be used in backward pass by f_bwd
-        nn_grad = calc_grad(x, custom_model)
+        nn_grad = calc_grad(x, custom_model, log_flag)
         return 0.0, nn_grad # cannot directly call log_prob in Class object
     
     def log_prob_bwd(res, g):
