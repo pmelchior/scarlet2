@@ -38,6 +38,7 @@ def pad_fwd(x, trained_model, log_space):
     
     # select the ZTF trained model
     elif trained_model == 'ztf':
+        pad_gap = 40 - data_size
         if log_space:
             ScoreNet = ZTF_LogNet40
         else:
