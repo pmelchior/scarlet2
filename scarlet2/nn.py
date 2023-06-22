@@ -5,7 +5,8 @@
 # the nn prior when calling jax.grad()               #
 # -------------------------------------------------- #
 
-from galaxygrad import ScoreNet32, ScoreNet64, ScoreNetZTF # (https://pypi.org/project/galaxygrad/0.0.4/) 
+from galaxygrad import HSC_ScoreNet32, HSC_ScoreNet64, ZTF_ScoreNet40 # (https://pypi.org/project/galaxygrad/0.0.10/) 
+#from galaxygrad import ScoreNet32, ScoreNet64 # depreciated
 import jax.numpy as jnp
 from jax import custom_vjp
 import jax.scipy as jsp
@@ -20,17 +21,18 @@ def pad_fwd(x, trained_model):
     pad = True
     
     # select the HSC trained model
-    if trained_model == 'None':
+    if trained_model in ('hsc', 'None'):
         if data_size <= 32:
             pad_gap = 32 - data_size
-            ScoreNet = ScoreNet32 
+            ScoreNet = HSC_ScoreNet32
         else:
             pad_gap = 64 - data_size
-            ScoreNet = ScoreNet64
+            ScoreNet = HSC_ScoreNet64
+
     
     # select the ZTF trained model
     elif trained_model == 'ztf':
-        ScoreNet = ScoreNetZTF
+        ScoreNet = ZTF_ScoreNet40
         
     # select the custom trained model
     else:
@@ -47,9 +49,9 @@ def pad_fwd(x, trained_model):
     # perform the zero-padding
     if pad:
         if jnp.ndim(x) == 3:
-            x[0] = jnp.pad(x[0], ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant')
+            x[0] = jnp.pad(x[0], ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant', constant_values=0) #'constant'
         else:
-            x = jnp.pad(x, ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant')
+            x = jnp.pad(x, ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant', constant_values=0)
     return x, ScoreNet, pad_lo, pad_hi , pad
     
 # reverse pad back to original size
