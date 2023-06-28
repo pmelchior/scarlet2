@@ -47,7 +47,7 @@ class Frame:
         pixel: tuple, array
             Coordinates in the pixel space
         """
-        pix = jnp.asarray(pixel, dtype=np.float64).reshape(-1, 2)
+        pix = jnp.asarray(pixel, dtype=jnp.float64).reshape(-1, 2)
 
         if self._wcs is not None:
             wcs_ = self._wcs.celestial  # only use celestial portion
