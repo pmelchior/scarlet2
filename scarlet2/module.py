@@ -12,6 +12,7 @@ class Parameter(eqx.Module):
     value: jax.numpy.ndarray
     constraint: (Constraint, None) = None
     prior: (Distribution, None) = None
+    step: (float, None) = None
     fixed: InitVar[bool] = None
 
     # fixed will be used here and then deleted

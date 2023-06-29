@@ -1,4 +1,3 @@
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 
@@ -12,7 +11,7 @@ class Scenery:
     scene = None
 
 class Scene(Module):
-    frame: Frame = eqx.static_field()
+    frame: Frame
     sources: list
 
     def __init__(self, frame):
