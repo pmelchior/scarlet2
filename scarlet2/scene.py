@@ -17,7 +17,6 @@ class Scene(Module):
 
     def __init__(self, frame):
         self.frame = frame
-        # TODO: scene does not report sources as parameters because pytrees treat lists as nodes, not leaves
         self.sources = list()
         super().__post_init__()
 

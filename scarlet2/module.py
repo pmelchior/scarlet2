@@ -96,7 +96,12 @@ class Module(eqx.Module):
             elif isinstance(a, Module):
                 params_ = a.parameters
                 for k, v in params_.items():
-                    params[n + "." + k] = v
+                    params[f"{n}.{k}"] = v
+            elif isinstance(a, (list, tuple)):
+                for i, a_ in enumerate(a):
+                    params_ = a_.parameters
+                    for k, v in params_.items():
+                        params[f"{n}.{i}.{k}"] = v
         return params
 
     @property
@@ -114,7 +119,12 @@ class Module(eqx.Module):
             if isinstance(a, Module):
                 info_ = a.parameter_info
                 for k, v in info_.items():
-                    info[n + "." + k] = v
+                    info[f"{n}.{k}"] = v
+            elif isinstance(a, (list, tuple)):
+                for i, a_ in enumerate(a):
+                    info_ = a_.parameter_info
+                    for k, v in info_.items():
+                        info[f"{n}.{i}.{k}"] = v
         return info
 
     @property
