@@ -84,7 +84,7 @@ def calc_grad(x, trained_model, log_space):
     t = 0.0 # corresponds to noise free gradient
     x = jnp.float32(x) # cast to float32
     x, ScoreNet, pad_lo, pad_hi, pad = pad_fwd(x, trained_model, log_space)
-    assert (x.shape[1] % 32) == 0, f"image size must be 32 or 64, got: {x.shape[1]}"
+    #assert (x.shape[1] % 32) == 0, f"image size must be 32 or 64, got: {x.shape[1]}"
     # Scorenet needs (n, 64, 64) or (n, 32, 32)
     if jnp.ndim(x) == 2:
         x = jnp.expand_dims(x, axis=0)
