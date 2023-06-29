@@ -1,44 +1,31 @@
-from dataclasses import InitVar
-from types import MappingProxyType
+import functools
 
 import equinox as eqx
 import jax
+from numpyro import distributions
+from numpyro.distributions import constraints
 
-from .constraint import Constraint
-from .distribution import Distribution
+
+# recursively finding attributes:
+# from https://stackoverflow.com/a/31174427
+def rgetattr(obj, attr, *args):
+    def _getattr(obj, attr):
+        return getattr(obj, attr, *args)
+
+    return functools.reduce(_getattr, [obj] + attr.split('.'))
 
 
 class Parameter(eqx.Module):
-    value: jax.numpy.ndarray
-    constraint: (Constraint, None) = None
-    prior: (Distribution, None) = None
-    step: (float, None) = None
-    fixed: InitVar[bool] = None
-
-    # fixed will be used here and then deleted
-    def __post_init__(self, fixed):
-        self.set_static(fixed)
-
-    def __call__(self):
-        if self.constraint is None:
-            return self.value
-        return self.constraint.transform(self.value)
+    value: (jnp.ndarray, float, complex, bool, int)
+    constraint: (None, constraints.Constraint) = None
+    prior: (None, distributions.Distribution) = None
+    stepsize: float = 1
+    fixed: bool = False
 
     def log_prior(self):
         if self.prior is None:
             return 0
         return self.prior.log_prob(self.value)
-
-    def set_static(self, value=True):
-        assert value in [True, False, None]
-        # eqx stores static in the metadata of the dataclass field
-        # as read-only MappingProxy, need to convert to dict for changes
-        d = dict(self.__dataclass_fields__['value'].metadata)
-        d['static'] = value
-        # replace metadata with updated dict/MappingProxy
-        mp = MappingProxyType(d)
-        self.__dataclass_fields__['value'].__setattr__('metadata', mp)
-        return self
 
 
 class Module(eqx.Module):
