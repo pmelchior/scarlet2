@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax.numpy as jnp
 
 from .bbox import Box
@@ -7,10 +8,10 @@ from .renderer import Renderer, NoRenderer, ConvolutionRenderer
 
 
 class Observation(Module):
-    data: jnp.ndarray
-    weights: jnp.ndarray
-    frame: Frame
-    renderer: Renderer
+    data: jnp.ndarray = eqx.field(static=True)
+    weights: jnp.ndarray = eqx.field(static=True)
+    frame: Frame = eqx.field(static=True)
+    renderer: Renderer = eqx.field(static=True)
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
         self.data = jnp.asarray(data)
@@ -21,7 +22,7 @@ class Observation(Module):
         if renderer is None:
             renderer = NoRenderer()
         self.renderer = renderer
-
+        super().__post_init__()
     def render(self, model):
         # render the model in the frame of the observation
         return self.renderer(model)

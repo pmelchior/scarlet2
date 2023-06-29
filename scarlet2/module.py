@@ -33,6 +33,7 @@ class Module(eqx.Module):
     _param_info: dict = eqx.field(static=True, init=False, repr=False)
 
     def __post_init__(self):
+        self._param_info = dict()
         # if user specifies Parameter instead of ndarray:
         # extract value from Parameter instances, but save their metadata
         for name in self.__dataclass_fields__.keys():
@@ -43,10 +44,10 @@ class Module(eqx.Module):
                 continue
             self.set(name, p)
 
+    def __call__(self, *args, **kwargs):
+        raise NotImplementedError
+
     def set(self, name, p):
-        # check if _param_info exists
-        if not hasattr(self, '_param_info'):
-            setattr(self, '_param_info', dict())
 
         default_info = {
             "constraint": None,
@@ -63,11 +64,11 @@ class Module(eqx.Module):
                 "fixed": p.fixed
             }
             # store value as Module attribute instead of Parameter
-            setattr(self, name, p.value)
+            object.__setattr__(self, name, p.value)
         elif eqx.is_array_like(p):
             # store default infos for all other array-like parameters
             self._param_info[name] = default_info
-            setattr(self, name, p)
+            object.__setattr__(self, name, p)
 
     def replace(self, name, val):
         # replace named attribute by other value
@@ -88,14 +89,33 @@ class Module(eqx.Module):
         params = {}
         for n in names:
             a = getattr(self, n)
-            if isinstance(a, jnp.ndarray):
+            if eqx.is_array_like(a):
                 if not self._param_info[n]["fixed"]:
                     params[n] = a
+            # recursively get all parameters from child models
             elif isinstance(a, Module):
                 params_ = a.parameters
                 for k, v in params_.items():
                     params[n + "." + k] = v
         return params
+
+    @property
+    def parameter_info(self):
+        names = self.__dataclass_fields__.keys()
+        parameters = self.parameters
+        info = {}
+        for n in names:
+            # is a non-fixed parameter of this Model
+            if n in parameters.keys():
+                info[n] = self._param_info[n]
+                continue
+            a = getattr(self, n)
+            # recursively get all parameter infos from child models
+            if isinstance(a, Module):
+                info_ = a.parameter_info
+                for k, v in info_.items():
+                    info[n + "." + k] = v
+        return info
 
     @property
     def filter_spec(self):

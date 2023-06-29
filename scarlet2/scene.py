@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 
@@ -11,13 +12,14 @@ class Scenery:
     scene = None
 
 class Scene(Module):
-    frame: Frame
+    frame: Frame = eqx.field(static=True)
     sources: list
 
     def __init__(self, frame):
         self.frame = frame
         # TODO: scene does not report sources as parameters because pytrees treat lists as nodes, not leaves
         self.sources = list()
+        super().__post_init__()
 
     def __call__(self):
         model = jnp.zeros(self.frame.bbox.shape)

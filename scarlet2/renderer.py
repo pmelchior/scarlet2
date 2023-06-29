@@ -1,13 +1,11 @@
+import equinox as eqx
 import jax.numpy as jnp
 
 from .fft import convolve, deconvolve, _get_fast_shape
-from .module import Module
 
 
-class Renderer(Module):
-    def __call__(self, model):
-        raise NotImplementedError
-
+class Renderer(eqx.Module):
+    pass
 
 class NoRenderer(Renderer):
     def __call__(self, model):

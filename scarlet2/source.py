@@ -1,6 +1,6 @@
 import copy
 
-from .module import Module, Parameter
+from .module import Module
 from .morphology import Morphology
 from .scene import Scenery
 from .spectrum import Spectrum
@@ -13,9 +13,8 @@ class Source(Module):
     def __init__(self, center, spectrum, morphology):
         self.spectrum = spectrum
         self.morphology = morphology
-        if not isinstance(center, Parameter):
-            center = Parameter(center, fixed=True)
         self.morphology.set_center(center)
+        super().__post_init__()
 
         # add this source to the active scene
         try:
