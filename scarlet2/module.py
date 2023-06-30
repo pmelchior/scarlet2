@@ -73,6 +73,11 @@ class Module(eqx.Module):
             self._param_info[name] = default_info
             object.__setattr__(self, name, p)
 
+    def fix(self, name, state=True):
+        info = self._param_info[name]
+        assert state in [True, False]
+        info['fixed'] = state
+
     def replace(self, name, val):
         # replace named attribute by other value
         # WARNING:

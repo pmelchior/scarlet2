@@ -3,19 +3,19 @@ import jax.numpy as jnp
 
 from .bbox import Box
 from .frame import Frame
-from .module import Module
+from .module import Module, Parameter
 from .renderer import Renderer, NoRenderer, ConvolutionRenderer
 
 
 class Observation(Module):
-    data: jnp.ndarray = eqx.field(static=True)
-    weights: jnp.ndarray = eqx.field(static=True)
+    data: jnp.ndarray
+    weights: jnp.ndarray
     frame: Frame = eqx.field(static=True)
     renderer: Renderer = eqx.field(static=True)
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
-        self.data = jnp.asarray(data)
-        self.weights = jnp.asarray(weights)
+        self.data = Parameter(jnp.asarray(data), fixed=True)
+        self.weights = Parameter(jnp.asarray(weights), fixed=True)
         if channels is None:
             channels = range(data.shape[0])
         self.frame = Frame(Box(data.shape), psf, wcs, channels)
@@ -23,6 +23,7 @@ class Observation(Module):
             renderer = NoRenderer()
         self.renderer = renderer
         super().__post_init__()
+
     def render(self, model):
         # render the model in the frame of the observation
         return self.renderer(model)
