@@ -9,9 +9,12 @@ from numpyro.distributions import constraints
 
 # recursively finding attributes:
 # from https://stackoverflow.com/a/31174427
+# with modification to unpack a list with an attribute counter
 def rgetattr(obj, attr, *args):
     def _getattr(obj, attr):
-        return getattr(obj, attr, *args)
+        if not isinstance(obj, (list, tuple)):
+            return getattr(obj, attr, *args)
+        return obj.__getitem__(int(attr))
 
     return functools.reduce(_getattr, [obj] + attr.split('.'))
 

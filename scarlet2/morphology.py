@@ -31,12 +31,12 @@ class GaussianMorphology(Morphology):
     sigma: float
 
     def __init__(self, center, sigma, bbox=None):
-
         self.sigma = sigma
         self.center = center
+        super().__post_init__()
 
         if bbox is None:
-            max_sigma = jnp.max(sigma)
+            max_sigma = jnp.max(self.sigma)
             # explicit call to int() to avoid bbox sizes being jax-traced
             size = 10 * int(jnp.ceil(max_sigma))
             if size % 2 == 0:
@@ -46,8 +46,6 @@ class GaussianMorphology(Morphology):
             origin = (int(center_int[0]) - size // 2, int(center_int[1]) - size // 2)
             bbox = Box(shape, origin=origin)
         self.bbox = bbox
-
-        super().__post_init__()
 
     def __call__(self):
         # grid positions in X/Y
