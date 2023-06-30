@@ -8,11 +8,9 @@ from .module import Module
 
 class Morphology(Module):
     bbox: Box = eqx.field(static=True, init=False)
-    center: (jnp.ndarray, None) = None
 
-    def set_center(self, center):
-        self.set('center', center)
-        center_ = tuple(_.item() for _ in self.center.astype(int))
+    def center_bbox(self, center):
+        center_ = tuple(_.item() for _ in center.astype(int))
         self.bbox.set_center(center_)
 
 

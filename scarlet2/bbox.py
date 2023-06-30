@@ -92,7 +92,7 @@ class Box(eqx.Module):
     def set_center(self, pos):
         """Center box at given position
         """
-        origin = tuple(p - c for p, c in zip(pos, self.center))
+        origin = tuple(o + p - c for o, p, c in zip(self.origin, pos, self.center))
         object.__setattr__(self, 'origin', origin)
 
     def grow(self, radius):
