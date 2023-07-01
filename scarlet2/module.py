@@ -56,7 +56,7 @@ class Module(eqx.Module):
             "constraint": None,
             "prior": None,
             "stepsize": 1,
-            "fixed": False
+            "fixed": True  # ndarrays are treated as fixed by default
         }
         # unpack Parameter
         if isinstance(p, Parameter):
