@@ -4,7 +4,7 @@ import jax.numpy as jnp
 
 from .bbox import overlap_slices
 from .frame import Frame
-from .module import Module
+from .module import Module, rgetattr
 
 
 class Scenery:
@@ -59,19 +59,39 @@ class Scene(Module):
         else:
             obs_ = observations
 
-        # set up optimimzer
-        # TODO: different step sizes for optimizer
-        # see https://github.com/deepmind/optax/blob/7063ce8022ce6165926de369d6fefa207e318127/optax/_src/combine.py#L65
+        # get step sizes for each parameter
+        parameters = self.get_parameters(return_info=True)
+        stepsizes = {name: info["stepsize"] for name, (p, info) in parameters.items()}
+        # are they all the same?
+        same = len(set(stepsizes.values())) == 1
+
+        # set up optimizer
         learning_rate = kwargs.pop("learning_rate", 1e-2)
-        optim = optax.adam(learning_rate=learning_rate, **kwargs)
+        if same:
+            optim = optax.adam(learning_rate=learning_rate, **kwargs)
+        else:
+            # see https://optax.readthedocs.io/en/latest/api.html?highlight=multi_transform#optax.multi_transform
+            # return a tree for all the names of the parameters
+            # needs to be a callable! If just a tree, optax.multi_transform will attempt to __call__ it.
+            # as this tree is a Scene, it has a custom __call__ method -> not return a name tree...
+            def name_tree(tree):
+                where = lambda model: tuple(rgetattr(model, n) for n in parameters.keys())
+                replace = parameters.keys()
+                name_tree = eqx.tree_at(where, tree, replace=replace)
+
+            optims = {name: optax.adam(learning_rate=s, **kwargs) for name, s in stepsizes.items()}
+            optim = optax.multi_transform(optims, name_tree)
+
+            # TODO: optax.multi_transform does not appear to update!
+            # therefore not working
+            raise NotImplementedError("Parameter-dependent step sizes not available yet!")
 
         # transform to unconstrained parameters
-        parameters = self.get_parameters(return_info=True)
         constraint_fn = {name: biject_to(info["constraint"]) for name, (value, info) in parameters.items() if
                          info["constraint"] is not None}
         scene_ = _constraint_replace(self, constraint_fn, inv=True)
 
-        # get optimizer set up with the filtered (and unconstrained) parameters
+        # get optimizer initialized with the filtered (=non-fixed) parameters
         filter_spec = self.filter_spec
         if filter_spec is None:
             opt_state = optim.init(scene_)
