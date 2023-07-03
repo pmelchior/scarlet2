@@ -45,7 +45,57 @@ class Scene(Module):
     def __exit__(self, exc_type, exc_value, traceback):
         Scenery.scene = None
 
+    def sample(self, observations, **kwargs):
+        # uses numpyro NUTS on all non-fixed parameters
+        # requires that those have priors set
+        try:
+            import numpyro
+            import numpyro.distributions as dist
+            from numpyro.infer import MCMC, NUTS
+            from jax import random
+        except ImportError:
+            raise ImportError("scarlet2.Scene.sample() requires numpyro.")
+
+        # dealing with multiple observations
+        if not isinstance(observations, (list, tuple)):
+            observations = (observations,)
+        else:
+            observations = observations
+
+        # find all non-fixed parameters and their priors
+        parameters = self.get_parameters(return_info=True)
+        priors = {name: info["prior"] for name, (p, info) in parameters.items()}
+        has_none = any(prior is None for prior in priors.values())
+        if has_none:
+            from pprint import pformat
+            msg = f"All parameters need to have priors set. Got:\n{pformat(priors)}"
+            raise AttributeError(msg)
+
+        # define the pyro model, where every parameter becomes a sample,
+        # and the observations sample from their likelihood given the rendered model
+        def pyro_model(model, obs=None):
+            names = tuple(priors.keys())
+            samples = tuple(numpyro.sample(name, prior) for name, prior in priors.items())
+            model = model.replace(names, samples)
+            pred = model()
+            if len(obs) == 1:
+                numpyro.sample('obs', dist.Normal(obs[0].render(pred), 1), obs=obs[0].data)
+            else:
+                for i, obs_ in enumerate(obs):
+                    numpyro.sample(f'obs.{i}', dist.Normal(obs_.render(pred), 1), obs=obs_.data)
+
+        from numpyro.infer import MCMC, NUTS
+        nuts_kernel = NUTS(pyro_model)
+        mcmc = MCMC(nuts_kernel, num_warmup=500, num_samples=1000)
+        rng_key = random.PRNGKey(0)
+        mcmc.run(rng_key, self, obs=observations)
+        return mcmc
+
     def fit(self, observations, max_iter=100, progress=True, **kwargs):
+        # optax fit with adam optimizer
+        # TODO: check alternative optimizers
+        # Transforms constrained parameters into unconstrained ones
+        # and filters out fixed parameters
         try:
             import tqdm
             import optax
@@ -55,9 +105,9 @@ class Scene(Module):
 
         # dealing with multiple observations
         if not isinstance(observations, (list, tuple)):
-            obs_ = (observations,)
+            observations = (observations,)
         else:
-            obs_ = observations
+            observations = observations
 
         # get step sizes for each parameter
         parameters = self.get_parameters(return_info=True)
@@ -83,7 +133,7 @@ class Scene(Module):
             optim = optax.multi_transform(optims, name_tree)
 
             # TODO: optax.multi_transform does not appear to update!
-            # therefore not working
+            # therefore not working !?!
             raise NotImplementedError("Parameter-dependent step sizes not available yet!")
 
         # transform to unconstrained parameters
@@ -101,7 +151,7 @@ class Scene(Module):
         with tqdm.trange(max_iter) as t:
             for step in t:
                 # optimizer step
-                scene_, loss, opt_state = _make_step(scene_, obs_, optim, opt_state, filter_spec=filter_spec,
+                scene_, loss, opt_state = _make_step(scene_, observations, optim, opt_state, filter_spec=filter_spec,
                                                      constraint_fn=constraint_fn)
                 # Log the loss in the tqdm progress bar
                 t.set_postfix(loss=f"{loss:08.2f}")
