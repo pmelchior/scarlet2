@@ -73,57 +73,70 @@ class Module(eqx.Module):
             self._param_info[name] = default_info
             object.__setattr__(self, name, p)
 
-    def fix(self, name, state=True):
-        info = self._param_info[name]
-        assert state in [True, False]
-        info['fixed'] = state
+    def set_info(self, name, **kwargs):
+        parameters = self.get_parameters(return_info=True, list_fixed=True)
+
+        if not isinstance(name, (list, tuple, {}.keys().__class__)):
+            name = (name,)
+
+        for n in name:
+            info = parameters[n][1]
+            for k, v in kwargs.items():
+                info[k] = v
+
+    @property
+    def parameters(self):
+        return self.get_parameters()
+
+    def get_parameters(self, return_value=True, return_info=False, list_fixed=False):
+        # Get all non-fixed parameters as dict: name->attribute
+        names = self.__dataclass_fields__.keys()
+        params = {}
+        info = {}
+
+        def get_info(name, attr, infodict):
+            params[name] = attr
+            info[name] = infodict
+
+        for name in names:
+            a = getattr(self, name)
+            if eqx.is_array_like(a):
+                infodict = self._param_info[name]
+                if list_fixed or not infodict["fixed"]:
+                    get_info(name, a, infodict)
+            # recursively get all parameters from child models
+            elif isinstance(a, Module):
+                params_ = a.get_parameters(return_info=True, list_fixed=list_fixed)
+                for k, (p, infodict) in params_.items():
+                    name_ = f"{name}.{k}"
+                    get_info(name_, p, infodict)
+            elif isinstance(a, (list, tuple)):
+                for i, a_ in enumerate(a):
+                    params_ = a_.get_parameters(return_info=True, list_fixed=list_fixed)
+                    for k, (p, infodict) in params_.items():
+                        name_ = f"{name}.{i}.{k}"
+                        get_info(name_, p, infodict)
+        if return_value:
+            if return_info:
+                params = {k: (params[k], info[k]) for k in params.keys()}
+        else:
+            if return_info:
+                params = info
+            else:
+                params = params.keys()
+        return params
 
     def replace(self, name, val):
         # replace named attribute by other value
         # WARNING:
         # This function will create inconsistent _param_info for named parameter.
         # Use only for explicit optimizers/samplers calls that don't need/understand _param_info
-        if not isinstance(name, (list, tuple)):
+        if not isinstance(name, (list, tuple, {}.keys().__class__)):
             name = (name,)
             val = (val,)
         where = lambda model: tuple(rgetattr(model, n) for n in name)
         replace = val
         return eqx.tree_at(where, self, replace=replace)
-
-    @property
-    def parameters(self):
-        return self.get_parameters()
-
-    def get_parameters(self, return_info=False):
-        # Get all non-fixed parameters as dict: name->attribute
-        names = self.__dataclass_fields__.keys()
-        params = {}
-        info = {}
-        for name in names:
-            a = getattr(self, name)
-            if eqx.is_array_like(a):
-                infodict = self._param_info[name]
-                if not infodict["fixed"]:
-                    params[name] = a
-                    info[name] = infodict
-            # recursively get all parameters from child models
-            elif isinstance(a, Module):
-                params_ = a.get_parameters(return_info=True)
-                for k, (p, infodict) in params_.items():
-                    name_ = f"{name}.{k}"
-                    params[name_] = p
-                    info[name_] = infodict
-            elif isinstance(a, (list, tuple)):
-                for i, a_ in enumerate(a):
-                    params_ = a_.get_parameters(return_info=True)
-                    for k, (p, infodict) in params_.items():
-                        name_ = f"{name}.{i}.{k}"
-                        params[name_] = p
-                        info[name_] = infodict
-        if return_info:
-            params = {k: (params[k], info[k]) for k in params.keys()}
-        return params
-
 
     @property
     def filter_spec(self):
