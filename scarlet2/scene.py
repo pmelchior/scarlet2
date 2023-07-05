@@ -51,16 +51,34 @@ class Scene(Module):
         try:
             import numpyro
             import numpyro.distributions as dist
+            import numpyro.distributions.constraints as constraints
             from numpyro.infer import MCMC, NUTS
-            from jax import random
         except ImportError:
             raise ImportError("scarlet2.Scene.sample() requires numpyro.")
 
-        # dealing with multiple observations
-        if not isinstance(observations, (list, tuple)):
-            observations = (observations,)
-        else:
-            observations = observations
+        # helper class to turn observation likelihood(s) into numpyro distribution
+        class ObsDistribution(dist.Distribution):
+            support = constraints.real_vector
+
+            def __init__(self, obs, model, validate_args=None):
+                self.obs = obs
+                self.model = model
+                event_shape = jnp.shape(model)
+                super().__init__(
+                    event_shape=event_shape,
+                    validate_args=validate_args,
+                )
+
+            def sample(self, key, sample_shape=()):
+                raise NotImplementedError
+
+            def mean(self):
+                return self.obs.render(self.model)
+
+            @dist.util.validate_sample
+            def log_prob(self, value):
+                # numpyro needs sampling distribution of data (=value), not likelihood function of parameters
+                return self.obs._log_likelihood(self.model, value)
 
         # find all non-fixed parameters and their priors
         parameters = self.get_parameters(return_info=True)
@@ -77,17 +95,18 @@ class Scene(Module):
             names = tuple(priors.keys())
             samples = tuple(numpyro.sample(name, prior) for name, prior in priors.items())
             model = model.replace(names, samples)
-            pred = model()
-            if len(obs) == 1:
-                numpyro.sample('obs', dist.Normal(obs[0].render(pred), 1), obs=obs[0].data)
+            pred = model()  # create prediction once for all observations
+            # dealing with multiple observations
+            if not isinstance(observations, (list, tuple)):
+                numpyro.sample('obs', ObsDistribution(obs, pred), obs=obs.data)
             else:
                 for i, obs_ in enumerate(obs):
-                    numpyro.sample(f'obs.{i}', dist.Normal(obs_.render(pred), 1), obs=obs_.data)
+                    numpyro.sample(f'obs.{i}', ObsDistribution(obs_, pred), obs=obs_.data)
 
         from numpyro.infer import MCMC, NUTS
-        nuts_kernel = NUTS(pyro_model)
+        nuts_kernel = NUTS(pyro_model, dense_mass=True)
         mcmc = MCMC(nuts_kernel, num_warmup=500, num_samples=1000)
-        rng_key = random.PRNGKey(0)
+        rng_key = jax.random.PRNGKey(0)
         mcmc.run(rng_key, self, obs=observations)
         return mcmc
 
