@@ -1,7 +1,7 @@
 from .module import Module, Parameter
 from .morphology import Morphology, GaussianMorphology
 from .scene import Scenery
-from .spectrum import Spectrum#,ChannelIndex
+from .spectrum import Spectrum
 import jax.numpy as jnp
 
 class Source(Module):
@@ -41,7 +41,7 @@ class StaticSource(Module):
         if not isinstance(center, Parameter):
             center = Parameter(center, fixed=True)
         self.morphology.set_center(center) 
-        self.channelindex = channelindex#jnp.repeat(jnp.arange(spectrum.value.shape[0]),channelcount)
+        self.channelindex = channelindex
         
         # add this source to the active scene
         try:
