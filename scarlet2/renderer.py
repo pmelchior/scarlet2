@@ -4,10 +4,6 @@ from .fft import convolve, deconvolve, _get_fast_shape
 from .module import Module
 
 class Renderer(Module):
-    def __init__(self, frame, obs_frame, *parameters):
-        object.__setattr__(self, "channel_map", self.get_channel_map(frame, obs_frame))
-        #self.channel_map = self.get_channel_map(frame, obs_frame)
-        super().__init__(*parameters)
     def __call__(self, model):
         raise NotImplementedError
 
@@ -55,7 +51,8 @@ class ConvolutionRenderer(Renderer):
         # compute and store diff kernel in Fourier space
         diff_kernel_fft = deconvolve(obs_frame.psf(), psf_model, axes=(-2, -1), fft_shape=fft_shape, return_fft=True)
         object.__setattr__(self, "_diff_kernel_fft", diff_kernel_fft)
-        super().__init__(frame, obs_frame, *parameters)
+        object.__setattr__(self, "channel_map", self.get_channel_map(frame, obs_frame))
+        
     def __call__(self, model):
         # TODO: including slices 
         model_ = self.map_channels(model)

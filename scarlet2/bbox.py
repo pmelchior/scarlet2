@@ -94,7 +94,7 @@ class Box:
     def set_center(self, pos):
         """Center box at given position
         """
-        self.origin = tuple(p - c for p, c in zip(pos, self.center))
+        self.origin = tuple(o + p - c for o, p, c in zip(self.origin, pos, self.center))  
 
     def grow(self, radius):
         """Grow the Box by the given radius in each direction

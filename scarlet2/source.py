@@ -1,7 +1,7 @@
 from .module import Module, Parameter
 from .morphology import Morphology, GaussianMorphology
 from .scene import Scenery
-from .spectrum import Spectrum,Specind
+from .spectrum import Spectrum,ChannelIndex
 import jax.numpy as jnp
 
 class Source(Module):
@@ -34,14 +34,14 @@ class Source(Module):
 class StaticSource(Module):
     spectrum: Spectrum
     morphology: Morphology 
-    specind: Specind
-    def __init__(self, center, spectrum, morphology, repeats):
+    channelindex: ChannelIndex
+    def __init__(self, center, spectrum, morphology, channelcount):
         self.spectrum = spectrum
         self.morphology = morphology
         if not isinstance(center, Parameter):
             center = Parameter(center, fixed=True)
         self.morphology.set_center(center) 
-        self.specind = jnp.repeat(jnp.arange(spectrum.value.shape[0]),repeats)
+        self.channelindex = jnp.repeat(jnp.arange(spectrum.value.shape[0]),channelcount)
         
         # add this source to the active scene
         try:
@@ -52,8 +52,8 @@ class StaticSource(Module):
             raise
 
     def __call__(self):
-        # Boxed model
-        return self.spectrum()[self.specind][:, None, None] * self.morphology()[None, :, :]
+        # Boxed model 
+        return self.spectrum()[self.channelindex][:, None, None] * self.morphology()[None, :, :]
 
     @property
     def bbox(self): 
