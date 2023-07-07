@@ -110,7 +110,7 @@ class Scene(Module):
         mcmc.run(rng_key, self, obs=observations)
         return mcmc
 
-    def fit(self, observations, max_iter=100, progress=True, **kwargs):
+    def fit(self, observations, max_iter=100, progress_bar=True, **kwargs):
         # optax fit with adam optimizer
         # TODO: check alternative optimizers
         # Transforms constrained parameters into unconstrained ones
@@ -118,6 +118,7 @@ class Scene(Module):
         try:
             import tqdm
             import optax
+            import optax._src.base as base
             from numpyro.distributions.transforms import biject_to
         except ImportError:
             raise ImportError("scarlet2.Scene.fit() requires optax and numpyro.")
@@ -131,29 +132,31 @@ class Scene(Module):
         # get step sizes for each parameter
         parameters = self.get_parameters(return_info=True)
         stepsizes = {name: info["stepsize"] for name, (p, info) in parameters.items()}
-        # are they all the same?
-        same = len(set(stepsizes.values())) == 1
 
-        # set up optimizer
-        learning_rate = kwargs.pop("learning_rate", 1e-2)
-        if same:
-            optim = optax.adam(learning_rate=learning_rate, **kwargs)
-        else:
-            # see https://optax.readthedocs.io/en/latest/api.html?highlight=multi_transform#optax.multi_transform
-            # return a tree for all the names of the parameters
-            # needs to be a callable! If just a tree, optax.multi_transform will attempt to __call__ it.
-            # as this tree is a Scene, it has a custom __call__ method -> not return a name tree...
-            def name_tree(tree):
-                where = lambda model: tuple(rgetattr(model, n) for n in parameters.keys())
-                replace = parameters.keys()
-                name_tree = eqx.tree_at(where, tree, replace=replace)
+        # make a stepsize tree
+        where = lambda model: tuple(rgetattr(model, n) for n in stepsizes.keys())
+        replace = tuple(stepsizes.values())
+        step_tree = eqx.tree_at(where, self, replace=replace)
 
-            optims = {name: optax.adam(learning_rate=s, **kwargs) for name, s in stepsizes.items()}
-            optim = optax.multi_transform(optims, name_tree)
+        def scale_by_stepsize():
+            # adapted from optax.scale()
+            def init_fn(params):
+                del params
+                return base.EmptyState()
 
-            # TODO: optax.multi_transform does not appear to update!
-            # therefore not working !?!
-            raise NotImplementedError("Parameter-dependent step sizes not available yet!")
+            def update_fn(updates, state, params=None):
+                updates = jax.tree_util.tree_map(
+                    lambda u, step: -step * u,  # minus because we want gradient descent
+                    updates, step_tree)
+                return updates, state
+
+            return base.GradientTransformation(init_fn, update_fn)
+
+        # run adam, followed by stepsize adjustments
+        optim = optax.chain(
+            optax.scale_by_adam(**kwargs),
+            scale_by_stepsize(),
+        )
 
         # transform to unconstrained parameters
         constraint_fn = {name: biject_to(info["constraint"]) for name, (value, info) in parameters.items() if
@@ -167,7 +170,7 @@ class Scene(Module):
         else:
             opt_state = optim.init(eqx.filter(scene_, filter_spec))
 
-        with tqdm.trange(max_iter) as t:
+        with tqdm.trange(max_iter, disable=not progress_bar) as t:
             for step in t:
                 # optimizer step
                 scene_, loss, opt_state = _make_step(scene_, observations, optim, opt_state, filter_spec=filter_spec,
