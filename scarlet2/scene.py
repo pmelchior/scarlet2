@@ -110,11 +110,11 @@ class Scene(Module):
         mcmc.run(rng_key, self, obs=observations)
         return mcmc
 
-    def fit(self, observations, max_iter=100, progress_bar=True, **kwargs):
+    def fit(self, observations, max_iter=100, progress_bar=True, callback=None, **kwargs):
         # optax fit with adam optimizer
-        # TODO: check alternative optimizers
         # Transforms constrained parameters into unconstrained ones
         # and filters out fixed parameters
+        # TODO: check alternative optimizers
         try:
             import tqdm
             import optax
@@ -177,7 +177,8 @@ class Scene(Module):
                                                      constraint_fn=constraint_fn)
                 # Log the loss in the tqdm progress bar
                 t.set_postfix(loss=f"{loss:08.2f}")
-
+                if callback is not None:
+                    callback(scene_, loss)
         return _constraint_replace(scene_, constraint_fn)  # transform back to constrained variables
 
 
