@@ -1,6 +1,6 @@
 import copy
 
-from .module import Module, Parameter
+from .module import Module
 from .morphology import Morphology
 from .scene import Scenery
 from .spectrum import Spectrum
@@ -13,9 +13,8 @@ class Source(Module):
     def __init__(self, center, spectrum, morphology):
         self.spectrum = spectrum
         self.morphology = morphology
-        if not isinstance(center, Parameter):
-            center = Parameter(center, fixed=True)
-        self.morphology.set_center(center)
+        self.morphology.center_bbox(center)
+        super().__post_init__()
 
         # add this source to the active scene
         try:
@@ -45,5 +44,7 @@ class PointSource(Source):
         if frame.psf is None:
             raise AttributeError("PointSource can only be create with a PSF in the model frame")
 
+        # use frame's PSF but with free center parameter
         morphology = copy.deepcopy(frame.psf.morphology)
+        object.__setattr__(morphology, 'center', center)
         super().__init__(center, spectrum, morphology)

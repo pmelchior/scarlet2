@@ -1,8 +1,7 @@
-from dataclasses import dataclass
+import equinox as eqx
 
 
-@dataclass
-class Box:
+class Box(eqx.Module):
     """Bounding Box for an object
 
     A Bounding box describes the location of a data unit in the global/model coordinate
@@ -16,7 +15,6 @@ class Box:
     - 3D shapes denote (Channels, Height, Width)
     """
 
-    # TODO: implement as integer jax arrays to simplify arithmetic
     shape: tuple
     origin: tuple
 
@@ -94,7 +92,8 @@ class Box:
     def set_center(self, pos):
         """Center box at given position
         """
-        self.origin = tuple(o + p - c for p, c in zip(self.origin, pos, self.center))
+        origin = tuple(o + p - c for o, p, c in zip(self.origin, pos, self.center))
+        object.__setattr__(self, 'origin', origin)
 
     def grow(self, radius):
         """Grow the Box by the given radius in each direction
@@ -162,43 +161,24 @@ class Box:
             o_ = (o_,)
         return Box(s_, origin=o_)
 
-    def __repr__(self):
-        result = "<Box shape={0}, origin={1}>"
-        return result.format(self.shape, self.origin)
-
-    def __iadd__(self, offset):
-        if not hasattr(offset, "__iter__"):
-            offset = (offset,) * self.D
-        self.origin = tuple([a + o for a, o in zip(self.origin, offset)])
-        return self
-
     def __add__(self, offset):
-        return self.copy().__iadd__(offset)
-
-    def __isub__(self, offset):
         if not hasattr(offset, "__iter__"):
             offset = (offset,) * self.D
-        self.origin = tuple([a - o for a, o in zip(self.origin, offset)])
-        return self
+        origin = tuple([a + o for a, o in zip(self.origin, offset)])
+        return Box(self.shape, origin=origin)
 
     def __sub__(self, offset):
-        return self.copy().__isub__(offset)
-
-    def __imatmul__(self, bbox):
-        bounds = self.bounds + bbox.bounds
-        self = Box.from_bounds(*bounds)
-        return self
+        if not hasattr(offset, "__iter__"):
+            offset = (offset,) * self.D
+        origin = tuple([a - o for a, o in zip(self.origin, offset)])
+        return Box(self.shape, origin=origin)
 
     def __matmul__(self, bbox):
-        return self.copy().__imatmul__(bbox)
+        bounds = self.bounds + bbox.bounds
+        return Box.from_bounds(*bounds)
 
     def __copy__(self):
         return Box(self.shape, origin=self.origin)
-
-    def copy(self):
-        """Copy of the box
-        """
-        return self.__copy__()
 
     def __eq__(self, other):
         return self.shape == other.shape and self.origin == other.origin

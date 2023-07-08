@@ -1,14 +1,12 @@
-from dataclasses import dataclass
-
 import astropy.wcs.wcs
+import equinox as eqx
 import jax.numpy as jnp
 
 from .bbox import Box
 from .psf import PSF
 
 
-@dataclass
-class Frame:
+class Frame(eqx.Module):
     bbox: Box
     psf: PSF = None
     wcs: astropy.wcs.wcs = None

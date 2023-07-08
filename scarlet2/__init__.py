@@ -1,5 +1,4 @@
 from .bbox import Box
-from .constraint import Constraint, PositiveConstraint
 from .frame import Frame
 from .module import Parameter, Module
 from .morphology import Morphology, ArrayMorphology, GaussianMorphology
