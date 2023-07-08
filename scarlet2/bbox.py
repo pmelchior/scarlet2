@@ -161,27 +161,11 @@ class Box(eqx.Module):
             o_ = (o_,)
         return Box(s_, origin=o_)
 
-    # def __repr__(self):
-    #     result = "<Box shape={0}, origin={1}>"
-    #     return result.format(self.shape, self.origin)
-    #
-    # def __iadd__(self, offset):
-    #     if not hasattr(offset, "__iter__"):
-    #         offset = (offset,) * self.D
-    #     self.origin = tuple([a + o for a, o in zip(self.origin, offset)])
-    #     return self
-
     def __add__(self, offset):
         if not hasattr(offset, "__iter__"):
             offset = (offset,) * self.D
         origin = tuple([a + o for a, o in zip(self.origin, offset)])
         return Box(self.shape, origin=origin)
-
-    # def __isub__(self, offset):
-    #     if not hasattr(offset, "__iter__"):
-    #         offset = (offset,) * self.D
-    #     self.origin = tuple([a - o for a, o in zip(self.origin, offset)])
-    #     return self
 
     def __sub__(self, offset):
         if not hasattr(offset, "__iter__"):
@@ -189,22 +173,12 @@ class Box(eqx.Module):
         origin = tuple([a - o for a, o in zip(self.origin, offset)])
         return Box(self.shape, origin=origin)
 
-    # def __imatmul__(self, bbox):
-    #     bounds = self.bounds + bbox.bounds
-    #     self = Box.from_bounds(*bounds)
-    #     return self
-
     def __matmul__(self, bbox):
         bounds = self.bounds + bbox.bounds
         return Box.from_bounds(*bounds)
 
     def __copy__(self):
         return Box(self.shape, origin=self.origin)
-
-    # def copy(self):
-    #     """Copy of the box
-    #     """
-    #     return self.__copy__()
 
     def __eq__(self, other):
         return self.shape == other.shape and self.origin == other.origin
