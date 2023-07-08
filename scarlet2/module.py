@@ -3,8 +3,6 @@ import functools
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from numpyro import distributions
-from numpyro.distributions import constraints
 
 
 # recursively finding attributes:
@@ -21,8 +19,8 @@ def rgetattr(obj, attr, *args):
 
 class Parameter(eqx.Module):
     value: (jnp.ndarray, float, complex, bool, int)
-    constraint: (None, constraints.Constraint) = None
-    prior: (None, distributions.Distribution) = None
+    constraint: (None, object) = None
+    prior: (None, object) = None
     stepsize: float = 1
     fixed: bool = False
 
