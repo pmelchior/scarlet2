@@ -110,7 +110,7 @@ class Scene(Module):
         mcmc.run(rng_key, self, obs=observations)
         return mcmc
 
-    def fit(self, observations, max_iter=100, progress_bar=True, callback=None, **kwargs):
+    def fit(self, observations, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None, **kwargs):
         # optax fit with adam optimizer
         # Transforms constrained parameters into unconstrained ones
         # and filters out fixed parameters
@@ -161,24 +161,37 @@ class Scene(Module):
         # transform to unconstrained parameters
         constraint_fn = {name: biject_to(info["constraint"]) for name, (value, info) in parameters.items() if
                          info["constraint"] is not None}
-        scene_ = _constraint_replace(self, constraint_fn, inv=True)
+        scene = _constraint_replace(self, constraint_fn, inv=True)
 
         # get optimizer initialized with the filtered (=non-fixed) parameters
         filter_spec = self.filter_spec
         if filter_spec is None:
-            opt_state = optim.init(scene_)
+            opt_state = optim.init(scene)
         else:
-            opt_state = optim.init(eqx.filter(scene_, filter_spec))
+            opt_state = optim.init(eqx.filter(scene, filter_spec))
 
         with tqdm.trange(max_iter, disable=not progress_bar) as t:
             for step in t:
                 # optimizer step
-                scene_, loss, opt_state = _make_step(scene_, observations, optim, opt_state, filter_spec=filter_spec,
+                scene_, loss, opt_state = _make_step(scene, observations, optim, opt_state, filter_spec=filter_spec,
                                                      constraint_fn=constraint_fn)
                 # Log the loss in the tqdm progress bar
                 t.set_postfix(loss=f"{loss:08.2f}")
+
+                # report current iteration results to callback
                 if callback is not None:
                     callback(scene_, loss)
+
+                # terminate optimization if all parameter change less than e_rel
+                if e_rel is not None:
+                    crit = lambda x, x_: jnp.linalg.norm(x - x_) < e_rel * jnp.linalg.norm(x_)
+                    converged = tuple(
+                        crit(p, p_) for (p, p_) in zip(scene.parameters.values(), scene_.parameters.values()))
+                    if all(converged):
+                        break
+
+                scene = scene_
+
         return _constraint_replace(scene_, constraint_fn)  # transform back to constrained variables
 
 
@@ -230,5 +243,5 @@ def _make_step(model, observations, optim, opt_state, filter_spec=None, constrai
         loss, grads = filtered_loss_fn(diff_model, static_model)
 
     updates, opt_state = optim.update(grads, opt_state)
-    model = eqx.apply_updates(model, updates)
-    return model, loss, opt_state
+    model_ = eqx.apply_updates(model, updates)
+    return model_, loss, opt_state
