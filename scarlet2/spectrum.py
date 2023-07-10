@@ -19,3 +19,19 @@ class ArraySpectrum(Spectrum):
 
     def __call__(self):
         return self.data
+
+class StaticArraySpectrum(Spectrum):
+    data: jnp.array
+    channelindex: jnp.ndarray
+
+    def __init__(self, data, filters, scene):
+        self.data = data
+        super().__post_init__()
+        self.channelindex = [filters.index(c[0]) for c in scene.frame.channels]
+        self.bbox = Box([len(self.channelindex)])
+        
+    def __call__(self):
+        return self.data
+
+
+    

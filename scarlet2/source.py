@@ -32,6 +32,30 @@ class Source(Module):
     def bbox(self):
         return self.spectrum.bbox @ self.morphology.bbox
 
+class StaticSource(Module):
+    spectrum: Spectrum
+    morphology: Morphology
+    def __init__(self, center, spectrum, morphology):
+        self.spectrum = spectrum
+        self.morphology = morphology
+        self.morphology.center_bbox(center)
+        super().__post_init__() 
+
+        # add this source to the active scene
+        try:
+            Scenery.scene.sources.append(self)
+        except AttributeError:
+            print("Sources can only be created within the context of a Scene")
+            print("Use 'with Scene(frame) as scene: Source(...)'")
+            raise
+
+    def __call__(self):
+        # Boxed model
+        return self.spectrum()[self.spectrum.channelindex, None, None] * self.morphology()[None, :, :]
+
+    @property
+    def bbox(self):
+        return self.spectrum.bbox @ self.morphology.bbox
 
 class PointSource(Source):
     def __init__(self, center, spectrum):
