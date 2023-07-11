@@ -10,7 +10,16 @@ class Frame(eqx.Module):
     bbox: Box
     psf: PSF = None
     wcs: astropy.wcs.wcs = None
-    channels: list = None
+    channels: list
+
+    def __init__(self, bbox, psf=None, wcs=None, channels=None):
+        self.bbox = bbox
+        self.psf = psf
+        self.wcs = wcs
+        if channels is None:
+            channels = list(range(bbox.shape[0]))
+        assert len(channels) == bbox.shape[0]
+        self.channels = channels
 
     def __hash__(self):
         return hash(self.bbox)

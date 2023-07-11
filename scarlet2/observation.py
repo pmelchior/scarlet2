@@ -49,7 +49,7 @@ class Observation(Module):
         # choose the renderer
         if renderer is None:
             if self.frame.psf is frame.psf:
-                self.renderer = NoRenderer()
+                renderer = NoRenderer()
             else:
                 assert self.frame.psf is not None and frame.psf is not None
                 if self.frame.wcs is frame.wcs:
