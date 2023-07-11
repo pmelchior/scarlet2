@@ -27,11 +27,11 @@ class StaticArraySpectrum(Spectrum):
     def __init__(self, data, filters, scene):
         self.data = data
         super().__post_init__()
-        self.channelindex = [filters.index(c[0]) for c in scene.frame.channels]
+        self.channelindex = jnp.array([filters.index(c[0]) for c in scene.frame.channels])
         self.bbox = Box([len(self.channelindex)])
         
     def __call__(self):
-        return self.data
+        return self.data[self.channelindex]
 
 
     
