@@ -32,7 +32,6 @@ class Source(Module):
     def bbox(self):
         return self.spectrum.bbox @ self.morphology.bbox
 
-
 class PointSource(Source):
     def __init__(self, center, spectrum):
         try:
