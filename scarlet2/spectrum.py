@@ -33,11 +33,11 @@ class StaticArraySpectrum(Spectrum):
             print("Use 'with Scene(frame) as scene: Source(...)'")
             raise
         
-        self.data = data
-        super().__post_init__()
+        self.data = data 
         self.channelindex = jnp.array([filters.index(c[0]) for c in frame.channels])
         self.bbox = Box([len(self.channelindex)])
-        
+        super().__post_init__()
+    
     def __call__(self):
         return self.data[self.channelindex]
 
