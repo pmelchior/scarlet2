@@ -216,7 +216,6 @@ def _constraint_replace(self, constraint_fn, inv=False):
 # update step for optax optimizer
 @eqx.filter_jit
 def _make_step(model, observations, optim, opt_state, filter_spec=None, constraint_fn=None):
-    parameters = model.get_parameters(return_info=True)
 
     def loss_fn(model):
         if constraint_fn is not None:
@@ -224,6 +223,7 @@ def _make_step(model, observations, optim, opt_state, filter_spec=None, constrai
             model = _constraint_replace(model, constraint_fn)
 
         pred = model()
+        parameters = model.get_parameters(return_info=True)
         log_like = sum(obs.log_likelihood(pred) for obs in observations)
         log_prior = sum(info["prior"].log_prob(p)
                         for name, (p, info) in parameters.items()
