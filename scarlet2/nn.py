@@ -8,10 +8,10 @@
 try:
     import numpyro.distributions as dist
     import numpyro.distributions.constraints as constraints
-    from galaxygrad import HSC_ScoreNet32, HSC_ScoreNet64, ZTF_ScoreNet32, ZTF_ScoreNet64,HSC_LogNet32, HSC_LogNet64# (https://pypi.org/project/galaxygrad/0.0.17)
+    from galaxygrad import HSC_ScoreNet32, HSC_ScoreNet64, ZTF_ScoreNet32, ZTF_ScoreNet64,HSC_LogNet32, HSC_LogNet64# (https://pypi.org/project/galaxygrad/0.0.19)
 
 except ImportError:
-    raise ImportError("scarlet2.nn requires numpyro and galaxygrad.")
+    raise ImportError("scarlet2.nn requires numpyro and galaxygrad=0.0.19")
 
 import jax.numpy as jnp
 import jax.scipy as jsp
