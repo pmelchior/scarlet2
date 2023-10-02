@@ -1,6 +1,7 @@
 import astropy.wcs.wcs
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 
 from .bbox import Box
 from .psf import PSF

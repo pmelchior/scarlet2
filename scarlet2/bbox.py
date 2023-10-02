@@ -42,6 +42,32 @@ class Box(eqx.Module):
         origin = (cmin for cmin, cmax in bounds)
         return Box(shape, origin=origin)
 
+    @staticmethod
+    def from_data(X, min_value=0):
+        """Define range of `X` above `min_value`
+
+        Parameters
+        ----------
+        X: array-like
+            Data to threshold
+        min_value: float
+            Minimum value of the result.
+
+        Returns
+        -------
+        bbox: :class:`scarlet.bbox.Box`
+            Bounding box for the thresholded `X`
+        """
+        sel = X > min_value
+        if sel.any():
+            nonzero = np.where(sel)
+            bounds = []
+            for dim in range(len(X.shape)):
+                bounds.append((nonzero[dim].min(), nonzero[dim].max() + 1))
+        else:
+            bounds = [[0, 0]] * len(X.shape)
+        return Box.from_bounds(*bounds)
+
     def contains(self, p):
         """Whether the box contains a given coordinate `p`
         """

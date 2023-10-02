@@ -4,7 +4,7 @@ import jax.scipy
 
 from .bbox import Box
 from .module import Module
-
+from .wavelet import starlet_reconstruction
 
 class Morphology(Module):
     bbox: Box = eqx.field(static=True, init=False)
@@ -61,3 +61,14 @@ class GaussianMorphology(Morphology):
         # f = lambda x, s: jnp.exp(-(x ** 2) / (2 * s ** 2)) / (jnp.sqrt(2 * jnp.pi) * s)
 
         return jnp.outer(f(_Y - self.center[0], self.sigma), f(_X - self.center[1], self.sigma))
+
+class StarletMorphology(Morphology):
+    coeffs: jnp.ndarray
+
+    def __init__(self, coeffs):
+        self.coeffs = coeffs
+        super().__post_init__()
+        self.bbox = Box(self.coeffs.shape[1:])
+
+    def __call__(self):
+        return starlet_reconstruction(self.coeffs)

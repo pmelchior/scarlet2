@@ -47,3 +47,37 @@ class PointSource(Source):
         morphology = copy.deepcopy(frame.psf.morphology)
         object.__setattr__(morphology, 'center', center)
         super().__init__(center, spectrum, morphology)
+
+class DustySource(Module):
+    spectrum: Spectrum
+    morphology: Morphology
+    host_spectrum: Spectrum
+    host_morphology: Morphology
+
+    def __init__(self, center, spectrum, morphology, host_spectrum, host_morphology):
+        self.spectrum = spectrum
+        self.morphology = morphology
+        self.morphology.center_bbox(center)
+
+        self.host_spectrum = host_spectrum
+        self.host_morphology = host_morphology
+        self.host_morphology.center_bbox(center)
+
+        super().__post_init__()
+
+        # add this source to the active scene
+        try:
+            Scenery.scene.sources.append(self)
+        except AttributeError:
+            print("Source can only be created within the context of a Scene")
+            print("Use 'with Scene(frame) as scene: Source(...)'")
+            raise
+
+    def __call__(self):
+        original_model = self.host_spectrum()[:, None, None] * self.host_morphology()[None, :, :]
+        dust_model     = self.spectrum()[:, None, None] * self.morphology()[None, :, :]
+        return original_model * (1 - dust_model)
+    
+    @property
+    def bbox(self):
+        return self.spectrum.bbox @ self.morphology.bbox
