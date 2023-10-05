@@ -1,50 +1,45 @@
 # -------------------------------------------------- #
 # This class is used to calculate the gradient       #
-# of the log-probability via calling the nn prior    #
+# of the log-probability via calling the score prior #
 # ScoreNet model. A custom vjp is created to return  #
-# the nn prior when calling jax.grad()               #
+# the score prior when calling jax.grad()            #
 # -------------------------------------------------- #
-
 try:
     import numpyro.distributions as dist
     import numpyro.distributions.constraints as constraints
-    from galaxygrad import HSC_ScoreNet32, HSC_ScoreNet64, ZTF_ScoreNet32, ZTF_ScoreNet64,HSC_LogNet32, HSC_LogNet64# (https://pypi.org/project/galaxygrad/0.0.19)
 
 except ImportError:
-    raise ImportError("scarlet2.nn requires numpyro and galaxygrad=0.0.19")
+    raise ImportError("scarlet2.nn requires numpyro.")
 
 import jax.numpy as jnp
-import jax.scipy as jsp
 from jax import custom_vjp
 from jax import vjp
 
 
-def pad_fwd(x, trained_model):
-    """Zero-pads the input image to the nearest 32 or 64 pixels"""
+
+def pad_fwd(x, model_size=32):
+    """Zero-pads the input image to the model size
+    
+    Parameters
+    ----------
+    x : array of the bounding box
+    model_size : int
+        size of the model to be used
+        
+    Returns
+    -------
+    x : padded array same size as model_size
+    pad_lo : int
+        amount of padding on the lower side
+    pad_hi : int
+        amount of padding on the higher side
+    pad : bool
+        whether or not padding was performed
+    """
     data_size = x.shape[1]
     pad = True
-    
-    # select the HSC trained model
-    if trained_model in ('hsc', 'None'):
-        if data_size <= 32:
-            pad_gap = 32 - data_size
-            ScoreNet = HSC_ScoreNet32
-        else:
-            pad_gap = 64 - data_size
-            ScoreNet = HSC_ScoreNet64
-
-    
-    # select the ZTF trained model
-    elif trained_model == 'ztf':
-        if data_size <= 32:
-            pad_gap = 32 - data_size
-            ScoreNet = ZTF_ScoreNet32
-        else:
-            pad_gap = 64 - data_size
-            ScoreNet = ZTF_ScoreNet64
-    # select the custom trained model
-    else:
-        ScoreNet = trained_model
+    pad_gap = model_size - data_size
+    assert pad_gap>= 0, "Model size must be larger than max box size"
     # dont pad if we dont need to
     if pad_gap == 0:
         pad = False
@@ -60,69 +55,106 @@ def pad_fwd(x, trained_model):
             x[0] = jnp.pad(x[0], ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant', constant_values=0) 
         else:
             x = jnp.pad(x, ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant', constant_values=0)
-    return x, ScoreNet, pad_lo, pad_hi , pad
+    return x, pad_lo, pad_hi , pad
+    
     
 # reverse pad back to original size
 def pad_back(x, pad_lo, pad_hi):
-    """Removes the zero-padding from the input image"""
+    """Removes the zero-padding from the input image
+    Paremters
+    ---------
+    x : array of the bounding box
+    pad_lo : int
+        amount of padding on the lower side
+    pad_hi : int
+        amount of padding on the higher side
+        
+    Returns
+    -------
+    x : array of the bounding box original size
+    """
     if jnp.ndim(x) > 2: 
         x[0] = x[pad_lo:-pad_hi, pad_lo:-pad_hi]
     else:
         x = x[pad_lo:-pad_hi, pad_lo:-pad_hi]
     return x
 
+
 # calculate score function (jacobian of log-probability)
-def calc_grad(x, trained_model):
-    """Calculates the gradient of the log-probability using the ScoreNet model"""
+def calc_grad(x, model, model_size=32):
+    """Calculates the gradient of the log-prior 
+    using the ScoreNet model chosen
+    
+    Parameters
+    ----------
+    x : array of the data
+    model : the model to calculate the score function
+    model_size : int
+        size of the model to be used
+        
+    Returns
+    -------
+    score_func : array of the score function
+    """
     # perform padding if needed
-    t = 0.0 # corresponds to noise free gradient
     x = jnp.float32(x) # cast to float32
-    x, ScoreNet, pad_lo, pad_hi, pad = pad_fwd(x, trained_model)
+    x, pad_lo, pad_hi, pad = pad_fwd(x, model_size)
     assert (x.shape[1] % 32) == 0, f"image size must be 32 or 64, got: {x.shape[1]}"
     if jnp.ndim(x) == 2:
         x = jnp.expand_dims(x, axis=0)
-        nn_grad = ScoreNet(x, t=t)
-        nn_grad = jnp.squeeze(nn_grad, axis=0)
+        score_func = model(x)
+        score_func = jnp.squeeze(score_func, axis=0)
     else:
-        nn_grad = ScoreNet(x, t=t)
+        score_func = model(x)
     # return to original size
-    if pad: nn_grad = pad_back(nn_grad, pad_lo, pad_hi)
-    return nn_grad
+    if pad: 
+        score_func = pad_back(score_func, pad_lo, pad_hi)
+    return score_func
 
 
-# ------------------------------------------------- #
-#   transformation corrections in training space    #
-# ------------------------------------------------- #
-# jax gradient function
+# jax gradient function to calculate jacobian
 def vgrad(f, x):
     y, vjp_fn = vjp(f, x)
     return vjp_fn(jnp.ones(y.shape))[0]
 
-# transform to training space
-def transform(x):
-    sigma_y = 0.10
-    return jnp.log(x + 1) / sigma_y
-# ------------------------------------------------- #
+
+
+# Here we define a custom vjp for the log_prob function
+# such that for gradient calls in jax, the score prior
+# is returned
+from functools import partial
+@partial(custom_vjp, nondiff_argnums=(0,1,2))
+def _log_prob(model, transform, model_size, x):
+    return 0
+    
+def log_prob_fwd(model, transform, model_size, x):
+    x = transform(x)
+    score_func = calc_grad(x, model, model_size)
+    score_func = vgrad(transform, x) * score_func # chain rule
+    return 0.0, score_func  # cannot directly call log_prob in Class object
+
+def log_prob_bwd(model, transform, model_size, res, g):
+    score_func = res # Get residuals computed in f_fwd
+    return (g * score_func,) # create the vector (g) jacobian (score_func) product
+
+# register the custom vjp 
+_log_prob.defvjp(log_prob_fwd, log_prob_bwd)
 
 
 # inheritance from Distribution class
-class NNPrior(dist.Distribution):
+class ScorePrior(dist.Distribution):
     support = constraints.real_vector
-
     """Prior distribution based on a neural network"""
 
-    # construct custom vector-jacobian product
+    def __init__(self, model='None', transform='None', model_size=32, validate_args=None):
+        self.model = model 
+        self.model_size = model_size    
+        if transform == 'None':
+            self.transform = lambda x: x
+        else:
+            self.transform = transform                
 
-    def __init__(self, trained_model='None', shape=1, validate_args=None):
-        # TODO: what's up with these globals?
-        # NOTE: this is a hack to get around the fact that    
-        # jax doesn't allow flexible arguments to be passed   
-        # to the log_prob function                           
-        global custom_model
-        custom_model = trained_model
-
-        # TODO: needs shape of the model images
-        event_shape = jnp.shape(shape)
+        event_shape = jnp.shape([self.model_size, self.model_size])
         super().__init__(
             event_shape=event_shape,
             validate_args=validate_args,
@@ -130,27 +162,10 @@ class NNPrior(dist.Distribution):
 
     def sample(self, key, sample_shape=()):
         # TODO: add ability to draw samples from the prior, if desired
-        # NOTE: this will have a fixed size, ie the training data array size
         raise NotImplementedError
 
     def mean(self):
         raise NotImplementedError
     
-    @custom_vjp
-    def log_prob(x):
-        return 0.0
-
-    def log_prob_fwd(x):
-        # Returns primal output and residuals to be used in backward pass by f_bwd
-        x = transform(x) # transform to trainign space
-        nn_grad = calc_grad(x, custom_model)
-        nn_grad = vgrad(transform, x) * nn_grad # chain rule
-        return 0.0, nn_grad  # cannot directly call log_prob in Class object
-
-    def log_prob_bwd(res, g):
-        nn_grad = res # Get residuals computed in f_fwd
-        vjp = (g * nn_grad,) # create the vector (g) jacobian (nn_grad) product
-        return vjp
-    
-    # register the custom vjp 
-    log_prob.defvjp(log_prob_fwd, log_prob_bwd)
+    def log_prob(self, x):
+        return _log_prob(self.model, self.transform, self.model_size, x)
