@@ -7,7 +7,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as random
 from jax import jvp, grad, jit
-#from astropy.visualization.lupton_rgb import LinearMapping, AsinhMapping
 from .bbox import Box
 
 
