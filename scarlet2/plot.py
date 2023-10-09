@@ -7,8 +7,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as random
 from jax import jvp, grad, jit
-from astropy.visualization.lupton_rgb import LinearMapping, AsinhMapping
+#from astropy.visualization.lupton_rgb import LinearMapping, AsinhMapping
 from .bbox import Box
+
 
 
 def channels_to_rgb(channels):
@@ -627,6 +628,10 @@ def sources(
             panel += 1
             
         if show_hallucination:
+            # must use a prior to get a hallucination score
+            _, info = src.get_parameters(return_info=True)['morphology.data']
+            assert (info["prior"] is not None), "Must use a prior to get a hallucination score"
+            
             # Show the unrendered model in it's bbox
             hallucination = hallucination_score(scene, observation, k)
             extent = get_extent(src.morphology.bbox)
