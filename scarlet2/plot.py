@@ -11,10 +11,6 @@ from astropy.visualization.lupton_rgb import LinearMapping, AsinhMapping
 from .bbox import Box
 
 
-#from .component import Component
-#from .source import NullSource
-
-
 def channels_to_rgb(channels):
     """Get the linear mapping of multiple channels to RGB channels
     The mapping created here assumes the the channels are ordered in wavelength
