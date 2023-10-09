@@ -73,10 +73,12 @@ class DustySource(Module):
             print("Use 'with Scene(frame) as scene: Source(...)'")
             raise
 
+    def get_attenuation(self):
+        return 10**( -0.4 * self.spectrum()[:, None, None] * self.morphology()[None, :, :] )
+    
     def __call__(self):
         original_model = self.host_spectrum()[:, None, None] * self.host_morphology()[None, :, :]
-        dust_model     = self.spectrum()[:, None, None] * self.morphology()[None, :, :]
-        return original_model * (1 - dust_model)
+        return original_model * self.get_attenuation()
     
     @property
     def bbox(self):

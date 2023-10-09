@@ -41,5 +41,19 @@ class StaticArraySpectrum(Spectrum):
     def __call__(self):
         return self.data[self.channelindex]
 
+class SMCAttenuationSpectrum(Spectrum):
+    # https://ui.adsabs.harvard.edu/abs/2003AJ....126.1131R/abstract
+    # http://www.bo.astro.it/~micol/Hyperz/old_public_v1/hyperz_manual1/node10.html
 
-    
+    channel_wavelengths : jnp.array # angstrom
+
+    def __init__(self, channel_wavelengths):
+        self.channel_wavelengths = channel_wavelengths * 1e-4 # micrometer
+
+        super().__post_init__()
+        self.bbox = Box(self.channel_wavelengths.shape)
+
+    def __call__(self):
+        A_lambda = 1.39 * self.channel_wavelengths **-1.2
+
+        return A_lambda
