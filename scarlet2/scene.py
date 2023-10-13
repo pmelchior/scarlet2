@@ -131,8 +131,8 @@ class Scene(Module):
 
         # get step sizes for each parameter
         parameters = self.get_parameters(return_info=True)
-        stepsizes = {name: info["stepsize"] for name, (p, info) in parameters.items()}
-
+        stepsizes = {name: info["stepsize"] if not callable(info["stepsize"]) else info["stepsize"](p) for name, (p, info) in parameters.items()}
+        
         # make a stepsize tree
         where = lambda model: tuple(rgetattr(model, n) for n in stepsizes.keys())
         replace = tuple(stepsizes.values())
