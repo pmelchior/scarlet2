@@ -131,23 +131,25 @@ class Scene(Module):
 
         # get step sizes for each parameter
         parameters = self.get_parameters(return_info=True)
-        stepsizes = {name: info["stepsize"] if not callable(info["stepsize"]) else info["stepsize"](p) for name, (p, info) in parameters.items()}
-        
+        stepsizes = {name: info["stepsize"] for name, (p, info) in parameters.items()}
         # make a stepsize tree
         where = lambda model: tuple(rgetattr(model, n) for n in stepsizes.keys())
         replace = tuple(stepsizes.values())
-        step_tree = eqx.tree_at(where, self, replace=replace)
+        steps = eqx.tree_at(where, self, replace=replace)
 
-        def scale_by_stepsize():
-            # adapted from optax.scale()
+        def scale_by_stepsize() -> base.GradientTransformation:
+            # adapted from optax.scale_by_param_block_norm()
             def init_fn(params):
                 del params
                 return base.EmptyState()
 
-            def update_fn(updates, state, params=None):
+            def update_fn(updates, state, params):
+                if params is None:
+                    raise ValueError(base.NO_PARAMS_MSG)
                 updates = jax.tree_util.tree_map(
-                    lambda u, step: -step * u,  # minus because we want gradient descent
-                    updates, step_tree)
+                    lambda u, step, param: -step * u if not callable(step) else -step(param) * u,
+                    # minus because we want gradient descent
+                    updates, steps, params)
                 return updates, state
 
             return base.GradientTransformation(init_fn, update_fn)
@@ -242,6 +244,6 @@ def _make_step(model, observations, optim, opt_state, filter_spec=None, constrai
         diff_model, static_model = eqx.partition(model, filter_spec)
         loss, grads = filtered_loss_fn(diff_model, static_model)
 
-    updates, opt_state = optim.update(grads, opt_state)
+    updates, opt_state = optim.update(grads, opt_state, model)
     model_ = eqx.apply_updates(model, updates)
     return model_, loss, opt_state
