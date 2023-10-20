@@ -175,7 +175,7 @@ class Scene(Module):
         with tqdm.trange(max_iter, disable=not progress_bar) as t:
             for step in t:
                 # optimizer step
-                scene_, loss, opt_state = _make_step(scene, observations, optim, opt_state, filter_spec=filter_spec,
+                scene_, loss, opt_state, updates = _make_step(scene, observations, optim, opt_state, filter_spec=filter_spec,
                                                      constraint_fn=constraint_fn)
                 # Log the loss in the tqdm progress bar
                 t.set_postfix(loss=f"{loss:08.2f}")
@@ -183,15 +183,24 @@ class Scene(Module):
                 # report current iteration results to callback
                 if callback is not None:
                     callback(scene_, loss)
-
-                # terminate optimization if all parameter change less than e_rel
+                
+                # terminate optimization if all gradient change less than e_rel
                 if e_rel is not None:
-                    crit = lambda x, x_: jnp.linalg.norm(x - x_) < e_rel * jnp.linalg.norm(x_)
-                    converged = tuple(
-                        crit(p, p_) for (p, p_) in zip(scene.parameters.values(), scene_.parameters.values()))
-                    if all(converged):
+                    crit = lambda x, x_: jnp.linalg.norm(x) < e_rel * jnp.linalg.norm(x_)
+                    # morphology converged
+                    converged_morph = tuple(
+                        crit(diff, cur_data) for (diff, cur_data) in zip(
+                            [ updates.morphology.data for updates in updates.sources ], 
+                            [ cur_data.morphology.data for cur_data in scene_.sources ]))
+                    # spectrum converged
+                    converged_spec = tuple(
+                        crit(diff, cur_data) for (diff, cur_data) in zip(
+                            [ updates.spectrum.data for updates in updates.sources ], 
+                            [ cur_data.spectrum.data for cur_data in scene_.sources ]))
+                    if all(converged_morph + converged_spec):
+                        print(f'converged in {step} iterations')
                         break
-
+                    
                 scene = scene_
 
         return _constraint_replace(scene_, constraint_fn)  # transform back to constrained variables
@@ -245,5 +254,6 @@ def _make_step(model, observations, optim, opt_state, filter_spec=None, constrai
         loss, grads = filtered_loss_fn(diff_model, static_model)
 
     updates, opt_state = optim.update(grads, opt_state, model)
+    
     model_ = eqx.apply_updates(model, updates)
-    return model_, loss, opt_state
+    return model_, loss, opt_state, updates
