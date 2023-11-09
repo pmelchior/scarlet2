@@ -8,8 +8,7 @@ import jax.numpy as jnp
 import jax.random as random
 from jax import jvp, grad, jit
 from .bbox import Box
-
-
+import matplotlib.colors as colors
 
 def channels_to_rgb(channels):
     """Get the linear mapping of multiple channels to RGB channels
@@ -518,16 +517,19 @@ def log_like(morph, spectrum, data, weights):
 # https://arxiv.org/pdf/2006.00719.pdf
 
 # for regular functions f
+#@jax.jit
 def hvp(f, primals, tangents):
     return jvp(grad(f), primals, tangents)[1]
 
 # for score functions
+#@jax.jit
 def hvp_grad(grad_f, primals, tangents):
     return jvp(grad_f, primals, tangents)[1]
 
 # diagonals of Hessian from HVPs
+#@jax.jit
 def hvp_rad(hvp, shape):
-    max_iters = 500 # maximum number of iterations
+    max_iters = 100 # maximum number of iterations
     H = jnp.zeros(shape, dtype=jnp.float32)
     H_ = jnp.zeros(shape, dtype=jnp.float32)
     for i in range(max_iters):
@@ -541,6 +543,8 @@ def hvp_rad(hvp, shape):
         H_ = H
     return H/(i+1) 
 
+#TODO: fix the jit compilation errors here
+#@jax.jit
 def hallucination_score(scene, obs, src_num):
     src = scene.sources[src_num]
     center = np.array(src.morphology.bbox.center)[::-1]
@@ -565,7 +569,18 @@ def hallucination_score(scene, obs, src_num):
     # Cut out the square box
     hvp_ll_cut = cut_square_box(hvp_ll, center, box_size)
     hallucination = -hvp_nn + hvp_ll_cut
-    return hallucination
+    
+    return -hallucination * src.morphology() , jnp.sum(-hallucination * src.morphology())
+
+def confidence(scene, observation):
+    sources = scene.sources
+    n_sources = len(sources)
+    metrics = np.zeros(n_sources)
+    for k, src in enumerate(sources):
+        hallucination, metric = hallucination_score(scene, observation, k)
+        metrics[k] = metric
+    return metrics
+
 
 def sources(
     scene,
@@ -632,18 +647,20 @@ def sources(
             assert (info["prior"] is not None), "Must use a prior to get a hallucination score"
             
             # Show the unrendered model in it's bbox
-            hallucination = hallucination_score(scene, observation, k)
+            hallucination, metric = hallucination_score(scene, observation, k)
             extent = get_extent(src.morphology.bbox)
             true_max = np.max(np.abs(hallucination))
             im = ax[k-skipped][panel].imshow(hallucination,
-                vmin=-true_max, 
-                vmax=true_max,
-                cmap="RdBu_r",
+                norm=colors.SymLogNorm(linthresh=1, linscale=1,
+                        vmin=-true_max, vmax=true_max, base=10),
+                cmap="RdBu",
                 extent=extent,
                 origin="lower",
             )
             colorbar = plt.colorbar(im, ax=ax[k-skipped][panel])
-            ax[k-skipped][panel].set_title("Hallucination Source {}".format(k), fontsize=f_size)
+            colorbar.set_label('hallucination score', rotation=270, labelpad=20, fontsize=f_size)
+            title = 'confidence: ' + str(jnp.round(metric,3))
+            ax[k-skipped][panel].set_title(title, fontsize=f_size)
             if center is not None and add_markers:
                 ax[k-skipped][panel].plot(*center, "wx", **marker_kwargs)
             panel += 1
