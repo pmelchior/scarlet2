@@ -225,8 +225,7 @@ def _constraint_replace(self, constraint_fn, inv=False):
 
 
 # update step for optax optimizer
-# un JIT for timing test
-#@eqx.filter_jit
+@eqx.filter_jit
 def _make_step(model, observations, optim, opt_state, filter_spec=None, constraint_fn=None):
 
     def loss_fn(model):
