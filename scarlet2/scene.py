@@ -185,19 +185,19 @@ class Scene(Module):
                     callback(scene_, loss)
                 
                 # terminate optimization if all gradient change less than e_rel
+                # Here only check the leaves of PyTrees, meaning ignore non-traced (Fixed) parameters
                 if e_rel is not None:
                     crit = lambda x, x_: jnp.linalg.norm(x) < e_rel * jnp.linalg.norm(x_)
-                    # morphology converged
-                    converged_morph = tuple(
-                        crit(diff, cur_data) for (diff, cur_data) in zip(
-                            [ updates.morphology.data for updates in updates.sources ], 
-                            [ cur_data.morphology.data for cur_data in scene_.sources ]))
-                    # spectrum converged
-                    converged_spec = tuple(
-                        crit(diff, cur_data) for (diff, cur_data) in zip(
-                            [ updates.spectrum.data for updates in updates.sources ], 
-                            [ cur_data.spectrum.data for cur_data in scene_.sources ]))
-                    if all(converged_morph + converged_spec):
+                    # track whether all parameters have converged
+                    converge_flag = True
+                    for pytree_value, pytree_update in zip(scene_.sources, updates.sources):
+                        leaves_value  = jax.tree_util.tree_leaves(pytree_value)
+                        leaves_update = jax.tree_util.tree_leaves(pytree_update)
+                        for leaf_value, leaf_update in zip(leaves_value, leaves_update):
+                            converged = crit(leaf_update, leaf_value)
+                            if converged == False:     # switch to false is any traced parameter has not converged
+                                converge_flag = False
+                    if converge_flag == True:
                         print(f'converged in {step} iterations')
                         break
                     
@@ -225,7 +225,8 @@ def _constraint_replace(self, constraint_fn, inv=False):
 
 
 # update step for optax optimizer
-@eqx.filter_jit
+# un JIT for timing test
+#@eqx.filter_jit
 def _make_step(model, observations, optim, opt_state, filter_spec=None, constraint_fn=None):
 
     def loss_fn(model):
