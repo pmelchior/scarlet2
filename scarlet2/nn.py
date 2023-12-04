@@ -96,16 +96,16 @@ def calc_grad(x, model, model_size=32):
     -------
     score_func : array of the score function
     """
-    # perform padding if needed
+    t = 0.02 # temperature: here we set a fixed value which should only be changed if the user is familiar with the model
     x = jnp.float32(x) # cast to float32
     x, pad_lo, pad_hi, pad = pad_fwd(x, model_size)
     assert (x.shape[1] % 32) == 0, f"image size must be 32 or 64, got: {x.shape[1]}"
     if jnp.ndim(x) == 2:
         x = jnp.expand_dims(x, axis=0)
-        score_func = model(x)
+        score_func = model(x,t=t)
         score_func = jnp.squeeze(score_func, axis=0)
     else:
-        score_func = model(x)
+        score_func = model(x,t=t)
     # return to original size
     if pad: 
         score_func = pad_back(score_func, pad_lo, pad_hi)
