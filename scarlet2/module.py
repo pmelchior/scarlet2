@@ -30,7 +30,7 @@ class Parameter(eqx.Module):
         return self.prior.log_prob(self.value)
 
 
-def relative_step(x, factor=0.1, minimum=1e-6):
+def relative_step(x, it, factor=0.1, minimum=1e-6):
     """Step size set at `factor` times the norm of `x`
     """
     return jnp.maximum(minimum, factor * jnp.linalg.norm(x))
