@@ -136,6 +136,7 @@ class Scene(Module):
         where = lambda model: tuple(rgetattr(model, n) for n in stepsizes.keys())
         replace = tuple(stepsizes.values())
         steps = eqx.tree_at(where, self, replace=replace)
+        it = 0
 
         def scale_by_stepsize() -> base.GradientTransformation:
             # adapted from optax.scale_by_param_block_norm()
@@ -147,7 +148,8 @@ class Scene(Module):
                 if params is None:
                     raise ValueError(base.NO_PARAMS_MSG)
                 updates = jax.tree_util.tree_map(
-                    lambda u, step, param: -step * u if not callable(step) else -step(param,niter) * u,
+                    # lambda u, step, param: -step * u if not callable(step) else -step(param,niter) * u,
+                    lambda u, s, p: -s * u if not callable(s) else -s(p, it) * u,
                     # minus because we want gradient descent
                     updates, steps, params)
                 return updates, state
@@ -173,7 +175,6 @@ class Scene(Module):
             opt_state = optim.init(eqx.filter(scene, filter_spec))
 
         with tqdm.trange(max_iter, disable=not progress_bar) as t:
-            niter = 0
             for step in t:
                 # optimizer step
                 scene_, loss, opt_state = _make_step(scene, observations, optim, opt_state, filter_spec=filter_spec,
@@ -194,7 +195,7 @@ class Scene(Module):
                         break
 
                 scene = scene_
-                niter += 1
+                it += 1
         return _constraint_replace(scene_, constraint_fn)  # transform back to constrained variables
 
 
