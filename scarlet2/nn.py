@@ -81,7 +81,7 @@ def pad_back(x, pad_lo, pad_hi):
 
 
 # calculate score function (jacobian of log-probability)
-def calc_grad(x, model, model_size=32, t=0.02):
+def calc_grad(x, model, model_size=32):
     """Calculates the gradient of the log-prior 
     using the ScoreNet model chosen
     
@@ -91,7 +91,6 @@ def calc_grad(x, model, model_size=32, t=0.02):
     model : the model to calculate the score function
     model_size : int
         size of the model to be used
-    t : float for the temperature to evaluate the score function
         
     Returns
     -------
@@ -102,10 +101,10 @@ def calc_grad(x, model, model_size=32, t=0.02):
     assert (x.shape[1] % 32) == 0, f"image size must be 32 or 64, got: {x.shape[1]}"
     if jnp.ndim(x) == 2:
         x = jnp.expand_dims(x, axis=0)
-        score_func = model(x,t=t)
+        score_func = model(x)
         score_func = jnp.squeeze(score_func, axis=0)
     else:
-        score_func = model(x,t=t)
+        score_func = model(x)
     # return to original size
     if pad: 
         score_func = pad_back(score_func, pad_lo, pad_hi)
@@ -123,17 +122,17 @@ def vgrad(f, x):
 # such that for gradient calls in jax, the score prior
 # is returned
 from functools import partial
-@partial(custom_vjp, nondiff_argnums=(0,1,2,3))
-def _log_prob(model, transform, model_size, temperature, x):
+@partial(custom_vjp, nondiff_argnums=(0,1,2))
+def _log_prob(model, transform, model_size, x):
     return 0
     
-def log_prob_fwd(model, transform, model_size, temperature, x):
+def log_prob_fwd(model, transform, model_size, x):
     x = transform(x)
-    score_func = calc_grad(x, model, model_size, temperature)
+    score_func = calc_grad(x, model, model_size)
     score_func = vgrad(transform, x) * score_func # chain rule
     return 0.0, score_func  # cannot directly call log_prob in Class object
 
-def log_prob_bwd(model, transform, model_size, temperature, res, g):
+def log_prob_bwd(model, transform, model_size, res, g):
     score_func = res # Get residuals computed in f_fwd
     return (g * score_func,) # create the vector (g) jacobian (score_func) product
 
@@ -146,10 +145,9 @@ class ScorePrior(dist.Distribution):
     support = constraints.real_vector
     """Prior distribution based on a neural network"""
 
-    def __init__(self, model='None', transform='None', model_size=32, temperature=0.02, validate_args=None):
+    def __init__(self, model='None', transform='None', model_size=32, validate_args=None):
         self.model = model 
         self.model_size = model_size    
-        self.temperature = temperature
         if transform == 'None':
             self.transform = lambda x: x
         else:
@@ -169,4 +167,14 @@ class ScorePrior(dist.Distribution):
         raise NotImplementedError
     
     def log_prob(self, x):
-        return _log_prob(self.model, self.transform, self.model_size, self.temperature, x)
+        return _log_prob(self.model, self.transform, self.model_size, x)
+
+# define a class for temperature adjustable prior
+class TempScore:
+    """Temperature adjustable ScorePrior"""
+    def __init__(self, model, temp=0.02):
+        self.model = model
+        self.temp = temp
+    def __call__(self, x):
+        return self.model(x, t=self.temp)
+
