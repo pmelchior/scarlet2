@@ -39,12 +39,12 @@ def pad_fwd(x, model_size=32):
     data_size = x.shape[1]
     pad = True
     pad_gap = model_size - data_size
-    assert pad_gap>= 0, "Model size must be larger than max box size"
+    assert pad_gap >= 0, "Model size must be larger than max box size"
     # dont pad if we dont need to
     if pad_gap == 0:
         pad = False
     # calculate how much to pad    
-    if pad_gap % 2 == 0:
+    elif pad_gap % 2 == 0:
         pad_lo = pad_hi = int(pad_gap / 2)
     else:
         pad_lo = int(pad_gap // 2)
@@ -96,7 +96,6 @@ def calc_grad(x, model, model_size=32):
     -------
     score_func : array of the score function
     """
-    # perform padding if needed
     x = jnp.float32(x) # cast to float32
     x, pad_lo, pad_hi, pad = pad_fwd(x, model_size)
     assert (x.shape[1] % 32) == 0, f"image size must be 32 or 64, got: {x.shape[1]}"
@@ -169,3 +168,13 @@ class ScorePrior(dist.Distribution):
     
     def log_prob(self, x):
         return _log_prob(self.model, self.transform, self.model_size, x)
+
+# define a class for temperature adjustable prior
+class TempScore:
+    """Temperature adjustable ScorePrior"""
+    def __init__(self, model, temp=0.02):
+        self.model = model
+        self.temp = temp
+    def __call__(self, x):
+        return self.model(x, t=self.temp)
+
