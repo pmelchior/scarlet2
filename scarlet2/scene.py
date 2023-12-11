@@ -136,7 +136,7 @@ class Scene(Module):
         where = lambda model: tuple(rgetattr(model, n) for n in stepsizes.keys())
         replace = tuple(stepsizes.values())
         steps = eqx.tree_at(where, self, replace=replace)
-        it = 0
+        it = jnp.array(0)
 
         def scale_by_stepsize() -> base.GradientTransformation:
             # adapted from optax.scale_by_param_block_norm()
@@ -145,6 +145,7 @@ class Scene(Module):
                 return base.EmptyState()
 
             def update_fn(updates, state, params):
+                params,it = params
                 if params is None:
                     raise ValueError(base.NO_PARAMS_MSG)
                 updates = jax.tree_util.tree_map(
@@ -177,7 +178,7 @@ class Scene(Module):
         with tqdm.trange(max_iter, disable=not progress_bar) as t:
             for step in t:
                 # optimizer step
-                scene_, loss, opt_state = _make_step(scene, observations, optim, opt_state, filter_spec=filter_spec,
+                scene_, loss, opt_state = _make_step(scene, observations, optim, opt_state, it, filter_spec=filter_spec,
                                                      constraint_fn=constraint_fn)
                 # Log the loss in the tqdm progress bar
                 t.set_postfix(loss=f"{loss:08.2f}")
@@ -219,7 +220,7 @@ def _constraint_replace(self, constraint_fn, inv=False):
 
 # update step for optax optimizer
 @eqx.filter_jit
-def _make_step(model, observations, optim, opt_state, filter_spec=None, constraint_fn=None):
+def _make_step(model, observations, optim, opt_state, it, filter_spec=None, constraint_fn=None):
 
     def loss_fn(model):
         if constraint_fn is not None:
@@ -246,6 +247,6 @@ def _make_step(model, observations, optim, opt_state, filter_spec=None, constrai
         diff_model, static_model = eqx.partition(model, filter_spec)
         loss, grads = filtered_loss_fn(diff_model, static_model)
 
-    updates, opt_state = optim.update(grads, opt_state, model)
+    updates, opt_state = optim.update(grads, opt_state, [model,it])
     model_ = eqx.apply_updates(model, updates)
     return model_, loss, opt_state
