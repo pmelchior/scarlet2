@@ -30,8 +30,11 @@ class Parameter(eqx.Module):
         return self.prior.log_prob(self.value)
 
 
-def relative_step(x, it, factor=0.1, minimum=1e-6):
+def relative_step(x, *args, factor=0.1, minimum=1e-6):
     """Step size set at `factor` times the norm of `x`
+
+    As step size functions have the signature (array, int) -> float, *args captures, 
+    and then ignores, the iteration counter.
     """
     return jnp.maximum(minimum, factor * jnp.linalg.norm(x))
 
