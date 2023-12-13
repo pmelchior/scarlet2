@@ -110,7 +110,7 @@ class Scene(Module):
         mcmc.run(rng_key, self, obs=observations)
         return mcmc
 
-    def fit(self, observations, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None, **kwargs):
+    def fit(self, observations, schedule=None, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None, **kwargs):
         # optax fit with adam optimizer
         # Transforms constrained parameters into unconstrained ones
         # and filters out fixed parameters
@@ -136,7 +136,6 @@ class Scene(Module):
         where = lambda model: tuple(rgetattr(model, n) for n in stepsizes.keys())
         replace = tuple(stepsizes.values())
         steps = eqx.tree_at(where, self, replace=replace)
-        it = jnp.array(0)
 
         def scale_by_stepsize() -> base.GradientTransformation:
             # adapted from optax.scale_by_param_block_norm()
@@ -145,12 +144,11 @@ class Scene(Module):
                 return base.EmptyState()
 
             def update_fn(updates, state, params):
-                params,it = params
                 if params is None:
                     raise ValueError(base.NO_PARAMS_MSG)
                 updates = jax.tree_util.tree_map(
                     # lambda u, step, param: -step * u if not callable(step) else -step(param,niter) * u,
-                    lambda u, s, p: -s * u if not callable(s) else -s(p, it) * u,
+                    lambda u, s, p: -s * u if not callable(s) else -s(p) * u,
                     # minus because we want gradient descent
                     updates, steps, params)
                 return updates, state
@@ -160,6 +158,7 @@ class Scene(Module):
         # run adam, followed by stepsize adjustments
         optim = optax.chain(
             optax.scale_by_adam(**kwargs),
+            optax.scale_by_schedule(schedule if callable(schedule) else lambda x: 1 ),
             scale_by_stepsize(),
         )
 
@@ -178,7 +177,7 @@ class Scene(Module):
         with tqdm.trange(max_iter, disable=not progress_bar) as t:
             for step in t:
                 # optimizer step
-                scene_, loss, opt_state = _make_step(scene, observations, optim, opt_state, it, filter_spec=filter_spec,
+                scene_, loss, opt_state = _make_step(scene, observations, optim, opt_state, filter_spec=filter_spec,
                                                      constraint_fn=constraint_fn)
                 # Log the loss in the tqdm progress bar
                 t.set_postfix(loss=f"{loss:08.2f}")
@@ -196,7 +195,6 @@ class Scene(Module):
                         break
 
                 scene = scene_
-                it += 1
         return _constraint_replace(scene_, constraint_fn)  # transform back to constrained variables
 
 
@@ -220,7 +218,7 @@ def _constraint_replace(self, constraint_fn, inv=False):
 
 # update step for optax optimizer
 @eqx.filter_jit
-def _make_step(model, observations, optim, opt_state, it, filter_spec=None, constraint_fn=None):
+def _make_step(model, observations, optim, opt_state, filter_spec=None, constraint_fn=None):
 
     def loss_fn(model):
         if constraint_fn is not None:
@@ -247,6 +245,6 @@ def _make_step(model, observations, optim, opt_state, it, filter_spec=None, cons
         diff_model, static_model = eqx.partition(model, filter_spec)
         loss, grads = filtered_loss_fn(diff_model, static_model)
 
-    updates, opt_state = optim.update(grads, opt_state, [model,it])
+    updates, opt_state = optim.update(grads, opt_state, model)
     model_ = eqx.apply_updates(model, updates)
     return model_, loss, opt_state
