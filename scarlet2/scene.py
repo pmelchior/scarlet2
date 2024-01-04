@@ -172,27 +172,25 @@ class Scene(Module):
         else:
             opt_state = optim.init(eqx.filter(scene, filter_spec))
 
-        # convergence criterion: grad update less than e_rel of parameter
-        crit = lambda x, dx: jnp.linalg.norm(dx) < e_rel * jnp.linalg.norm(x) if dx is not None else True
-
         with tqdm.trange(max_iter, disable=not progress_bar) as t:
             for step in t:
                 # optimizer step
-                scene_, loss, opt_state, updates = _make_step(scene, observations, optim, opt_state,
-                                                              filter_spec=filter_spec,
-                                                              constraint_fn=constraint_fn)
-                # Log the loss in the tqdm progress bar
-                t.set_postfix(loss=f"{loss:08.2f}")
+                scene_, loss, opt_state, convergence = _make_step(scene, observations, optim, opt_state,
+                                                                  filter_spec=filter_spec,
+                                                                  constraint_fn=constraint_fn)
+
+                # compute max change across all non-fixed parameters for convergence test
+                max_change = jax.tree_util.tree_reduce(lambda a, b: max(a, b), convergence)
 
                 # report current iteration results to callback
                 if callback is not None:
                     callback(scene_, loss)
 
-                # check convergence on all non-fixed parameters
-                converged_tree = jax.tree_util.tree_map(lambda x, dx: crit(x, dx), *(scene, updates))
-                converged = jax.tree_util.tree_all(converged_tree)
-                if converged is True:
-                    print(f'converged in {step} iterations')
+                # Log the loss and max_change in the tqdm progress bar
+                t.set_postfix(loss=f"{loss:08.2f}", max_change=f"{max_change:1.6f}")
+
+                # test convergence
+                if max_change < e_rel:
                     break
 
                 scene = scene_
@@ -248,6 +246,10 @@ def _make_step(model, observations, optim, opt_state, filter_spec=None, constrai
         loss, grads = filtered_loss_fn(diff_model, static_model)
 
     updates, opt_state = optim.update(grads, opt_state, model)
-    
     model_ = eqx.apply_updates(model, updates)
-    return model_, loss, opt_state, updates
+
+    # for convergence criterion: compute norms of parameters and updates
+    norm = lambda x, dx: 0 if dx is None else jnp.linalg.norm(dx) / jnp.linalg.norm(x)
+    convergence = jax.tree_util.tree_map(lambda x, dx: norm(x, dx), *(model, updates))
+
+    return model_, loss, opt_state, convergence
