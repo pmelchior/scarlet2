@@ -657,9 +657,7 @@ def sources(
                 extent=extent,
                 origin="lower",
             )
-            colorbar = plt.colorbar(im, ax=ax[k-skipped][panel])
-            colorbar.set_label('hallucination score', rotation=270, labelpad=20, fontsize=f_size)
-            title = 'confidence: ' + str(jnp.round(metric,3))
+            title = 'Confidence: ' + str(jnp.round(metric,3))
             ax[k-skipped][panel].set_title(title, fontsize=f_size)
             if center is not None and add_markers:
                 ax[k-skipped][panel].plot(*center, "wx", **marker_kwargs)
