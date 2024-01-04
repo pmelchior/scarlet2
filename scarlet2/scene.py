@@ -177,25 +177,25 @@ class Scene(Module):
         with tqdm.trange(max_iter, disable=not progress_bar) as t:
             for step in t:
                 # optimizer step
-                scene_, loss, opt_state = _make_step(scene, observations, optim, opt_state, filter_spec=filter_spec,
-                                                     constraint_fn=constraint_fn)
-                # Log the loss in the tqdm progress bar
-                t.set_postfix(loss=f"{loss:08.2f}")
+                scene, loss, opt_state, convergence = _make_step(scene, observations, optim, opt_state,
+                                                                 filter_spec=filter_spec,
+                                                                 constraint_fn=constraint_fn)
+
+                # compute max change across all non-fixed parameters for convergence test
+                max_change = jax.tree_util.tree_reduce(lambda a, b: max(a, b), convergence)
 
                 # report current iteration results to callback
                 if callback is not None:
-                    callback(scene_, loss)
+                    callback(scene, convergence, loss)
 
-                # terminate optimization if all parameter change less than e_rel
-                if e_rel is not None:
-                    crit = lambda x, x_: jnp.linalg.norm(x - x_) < e_rel * jnp.linalg.norm(x_)
-                    converged = tuple(
-                        crit(p, p_) for (p, p_) in zip(scene.parameters.values(), scene_.parameters.values()))
-                    if all(converged):
-                        break
+                # Log the loss and max_change in the tqdm progress bar
+                t.set_postfix(loss=f"{loss:08.2f}", max_change=f"{max_change:1.6f}")
 
-                scene = scene_
-        return _constraint_replace(scene_, constraint_fn)  # transform back to constrained variables
+                # test convergence
+                if max_change < e_rel:
+                    break
+
+        return _constraint_replace(scene, constraint_fn)  # transform back to constrained variables
 
 
 def _constraint_replace(self, constraint_fn, inv=False):
@@ -247,4 +247,9 @@ def _make_step(model, observations, optim, opt_state, filter_spec=None, constrai
 
     updates, opt_state = optim.update(grads, opt_state, model)
     model_ = eqx.apply_updates(model, updates)
-    return model_, loss, opt_state
+
+    # for convergence criterion: compute norms of parameters and updates
+    norm = lambda x, dx: 0 if dx is None else jnp.linalg.norm(dx) / jnp.linalg.norm(x)
+    convergence = jax.tree_util.tree_map(lambda x, dx: norm(x, dx), *(model, updates))
+
+    return model_, loss, opt_state, convergence
