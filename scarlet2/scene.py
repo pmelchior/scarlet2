@@ -175,16 +175,16 @@ class Scene(Module):
         with tqdm.trange(max_iter, disable=not progress_bar) as t:
             for step in t:
                 # optimizer step
-                scene_, loss, opt_state, convergence = _make_step(scene, observations, optim, opt_state,
-                                                                  filter_spec=filter_spec,
-                                                                  constraint_fn=constraint_fn)
+                scene, loss, opt_state, convergence = _make_step(scene, observations, optim, opt_state,
+                                                                 filter_spec=filter_spec,
+                                                                 constraint_fn=constraint_fn)
 
                 # compute max change across all non-fixed parameters for convergence test
                 max_change = jax.tree_util.tree_reduce(lambda a, b: max(a, b), convergence)
 
                 # report current iteration results to callback
                 if callback is not None:
-                    callback(scene_, loss)
+                    callback(scene, convergence, loss)
 
                 # Log the loss and max_change in the tqdm progress bar
                 t.set_postfix(loss=f"{loss:08.2f}", max_change=f"{max_change:1.6f}")
@@ -193,9 +193,7 @@ class Scene(Module):
                 if max_change < e_rel:
                     break
 
-                scene = scene_
-
-        return _constraint_replace(scene_, constraint_fn)  # transform back to constrained variables
+        return _constraint_replace(scene, constraint_fn)  # transform back to constrained variables
 
 
 def _constraint_replace(self, constraint_fn, inv=False):
