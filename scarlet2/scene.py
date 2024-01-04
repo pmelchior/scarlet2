@@ -45,7 +45,7 @@ class Scene(Module):
     def __exit__(self, exc_type, exc_value, traceback):
         Scenery.scene = None
 
-    def sample(self, observations, **kwargs):
+    def sample(self, observations, num_warmup=50, num_samples=100, **kwargs):
         # uses numpyro NUTS on all non-fixed parameters
         # requires that those have priors set
         try:
@@ -105,12 +105,12 @@ class Scene(Module):
 
         from numpyro.infer import MCMC, NUTS
         nuts_kernel = NUTS(pyro_model, dense_mass=True)
-        mcmc = MCMC(nuts_kernel, num_warmup=500, num_samples=1000)
+        mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
         rng_key = jax.random.PRNGKey(0)
         mcmc.run(rng_key, self, obs=observations)
         return mcmc
 
-    def fit(self, observations, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None, **kwargs):
+    def fit(self, observations, schedule=None, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None, **kwargs):
         # optax fit with adam optimizer
         # Transforms constrained parameters into unconstrained ones
         # and filters out fixed parameters
@@ -147,7 +147,8 @@ class Scene(Module):
                 if params is None:
                     raise ValueError(base.NO_PARAMS_MSG)
                 updates = jax.tree_util.tree_map(
-                    lambda u, step, param: -step * u if not callable(step) else -step(param) * u,
+                    # lambda u, step, param: -step * u if not callable(step) else -step(param,niter) * u,
+                    lambda u, s, p: -s * u if not callable(s) else -s(p) * u,
                     # minus because we want gradient descent
                     updates, steps, params)
                 return updates, state
@@ -157,6 +158,7 @@ class Scene(Module):
         # run adam, followed by stepsize adjustments
         optim = optax.chain(
             optax.scale_by_adam(**kwargs),
+            optax.scale_by_schedule(schedule if callable(schedule) else lambda x: 1 ),
             scale_by_stepsize(),
         )
 
