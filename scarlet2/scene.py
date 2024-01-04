@@ -172,35 +172,29 @@ class Scene(Module):
         else:
             opt_state = optim.init(eqx.filter(scene, filter_spec))
 
+        # convergence criterion: grad update less than e_rel of parameter
+        crit = lambda x, dx: jnp.linalg.norm(dx) < e_rel * jnp.linalg.norm(x) if dx is not None else True
+
         with tqdm.trange(max_iter, disable=not progress_bar) as t:
             for step in t:
                 # optimizer step
-                scene_, loss, opt_state, updates = _make_step(scene, observations, optim, opt_state, filter_spec=filter_spec,
-                                                     constraint_fn=constraint_fn)
+                scene_, loss, opt_state, updates = _make_step(scene, observations, optim, opt_state,
+                                                              filter_spec=filter_spec,
+                                                              constraint_fn=constraint_fn)
                 # Log the loss in the tqdm progress bar
                 t.set_postfix(loss=f"{loss:08.2f}")
 
                 # report current iteration results to callback
                 if callback is not None:
                     callback(scene_, loss)
-                
-                # terminate optimization if all gradient change less than e_rel
-                # Here only check the leaves of PyTrees, meaning ignore non-traced (Fixed) parameters
-                if e_rel is not None:
-                    crit = lambda x, x_: jnp.linalg.norm(x) < e_rel * jnp.linalg.norm(x_)
-                    # track whether all parameters have converged
-                    converge_flag = True
-                    for pytree_value, pytree_update in zip(scene_.sources, updates.sources):
-                        leaves_value  = jax.tree_util.tree_leaves(pytree_value)
-                        leaves_update = jax.tree_util.tree_leaves(pytree_update)
-                        for leaf_value, leaf_update in zip(leaves_value, leaves_update):
-                            converged = crit(leaf_update, leaf_value)
-                            if converged == False:     # switch to false is any traced parameter has not converged
-                                converge_flag = False
-                    if converge_flag == True:
-                        print(f'converged in {step} iterations')
-                        break
-                    
+
+                # check convergence on all non-fixed parameters
+                converged_tree = jax.tree_util.tree_map(lambda x, dx: crit(x, dx), *(scene, updates))
+                converged = jax.tree_util.tree_all(converged_tree)
+                if converged is True:
+                    print(f'converged in {step} iterations')
+                    break
+
                 scene = scene_
 
         return _constraint_replace(scene_, constraint_fn)  # transform back to constrained variables
