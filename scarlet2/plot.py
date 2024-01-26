@@ -449,8 +449,8 @@ def cut_square_box(arr, center, size):
     Returns:
     numpy.ndarray: The square box extracted from the input array.
     """
-    #row_center, col_center = center
-    col_center, row_center = center
+    row_center, col_center = center
+    #col_center, row_center = center
     half_size = size // 2
 
     # Calculate the indices for slicing
