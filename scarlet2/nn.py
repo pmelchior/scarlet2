@@ -85,14 +85,13 @@ def calc_grad(x, model):
     score_func : array of the score function
     """
     # cast to float32, expand to (batch, shape), and pad to match the shape of the score model
-    # TODO: allow for score models with dimensions other than 2
     x_, pad = pad_fwd(jnp.float32(x), model.shape)
 
     # run score model, expects (batch, shape)
-    if jnp.ndim(x) == 2:
+    if jnp.ndim(x) == len(model.shape):
         x_ = jnp.expand_dims(x_, axis=0)
     score_func = model(x_)
-    if jnp.ndim(x) == 2:
+    if jnp.ndim(x) == len(model.shape):
         score_func = jnp.squeeze(score_func, axis=0)
 
     # remove padding
