@@ -113,18 +113,15 @@ def vgrad(f, x):
 # is returned
 from functools import partial
 
-
 @partial(custom_vjp, nondiff_argnums=(0, 1))
 def _log_prob(model, transform, x):
     return 0
 
-
 def log_prob_fwd(model, transform, x):
-    x = transform(x)
-    score_func = calc_grad(x, model)
+    x_ = transform(x)
+    score_func = calc_grad(x_, model)
     score_func = vgrad(transform, x) * score_func  # chain rule
     return 0.0, score_func  # cannot directly call log_prob in Class object
-
 
 def log_prob_bwd(model, transform, res, g):
     score_func = res  # Get residuals computed in f_fwd
