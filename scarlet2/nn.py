@@ -15,73 +15,63 @@ import jax.numpy as jnp
 from jax import custom_vjp
 from jax import vjp
 
-
-
-def pad_fwd(x, model_size=32):
+def pad_fwd(x, model_shape):
     """Zero-pads the input image to the model size
     
     Parameters
     ----------
-    x : array of the bounding box
-    model_size : int
-        size of the model to be used
+    x : jnp.array
+        data to be padded
+    model_shape : tuple
+        shape of the prior model to be used
         
     Returns
     -------
-    x : padded array same size as model_size
-    pad_lo : int
-        amount of padding on the lower side
-    pad_hi : int
-        amount of padding on the higher side
-    pad : bool
-        whether or not padding was performed
+    x : jnp.array
+        data padded to same size as model_shape
+    pad: tuple
+        padding amount in every dimension
     """
-    data_size = x.shape[1]
-    pad = True
-    pad_gap = model_size - data_size
-    assert pad_gap >= 0, "Model size must be larger than max box size"
-    # dont pad if we dont need to
-    if pad_gap == 0:
-        pad = False
-    # calculate how much to pad    
-    elif pad_gap % 2 == 0:
-        pad_lo = pad_hi = int(pad_gap / 2)
-    else:
-        pad_lo = int(pad_gap // 2)
-        pad_hi = int(pad_lo + 1)
+    assert model_shape >= x.shape, "Model size must be larger than data size"
+    if model_shape == x.shape:
+        pad = 0
+        return x, pad
+
+    pad = tuple(
+        # even padding
+        (int(gap / 2), int(gap / 2)) if (gap := model_shape[d] - x.shape[d]) % 2 == 0
+        # uneven padding
+        else (int(gap // 2), int(gap // 2) + 1)
+        # over all dimensions
+        for d in range(x.ndim)
+    )
     # perform the zero-padding
-    if pad:
-        if jnp.ndim(x) == 3:
-            x[0] = jnp.pad(x[0], ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant', constant_values=0) 
-        else:
-            x = jnp.pad(x, ((pad_lo, pad_hi), (pad_lo, pad_hi)), 'constant', constant_values=0)
-    return x, pad_lo, pad_hi , pad
+    x = jnp.pad(x, pad, 'constant', constant_values=0)
+    return x, pad
     
     
 # reverse pad back to original size
-def pad_back(x, pad_lo, pad_hi):
+def pad_back(x, pad):
     """Removes the zero-padding from the input image
-    Paremters
+
+    Parameters
     ---------
-    x : array of the bounding box
-    pad_lo : int
-        amount of padding on the lower side
-    pad_hi : int
-        amount of padding on the higher side
+    x : jnp.array
+        padded data to same size as model_shape
+    pad: tuple
+        padding amount in every dimension
         
     Returns
     -------
-    x : array of the bounding box original size
+    x : jnp.array
+        data returned to it pre-pad shape
     """
-    if jnp.ndim(x) > 2: 
-        x[0] = x[pad_lo:-pad_hi, pad_lo:-pad_hi]
-    else:
-        x = x[pad_lo:-pad_hi, pad_lo:-pad_hi]
-    return x
+    slices = tuple(slice(low, -hi) for (low, hi) in pad)
+    return x[slices]
 
 
 # calculate score function (jacobian of log-probability)
-def calc_grad(x, model, model_size=32):
+def calc_grad(x, model):
     """Calculates the gradient of the log-prior 
     using the ScoreNet model chosen
     
@@ -89,25 +79,25 @@ def calc_grad(x, model, model_size=32):
     ----------
     x : array of the data
     model : the model to calculate the score function
-    model_size : int
-        size of the model to be used
-        
+
     Returns
     -------
     score_func : array of the score function
     """
-    x = jnp.float32(x) # cast to float32
-    x, pad_lo, pad_hi, pad = pad_fwd(x, model_size)
-    assert (x.shape[1] % 32) == 0, f"image size must be 32 or 64, got: {x.shape[1]}"
+    # cast to float32, expand to (batch, shape), and pad to match the shape of the score model
+    # TODO: allow for score models with dimensions other than 2
+    x_, pad = pad_fwd(jnp.float32(x), model.shape)
+
+    # run score model, expects (batch, shape)
     if jnp.ndim(x) == 2:
-        x = jnp.expand_dims(x, axis=0)
-        score_func = model(x)
+        x_ = jnp.expand_dims(x_, axis=0)
+    score_func = model(x_)
+    if jnp.ndim(x) == 2:
         score_func = jnp.squeeze(score_func, axis=0)
-    else:
-        score_func = model(x)
-    # return to original size
-    if pad: 
-        score_func = pad_back(score_func, pad_lo, pad_hi)
+
+    # remove padding
+    if pad != 0:
+        score_func = pad_back(score_func, pad)
     return score_func
 
 
@@ -122,19 +112,23 @@ def vgrad(f, x):
 # such that for gradient calls in jax, the score prior
 # is returned
 from functools import partial
-@partial(custom_vjp, nondiff_argnums=(0,1,2))
-def _log_prob(model, transform, model_size, x):
+
+
+@partial(custom_vjp, nondiff_argnums=(0, 1))
+def _log_prob(model, transform, x):
     return 0
-    
-def log_prob_fwd(model, transform, model_size, x):
+
+
+def log_prob_fwd(model, transform, x):
     x = transform(x)
-    score_func = calc_grad(x, model, model_size)
-    score_func = vgrad(transform, x) * score_func # chain rule
+    score_func = calc_grad(x, model)
+    score_func = vgrad(transform, x) * score_func  # chain rule
     return 0.0, score_func  # cannot directly call log_prob in Class object
 
-def log_prob_bwd(model, transform, model_size, res, g):
-    score_func = res # Get residuals computed in f_fwd
-    return (g * score_func,) # create the vector (g) jacobian (score_func) product
+
+def log_prob_bwd(model, transform, res, g):
+    score_func = res  # Get residuals computed in f_fwd
+    return (g * score_func,)  # create the vector (g) jacobian (score_func) product
 
 # register the custom vjp 
 _log_prob.defvjp(log_prob_fwd, log_prob_bwd)
@@ -145,17 +139,12 @@ class ScorePrior(dist.Distribution):
     support = constraints.real_vector
     """Prior distribution based on a neural network"""
 
-    def __init__(self, model='None', transform='None', model_size=32, validate_args=None):
-        self.model = model 
-        self.model_size = model_size    
-        if transform == 'None':
-            self.transform = lambda x: x
-        else:
-            self.transform = transform                
+    def __init__(self, model, validate_args=None):
+        self.model = model
+        self._transform = lambda x: x  # TODO: how to set/unset transformation
 
-        event_shape = jnp.shape([self.model_size, self.model_size])
         super().__init__(
-            event_shape=event_shape,
+            event_shape=model.shape,
             validate_args=validate_args,
         )
 
@@ -167,7 +156,7 @@ class ScorePrior(dist.Distribution):
         raise NotImplementedError
     
     def log_prob(self, x):
-        return _log_prob(self.model, self.transform, self.model_size, x)
+        return _log_prob(self.model, self._transform, x)
 
 # define a class for temperature adjustable prior
 class TempScore:
