@@ -113,17 +113,17 @@ def vgrad(f, x):
 # is returned
 from functools import partial
 
-@partial(custom_vjp, nondiff_argnums=(0, 1))
-def _log_prob(model, transform, x):
+@partial(custom_vjp, nondiff_argnums=(0,))
+def _log_prob(model, x):
     return 0
 
-def log_prob_fwd(model, transform, x):
-    x_ = transform(x)
-    score_func = calc_grad(x_, model)
-    score_func = vgrad(transform, x) * score_func  # chain rule
+
+def log_prob_fwd(model, x):
+    score_func = calc_grad(x, model)
     return 0.0, score_func  # cannot directly call log_prob in Class object
 
-def log_prob_bwd(model, transform, res, g):
+
+def log_prob_bwd(model, res, g):
     score_func = res  # Get residuals computed in f_fwd
     return (g * score_func,)  # create the vector (g) jacobian (score_func) product
 
@@ -138,7 +138,6 @@ class ScorePrior(dist.Distribution):
 
     def __init__(self, model, validate_args=None):
         self.model = model
-        self._transform = lambda x: x  # TODO: how to set/unset transformation
 
         super().__init__(
             event_shape=model.shape,
@@ -153,7 +152,7 @@ class ScorePrior(dist.Distribution):
         raise NotImplementedError
     
     def log_prob(self, x):
-        return _log_prob(self.model, self._transform, x)
+        return _log_prob(self.model, x)
 
 # define a class for temperature adjustable prior
 class TempScore:
