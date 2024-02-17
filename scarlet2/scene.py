@@ -223,6 +223,8 @@ def _make_step(model, observations, optim, opt_state, filter_spec=None, constrai
     def loss_fn(model):
         if constraint_fn is not None:
             # parameters now obey constraints
+            # transformation happens in the grad path, so gradients are wrt to unconstrained variables
+            # likelihood and prior grads transparently apply the Jacobians of these transformations
             model = _constraint_replace(model, constraint_fn)
 
         pred = model()
