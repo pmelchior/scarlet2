@@ -32,7 +32,7 @@ def pad_fwd(x, model_shape):
     pad: tuple
         padding amount in every dimension
     """
-    assert model_shape >= x.shape, "Model size must be larger than data size"
+    assert all(model_shape[d] >= x.shape[d] for d in range(x.ndim)), "Model size must be larger than data size"
     if model_shape == x.shape:
         pad = 0
         return x, pad
@@ -66,7 +66,7 @@ def pad_back(x, pad):
     x : jnp.array
         data returned to it pre-pad shape
     """
-    slices = tuple(slice(low, -hi) for (low, hi) in pad)
+    slices = tuple(slice(low, -hi) if hi > 0 else slice(low, None) for (low, hi) in pad)
     return x[slices]
 
 
@@ -106,8 +106,6 @@ def vgrad(f, x):
     y, vjp_fn = vjp(f, x)
     return vjp_fn(jnp.ones(y.shape))[0]
 
-
-
 # Here we define a custom vjp for the log_prob function
 # such that for gradient calls in jax, the score prior
 # is returned
@@ -115,13 +113,11 @@ from functools import partial
 
 @partial(custom_vjp, nondiff_argnums=(0,))
 def _log_prob(model, x):
-    return 0
-
+    return 0.
 
 def log_prob_fwd(model, x):
     score_func = calc_grad(x, model)
-    return 0.0, score_func  # cannot directly call log_prob in Class object
-
+    return 0., score_func  # cannot directly call log_prob in Class object
 
 def log_prob_bwd(model, res, g):
     score_func = res  # Get residuals computed in f_fwd
