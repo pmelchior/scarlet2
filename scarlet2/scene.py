@@ -186,7 +186,11 @@ class Scene(Module):
 
                 # report current iteration results to callback
                 if callback is not None:
-                    callback(scene, convergence, loss)
+                    if constraint_fn is not None:
+                        scene_ = _constraint_replace(scene, constraint_fn)
+                    else:
+                        scene_ = scene
+                    callback(scene_, convergence, loss)
 
                 # Log the loss and max_change in the tqdm progress bar
                 t.set_postfix(loss=f"{loss:08.2f}", max_change=f"{max_change:1.6f}")
