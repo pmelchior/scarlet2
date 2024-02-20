@@ -1,14 +1,17 @@
 from abc import ABC, abstractmethod
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle, Polygon
-from matplotlib.ticker import MaxNLocator
+
 import jax
 import jax.numpy as jnp
 import jax.random as random
-from jax import jvp, grad, jit
-from .bbox import Box
+import matplotlib.animation as animation
 import matplotlib.colors as colors
+import matplotlib.pyplot as plt
+import numpy as np
+from jax import jvp, grad, jit
+from matplotlib.patches import Rectangle, Polygon
+
+from .bbox import Box
+
 
 def channels_to_rgb(channels):
     """Get the linear mapping of multiple channels to RGB channels
@@ -359,18 +362,20 @@ def img_to_rgb(img, channel_map=None, fill_value=0, norm=None, mask=None):
 panel_size = 4.0 
 
 def observation(
-    observation,
-    norm=None,
-    channel_map=None,
-    sky_coords=None,
-    show_psf=False,
-    add_labels=True,
-    figsize=None,
+        observation,
+        norm=None,
+        channel_map=None,
+        sky_coords=None,
+        show_psf=False,
+        add_labels=True,
+        fig_kwargs=dict(),
+        title_kwargs=dict(),
+        label_kwargs={"color": "w", "ha": "center", "va": "center"},
 ):
     """Plot observation in standardized form.
     """
-    f_size=22
     panels = 1 if show_psf is False else 2
+    figsize = fig_kwargs.pop("figsize", None)
     if figsize is None:
         figsize = (panel_size * panels, panel_size)
     fig, ax = plt.subplots(1, panels, figsize=figsize)
@@ -390,7 +395,7 @@ def observation(
         extent=extent,
         origin="lower",
     )
-    ax[panel].set_title("Observation", fontsize=f_size)
+    ax[panel].set_title("Observation", **title_kwargs)
 
     if add_labels:
         assert sky_coords is not None, "Provide sky_coords for labeled objects"
@@ -398,11 +403,9 @@ def observation(
         for k, center in enumerate(sky_coords):
             if hasattr(observation, "get_pixel"):
                 center_ = observation.get_pixel(center)
-                color = "w" if observation.C > 1 else "r"
             else:
                 center_ = center
-                color = "w" if observation.data.shape[0] > 1 else "r"
-            ax[panel].text(*center_[::-1], k, color=color, ha="center", va="center")
+            ax[panel].text(*center_[::-1], k, **label_kwargs)
 
     panel += 1
     if show_psf:
@@ -424,7 +427,7 @@ def observation(
             model_box.insert_into(psf_image, psf_model)
             # slices = scarlet.box.overlapped_slices
         ax[panel].imshow(img_to_rgb(psf_image, norm=norm), origin="lower")
-        ax[panel].set_title("PSF", fontsize=f_size)
+        ax[panel].set_title("PSF", **title_kwargs)
 
     fig.tight_layout()
     return fig
@@ -585,31 +588,31 @@ def confidence(scene, observation):
 def sources(
     scene,
     observation=None,
-    norm=None,
-    channel_map=None,
-    show_model=True,
-    show_hallucination=False,
-    show_observed=False,
-    show_rendered=False,
-    show_spectrum=True,
-    figsize=None,
-    model_mask=None,
-    add_markers=True,
-    add_boxes=False,
+        norm=None,
+        channel_map=None,
+        show_model=True,
+        show_hallucination=False,
+        show_observed=False,
+        show_rendered=False,
+        show_spectrum=True,
+        model_mask=None,
+        add_markers=True,
+        add_boxes=False,
+        fig_kwargs=dict(),
+        title_kwargs=dict(),
+        marker_kwargs={"color": "w", "marker": "x", "mew": 1, "ms": 10},
+        box_kwargs={"facecolor": "none", "edgecolor": "w", "lw": 0.5},
 ):
 
     sources = scene.sources
     n_sources = len(sources)
     panels = sum((show_model, show_hallucination,show_observed, show_rendered, show_spectrum))
-    f_size = 22
 
+    figsize = fig_kwargs.pop("figsize", None)
     if figsize is None:
         figsize = (panel_size * panels, panel_size * n_sources)
 
-    fig, ax = plt.subplots(n_sources, panels, figsize=figsize, squeeze=False)
-
-    marker_kwargs = {"mew": 1, "ms": 10}
-    box_kwargs = {"facecolor": "none", "edgecolor": "w", "lw": 0.5}
+    fig, ax = plt.subplots(n_sources, panels, figsize=figsize, squeeze=False, **fig_kwargs)
 
     skipped = 0
     for k, src in enumerate(sources):
@@ -631,14 +634,14 @@ def sources(
         if show_model:
             # Show the unrendered model in it's bbox
             extent = get_extent(src.morphology.bbox)
-            ax[k-skipped][panel].imshow(
+            ax[k - skipped][panel].imshow(
                 img_to_rgb(model, norm=norm, channel_map=channel_map, mask=model_mask),
                 extent=extent,
                 origin="lower",
             )
-            ax[k-skipped][panel].set_title("Model Source {}".format(k), fontsize=f_size)
+            ax[k - skipped][panel].set_title("Model Source {}".format(k), **title_kwargs)
             if center is not None and add_markers:
-                ax[k-skipped][panel].plot(*center, "wx", **marker_kwargs)
+                ax[k - skipped][panel].plot(*center, **marker_kwargs)
             panel += 1
             
         if show_hallucination:
@@ -658,9 +661,9 @@ def sources(
                 origin="lower",
             )
             title = 'Confidence: ' + str(jnp.round(metric,3))
-            ax[k-skipped][panel].set_title(title, fontsize=f_size)
+            ax[k - skipped][panel].set_title(title, **title_kwargs)
             if center is not None and add_markers:
-                ax[k-skipped][panel].plot(*center, "wx", **marker_kwargs)
+                ax[k - skipped][panel].plot(*center, **marker_kwargs)
             panel += 1
 
         # model in observation frame
@@ -690,13 +693,13 @@ def sources(
             new_xlim = (extent[0], extent[1])
             new_ylim = (extent[2], extent[3])
             ax[k-skipped][panel].set_xlim(new_xlim)
-            ax[k-skipped][panel].set_ylim(new_ylim)
-            ax[k-skipped][panel].set_title("Model Source {} Rendered".format(k), fontsize=f_size)
+            ax[k - skipped][panel].set_ylim(new_ylim)
+            ax[k - skipped][panel].set_title("Model Source {} Rendered".format(k), **title_kwargs)
 
             # fixing the sizes
             if center is not None and add_markers:
                 center_ = center
-                ax[k-skipped][panel].plot(*center_, "wx", **marker_kwargs)
+                ax[k - skipped][panel].plot(*center_, **marker_kwargs)
             if add_boxes:
                 poly = Polygon(box_coords, closed=True, **box_kwargs)
                 ax[k-skipped][panel].add_artist(poly)
@@ -705,15 +708,15 @@ def sources(
         if show_observed:
             # Center the observation on the source and display it
             _images = observation.data
-            ax[k-skipped][panel].imshow(
+            ax[k - skipped][panel].imshow(
                 img_to_rgb(_images, norm=norm, channel_map=channel_map),
                 extent=extent,
                 origin="lower",
             )
-            ax[k-skipped][panel].set_title("Observation".format(k), fontsize=f_size)
+            ax[k - skipped][panel].set_title("Observation".format(k), **title_kwargs)
             if center is not None and add_markers:
                 center_ = center
-                ax[k-skipped][panel].plot(*center_, "wx", **marker_kwargs)
+                ax[k - skipped][panel].plot(*center_, **marker_kwargs)
             if add_boxes:
                 poly = Polygon(box_coords, closed=True, **box_kwargs)
                 ax[k-skipped][panel].add_artist(poly)
@@ -726,10 +729,11 @@ def sources(
             for spectrum in spectra:
                 ax[k-skipped][panel].plot(spectrum)
             ax[k-skipped][panel].set_xticks(range(len(spectrum)))
-            if hasattr(observation.frame, "channels") and observation.frame.channels is not None:
-                ax[k-skipped][panel].set_xticklabels(observation.frame.channels)
-            ax[k-skipped][panel].set_title("Spectrum", fontsize=f_size)
-            ax[k-skipped][panel].set_xlabel("Channel")
+            if observation is not None and hasattr(observation.frame,
+                                                   "channels") and observation.frame.channels is not None:
+                ax[k - skipped][panel].set_xticklabels(observation.frame.channels)
+            ax[k - skipped][panel].set_title("Spectrum", **title_kwargs)
+            ax[k - skipped][panel].set_xlabel("Channel")
             ax[k-skipped][panel].set_ylabel("Intensity")
 
     fig.tight_layout()
@@ -738,21 +742,25 @@ def sources(
 
 def scene(
     scene,
-    observation=None,
-    norm=None,
-    channel_map=None,
-    show_model=True,
-    show_observed=False,
-    show_rendered=False,
-    show_residual=False,
-    add_labels=True,
-    add_boxes=False,
-    figsize=None,
-    linear=True,
+        observation=None,
+        norm=None,
+        channel_map=None,
+        show_model=True,
+        show_observed=False,
+        show_rendered=False,
+        show_residual=False,
+        add_labels=True,
+        add_boxes=False,
+        linear=True,
+        fig_kwargs=dict(),
+        title_kwargs=dict(),
+        label_kwargs={"color": "w", "ha": "center", "va": "center"},
+        box_kwargs={"facecolor": "none", "edgecolor": "w", "lw": 0.5},
 ):
     """Plot all sources to recreate the scence.
-    The functions provides a fast way of evaluating the quality of the entire model,
-    i.e. the combination of all scences that seek to fit the observation.
+    The functions provide a fast way of evaluating the quality of the entire model,
+    i.e. the combination of all scenes that seek to fit the observation.
+
     Parameters
     ----------
     sources: list of source models
@@ -772,30 +780,44 @@ def scene(
         Whether each source is labeled with its numerical index in the source list
     add_boxes: bool
         Whether each source box is shown
-    figsize: matplotlib figsize argument
     linear: bool
-        Whether or not to display the scene in a single line (`True`) or
+        Whether to display the scene in a single line (`True`) or
         on multiple lines (`False`).
+    fig_kwargs: dict
+        kwargs for plt.figure()
+    title_kwargs: dict
+        kwargs for plt.title()
+    label_kwargs: dict
+        kwargs for source labels
+    box_kwargs: dict
+        kwargs for source boxes
+
     Returns
     -------
     matplotlib figure
     """
-    f_size=22
+
+    # for animations with multiple scenes
+    if hasattr(scene, '__iter__'):
+        scenes = scene
+        scene = scenes[0]
+
     if show_observed or show_rendered or show_residual:
         assert (
-            observation is not None
+                observation is not None
         ), "Provide matched observation to show observed frame"
 
     panels = sum((show_model, show_observed, show_rendered, show_residual))
+    figsize = fig_kwargs.pop("figsize", None)
     if linear:
         if figsize is None:
             figsize = (panel_size * panels, panel_size)
-        fig, ax = plt.subplots(1, panels, figsize=figsize)
+        fig, ax = plt.subplots(1, panels, figsize=figsize, **fig_kwargs)
     else:
         columns = int(np.ceil(panels / 2))
         if figsize is None:
             figsize = (panel_size * columns, panel_size * 2)
-        fig = plt.figure(figsize=figsize)
+        fig = plt.figure(figsize=figsize, **fig_kwargs)
         ax = [fig.add_subplot(2, columns, n + 1) for n in range(panels)]
     if not hasattr(ax, "__iter__"):
         ax = (ax,)
@@ -808,48 +830,48 @@ def scene(
             mask = None
 
     panel = 0
+    model = scene()
     if show_model:
-        model = scene()
         extent = get_extent(observation.frame.bbox)
-        ax[panel].imshow(
+        model_img = ax[panel].imshow(
             img_to_rgb(model, norm=norm, channel_map=channel_map),
             extent=extent,
             origin="lower",
         )
-        ax[panel].set_title("Model", fontsize=f_size)
+        ax[panel].set_title("Model", **title_kwargs)
         panel += 1
 
     if show_rendered or show_residual:
-        model = observation.render(scene())
+        model = observation.render(model)
         extent = get_extent(observation.frame.bbox)
 
     if show_rendered:
-        ax[panel].imshow(
+        rendered_img = ax[panel].imshow(
             img_to_rgb(model, norm=norm, channel_map=channel_map, mask=mask),
             extent=extent,
             origin="lower",
         )
-        ax[panel].set_title("Model Rendered", fontsize=f_size)
+        ax[panel].set_title("Model Rendered", **title_kwargs)
         panel += 1
 
     if show_observed:
-        ax[panel].imshow(
+        observed_img = ax[panel].imshow(
             img_to_rgb(observation.data, norm=norm, channel_map=channel_map, mask=mask),
             extent=extent,
             origin="lower",
         )
-        ax[panel].set_title("Observation", fontsize=f_size)
+        ax[panel].set_title("Observation", **title_kwargs)
         panel += 1
 
     if show_residual:
         residual = observation.data - model
         norm_ = LinearPercentileNorm(residual)
-        ax[panel].imshow(
+        residual_img = ax[panel].imshow(
             img_to_rgb(residual, norm=norm_, channel_map=channel_map, mask=mask),
             extent=extent,
             origin="lower",
         )
-        ax[panel].set_title("Residual", fontsize=f_size)
+        ax[panel].set_title("Residual", **title_kwargs)
         panel += 1
 
     for k, src in enumerate(scene.sources):
@@ -867,7 +889,6 @@ def scene(
         
         if add_boxes:
             panel = 0
-            box_kwargs = {"facecolor": "none", "edgecolor": "w", "lw": 0.5}
             if show_model:
                 extent = get_extent(src.bbox)
                 rect = Rectangle(
@@ -886,13 +907,45 @@ def scene(
         if add_labels and hasattr(src.morphology.bbox, "center") and center is not None:
             panel = 0
             if show_model:
-                ax[panel].text(*center, k, color="w", ha="center", va="center")
+                ax[panel].text(*center, k, **label_kwargs)
                 panel = 1
             if observation is not None:
                 for panel in range(panel, panels):
                     ax[panel].text(
-                        *center, k, color="w", ha="center", va="center"
+                        *center, k, **label_kwargs
                     )
 
     fig.tight_layout()
-    return fig
+
+    try:
+        # animate multiple scenes
+        n_frames = len(scenes)
+
+        # update only images dependent on the current state of scene
+        def update(i):
+            updated = []
+            scene = scenes[i]
+            model = scene()
+            if show_model:
+                model_img.set_data(img_to_rgb(model, norm=norm, channel_map=channel_map))
+                updated.append(model_img)
+
+            if show_rendered or show_residual:
+                model = observation.render(model)
+
+            if show_rendered:
+                rendered_img.set_data(img_to_rgb(model, norm=norm, channel_map=channel_map, mask=mask))
+                updated.append(rendered_img)
+
+            if show_residual:
+                residual = observation.data - model
+                norm_ = LinearPercentileNorm(residual)
+                residual_img.set_data(img_to_rgb(residual, norm=norm_, channel_map=channel_map, mask=mask))
+                updated.append(residual_img)
+            return updated
+
+        ani = animation.FuncAnimation(fig=fig, func=update, frames=n_frames, interval=30)
+        return ani
+
+    except NameError:
+        return fig
