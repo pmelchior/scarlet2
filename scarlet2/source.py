@@ -1,5 +1,5 @@
 import copy
-
+from jax import numpy as jnp
 from .module import Module
 from .morphology import Morphology
 from .scene import Scenery
@@ -74,11 +74,19 @@ class DustySource(Module):
             raise
 
     def get_attenuation(self):
-        return 10**( -0.4 * self.spectrum()[:, None, None] * self.morphology()[None, :, :] )
+        temp = 1-self.morphology()[None, :, :]
+        temp = jnp.where(temp<0,0,temp)
+        Ag = jnp.log10(temp) / (-0.4)
+        Kg = self.spectrum()[0]
+        EBV = Ag/Kg
+
+        return 10**( -0.4 * EBV * self.spectrum()[:, None, None] )
+        # return 10**( -0.4 * self.morphology()[None, :, :] * self.spectrum()[:, None, None] )
     
     def __call__(self):
         original_model = self.host_spectrum()[:, None, None] * self.host_morphology()[None, :, :]
-        return original_model * self.get_attenuation()
+        dusty_model = self.get_attenuation()
+        return original_model * dusty_model
     
     @property
     def bbox(self):

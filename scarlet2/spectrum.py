@@ -57,3 +57,23 @@ class SMCAttenuationSpectrum(Spectrum):
         A_lambda = 1.39 * self.channel_wavelengths **-1.2
 
         return A_lambda
+
+class CalzettiAttenuationSpectrum(Spectrum):
+    # https://ui.adsabs.harvard.edu/abs/2001PASP..113.1449C/abstract
+
+    channel_wavelengths : jnp.array # angstrom
+    delta : float # angstrom
+
+    def __init__(self, channel_wavelengths, delta = 0):
+        self.channel_wavelengths = channel_wavelengths * 1e-4# Angstroms
+        self.delta = delta
+        super().__post_init__()
+        self.bbox = Box(self.channel_wavelengths.shape)
+
+    def __call__(self):
+        a =  1.509 / self.channel_wavelengths
+        b = -0.198 / self.channel_wavelengths**2
+        c =  0.011 / self.channel_wavelengths**3
+
+        k_cal = 2.659 * (-2.156 + a + b + c) + 4.05
+        return k_cal * jnp.power(self.channel_wavelengths / 5500e-4, self.delta)

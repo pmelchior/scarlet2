@@ -158,3 +158,21 @@ class TempScore:
     def __call__(self, x):
         return self.model(x, t=self.temp)
 
+
+class ConditionalScorePrior(dist.Distribution):
+    support = constraints.real_vector
+    """Prior distribution based on a conditional neural network"""
+
+    def __init__(self, model='None', 
+                 cond ='None', 
+                 cond_fn='None',
+                 transform='None', model_size=32, validate_args=None):
+        
+        self.cond = cond
+        self.cond_fn = cond_fn
+        self.ScorePrior = ScorePrior(model=model, transform=transform, 
+                                     model_size=model_size, validate_args=validate_args)
+        
+    
+    def log_prob(self, x):
+        return self.ScorePrior.log_prob( self.cond_fn(x, self.cond) )

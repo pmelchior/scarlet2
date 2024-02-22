@@ -111,6 +111,7 @@ class Scene(Module):
         return mcmc
 
     def fit(self, observations, schedule=None, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None, **kwargs):
+    def fit(self, observations, schedule=None, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None, **kwargs):
         # optax fit with adam optimizer
         # Transforms constrained parameters into unconstrained ones
         # and filters out fixed parameters
@@ -221,7 +222,7 @@ def _constraint_replace(self, constraint_fn, inv=False):
 
 
 # update step for optax optimizer
-@eqx.filter_jit
+# @eqx.filter_jit
 def _make_step(model, observations, optim, opt_state, filter_spec=None, constraint_fn=None):
 
     def loss_fn(model):

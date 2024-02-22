@@ -5,6 +5,7 @@ import jax.scipy
 from .bbox import Box
 from .module import Module
 from .wavelet import starlet_reconstruction
+from .dusty_nn import pad_it, crop
 
 class Morphology(Module):
     bbox: Box = eqx.field(static=True, init=False)
@@ -124,3 +125,24 @@ class Sersic2DMorphology(Morphology):
         return self.evaluate(self.X, self.Y, amplitude = self.amplitude, r_eff = self.r_eff, n = self.n, 
                x_0=self.x0, y_0=self.y0,
                ellip=self.ellip, theta=self.theta)
+
+class DustyMorphologyNormed(Morphology):
+
+    data: jnp.array
+    amplitude: jnp.array
+
+    def __init__(self, 
+                 data,
+                 amplitude = jnp.array(1),
+                   ):
+        
+        self.data = data
+        self.amplitude = amplitude
+
+        super().__post_init__()
+
+        self.bbox = Box(self.data.shape)
+
+    def __call__(self):
+        # return self.amplitude * self.data
+        return self.data
