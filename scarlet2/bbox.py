@@ -79,6 +79,29 @@ class Box(eqx.Module):
                 return False
         return True
 
+    def insert_into(self, image, sub):
+        """Insert `sub` into `image` according to this bbox
+
+        Inverse operation to :func:`~scarlet.bbox.Box.extract_from`.
+
+        Parameters
+        ----------
+        image: array
+            Full image
+        sub: array
+            Extracted sub-image
+
+        Returns
+        -------
+        image: array
+        """
+        imbox = Box(image.shape)
+
+        im_slices, sub_slices = overlap_slices(imbox, self)
+        image[im_slices] = sub[sub_slices]
+        return image
+
+
     @property
     def D(self):
         """Dimensionality of this BBox
