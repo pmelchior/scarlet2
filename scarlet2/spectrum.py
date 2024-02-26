@@ -41,5 +41,25 @@ class StaticArraySpectrum(Spectrum):
     def __call__(self):
         return self.data[self.channelindex]
 
+class ZeroedArraySpectrum(Spectrum):
+    data: jnp.array 
+    epochmultiplier: jnp.array = eqx.field(static=True)
+   
+    def __init__(self, data, epochs):
+        try:
+            frame = Scenery.scene.frame
+        except AttributeError:
+            print("Source can only be created within the context of a Scene")
+            print("Use 'with Scene(frame) as scene: Source(...)'")
+            raise 
+        self.data = data 
+        self.epochmultiplier = jnp.array([1e-16 if c in epochs else 1.0 for c in frame.channels]) 
+        super().__post_init__()
+        self.bbox =  Box(self.data.shape)
+
+    def __call__(self): 
+        return jnp.multiply(self.data,self.epochmultiplier)
+
+
 
     
