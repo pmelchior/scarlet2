@@ -7,4 +7,4 @@ from .observation import Observation
 from .psf import PSF, ArrayPSF, GaussianPSF
 from .scene import Scene
 from .source import Source, PointSource
-from .spectrum import Spectrum, ArraySpectrum, StaticArraySpectrum, ZeroedArraySpectrum
+from .spectrum import Spectrum, ArraySpectrum, StaticArraySpectrum, TransientArraySpectrum

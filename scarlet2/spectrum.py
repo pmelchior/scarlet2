@@ -41,9 +41,9 @@ class StaticArraySpectrum(Spectrum):
     def __call__(self):
         return self.data[self.channelindex]
 
-class ZeroedArraySpectrum(Spectrum):
+class TransientArraySpectrum(Spectrum):
     data: jnp.array 
-    epochmultiplier: jnp.array = eqx.field(static=True)
+    _epochmultiplier: jnp.array = eqx.field(static=True)
    
     def __init__(self, data, epochs):
         try:
@@ -53,12 +53,12 @@ class ZeroedArraySpectrum(Spectrum):
             print("Use 'with Scene(frame) as scene: Source(...)'")
             raise 
         self.data = data 
-        self.epochmultiplier = jnp.array([1e-16 if c in epochs else 1.0 for c in frame.channels]) 
+        self._epochmultiplier = jnp.array([1.0 if c in epochs else 0.0 for c in frame.channels]) 
         super().__post_init__()
         self.bbox =  Box(self.data.shape)
 
     def __call__(self): 
-        return jnp.multiply(self.data,self.epochmultiplier)
+        return jnp.multiply(self.data,self._epochmultiplier)
 
 
 
