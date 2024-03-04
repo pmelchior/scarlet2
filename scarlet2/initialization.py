@@ -209,7 +209,7 @@ def init_simple_morph(observation, center, psf_sigma=0.5, noise_thresh=20, corr_
     return morph
 
 
-def init_morphology(obs, center, psf_sigma=1, noise_thresh=100, corr_thresh=0.8, max_size=36):
+def init_morphology(obs, center, psf_sigma=1, noise_thresh=100, corr_thresh=0.8, max_size=36, components=2):
     """Initialize the morphology of the sources.
     Parameters
     ----------
@@ -223,6 +223,7 @@ def init_morphology(obs, center, psf_sigma=1, noise_thresh=100, corr_thresh=0.8,
     morph = init_simple_morph(obs, center, psf_sigma, noise_thresh, corr_thresh)
     if morph.shape[0] <= max_size:
         return morph 
+    # fit for a more complex morphology for bigger sources
     else:
         bx = morph.shape[0]
         cutout = cut_square_box(obs.data[0], center, bx)
@@ -232,14 +233,15 @@ def init_morphology(obs, center, psf_sigma=1, noise_thresh=100, corr_thresh=0.8,
         rows, cols = morph.shape
         central_row = rows // 2
         central_col = cols // 2
-        morph[central_row, central_col] = 1.25  # extra brightening central pixel
+        morph[central_row, central_col] = 1.1  # extra brightening central pixel
         morph = (morph - np.min(morph)) / (np.max(morph) - np.min(morph))
-        if bx > 30:
+        if bx > 30 and components == 2:
             morph2 = create_gaussian_array(bx // 2, 1.4, 1.4, 0) # create a second component as a gaussian blob
             morph2 = (morph2 - np.min(morph2)) / (np.max(morph2) - np.min(morph2))
             return [morph, morph2]
-        # if single component just return the fitted morhpology
-        return morph
+        else:
+            # if single component just return the fitted morhpology
+            return morph
 
 
 # initialise the spectrum
