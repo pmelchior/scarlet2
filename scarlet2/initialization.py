@@ -64,7 +64,7 @@ def gaussian_2d(x, y, mu_x, mu_y, sigma_x, sigma_y):
 
 
 @partial(jax.jit, static_argnums=0)
-def create_gaussian_array(boxsize, sigma_x=1, sigma_y=1,theta=0):
+def create_gaussian_array(boxsize, sigma_x=1, sigma_y=1, theta=0):
     """Create a 2D array with a Gaussian profile in the center.
     Parameters
     ----------
@@ -120,7 +120,9 @@ def fit_morph_params(data, center, bx):
     return best_params
 
 
-def init_simple_morph(observation, center, psf_sigma=0.5, noise_thresh=20, corr_thresh=0.8):
+def init_simple_morph(
+    observation, center, psf_sigma=0.5, noise_thresh=20, corr_thresh=0.8
+):
     """
     Initialize the morphology of a source by fitting a 2D Gaussian to the cutout of the source.
     The boxsize will initially be fit as a compact point-source and then expanded until the snr
@@ -153,7 +155,7 @@ def init_simple_morph(observation, center, psf_sigma=0.5, noise_thresh=20, corr_
         # now grab the perimeter values of the box
         perimeter_pixels = [None] * len(observation.data)
         perimeter_noise_rms = [None] * len(observation.data)
-   
+
         # create the cutout and noise rms for each band
         for idx, band in enumerate(observation.data):
             cutout_obs = cut_square_box(band, center, box[0])
@@ -173,8 +175,8 @@ def init_simple_morph(observation, center, psf_sigma=0.5, noise_thresh=20, corr_
             for i in range(perimeter_pixels.shape[1]):
                 spectrum = perimeter_pixels[:, i]
                 psf_model = obs.frame.psf()
-                #psf_model = jnp.expand_dims(psf_model, axis=0)
-                psf_peak = psf_model.max(axis=(1, 2)) 
+                # psf_model = jnp.expand_dims(psf_model, axis=0)
+                psf_peak = psf_model.max(axis=(1, 2))
                 spectrum /= psf_peak
                 spectrum_avg += spectrum
             spectrum_avg /= perimeter_pixels.shape[1]
@@ -209,7 +211,15 @@ def init_simple_morph(observation, center, psf_sigma=0.5, noise_thresh=20, corr_
     return morph
 
 
-def init_morphology(obs, center, psf_sigma=1, noise_thresh=100, corr_thresh=0.8, max_size=36, components=2):
+def init_morphology(
+    obs,
+    center,
+    psf_sigma=1,
+    noise_thresh=100,
+    corr_thresh=0.8,
+    max_size=36,
+    components=1,
+):
     """Initialize the morphology of the sources.
     Parameters
     ----------
@@ -222,7 +232,7 @@ def init_morphology(obs, center, psf_sigma=1, noise_thresh=100, corr_thresh=0.8,
     """
     morph = init_simple_morph(obs, center, psf_sigma, noise_thresh, corr_thresh)
     if morph.shape[0] <= max_size:
-        return morph 
+        return morph
     # fit for a more complex morphology for bigger sources
     else:
         bx = morph.shape[0]
@@ -236,7 +246,9 @@ def init_morphology(obs, center, psf_sigma=1, noise_thresh=100, corr_thresh=0.8,
         morph[central_row, central_col] = 1.1  # extra brightening central pixel
         morph = (morph - np.min(morph)) / (np.max(morph) - np.min(morph))
         if bx > 30 and components == 2:
-            morph2 = create_gaussian_array(bx // 2, 1.4, 1.4, 0) # create a second component as a gaussian blob
+            morph2 = create_gaussian_array(
+                bx // 2, 1.4, 1.4, 0
+            )  # create a second component as a gaussian blob
             morph2 = (morph2 - np.min(morph2)) / (np.max(morph2) - np.min(morph2))
             return [morph, morph2]
         else:
