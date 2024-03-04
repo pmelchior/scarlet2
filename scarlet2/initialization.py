@@ -107,7 +107,7 @@ def fit_morph_params(data, center, bx):
 
     """
     data_cut = (data - jnp.min(data)) / (jnp.max(data) - jnp.min(data))
-    central_gaussian = create_gaussian_array(bx, 2.0, 2.0, 0)
+    central_gaussian = create_gaussian_array(bx, 1.75, 1.75, 0)
     fn = lambda x: jnp.mean(
         central_gaussian * (data_cut - create_gaussian_array(bx, x[0], x[1], x[2])) ** 2
     )
@@ -120,7 +120,7 @@ def fit_morph_params(data, center, bx):
     return best_params
 
 
-def init_simple_morph(observation, center, psf_sigma=1, noise_thresh=20, corr_thresh=0.8):
+def init_simple_morph(observation, center, psf_sigma=0.5, noise_thresh=20, corr_thresh=0.8):
     """
     Initialize the morphology of a source by fitting a 2D Gaussian to the cutout of the source.
     The boxsize will initially be fit as a compact point-source and then expanded until the snr
@@ -205,6 +205,7 @@ def init_simple_morph(observation, center, psf_sigma=1, noise_thresh=20, corr_th
 
     # normalise the morphology between 0 and 1
     morph = morph()
+    morph = (morph - jnp.min(morph)) / (jnp.max(morph) - jnp.min(morph))
     return morph
 
 
