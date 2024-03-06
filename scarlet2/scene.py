@@ -186,7 +186,11 @@ class Scene(Module):
 
                 # report current iteration results to callback
                 if callback is not None:
-                    callback(scene, convergence, loss)
+                    if constraint_fn is not None:
+                        scene_ = _constraint_replace(scene, constraint_fn)
+                    else:
+                        scene_ = scene
+                    callback(scene_, convergence, loss)
 
                 # Log the loss and max_change in the tqdm progress bar
                 t.set_postfix(loss=f"{loss:08.2f}", max_change=f"{max_change:1.6f}")
@@ -223,6 +227,8 @@ def _make_step(model, observations, optim, opt_state, filter_spec=None, constrai
     def loss_fn(model):
         if constraint_fn is not None:
             # parameters now obey constraints
+            # transformation happens in the grad path, so gradients are wrt to unconstrained variables
+            # likelihood and prior grads transparently apply the Jacobians of these transformations
             model = _constraint_replace(model, constraint_fn)
 
         pred = model()
