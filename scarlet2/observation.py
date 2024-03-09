@@ -4,25 +4,27 @@ import jax.numpy as jnp
 from .bbox import Box
 from .frame import Frame
 from .module import Module, Parameter
-from .renderer import Renderer, NoRenderer, ConvolutionRenderer, ChannelRenderer
+from .renderer import Renderer, NoRenderer, ConvolutionRenderer, ChannelRenderer, KDeconvRenderer, KResampleRenderer, KConvolveRenderer
 
 
 class Observation(Module):
     data: jnp.ndarray
+    pixel_size: jnp.ndarray
     weights: jnp.ndarray
     frame: Frame = eqx.field(static=True)
     renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
 
-    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
+    def __init__(self, data, pixel_size, weights, psf=None, wcs=None, channels=None, renderer=None):
         # TODO: replace by DataStore class, and make that static
         self.data = Parameter(jnp.asarray(data), fixed=True)
         self.weights = Parameter(jnp.asarray(weights), fixed=True)
         if channels is None:
             channels = range(data.shape[0])
-        self.frame = Frame(Box(data.shape), psf, wcs, channels)
+        self.frame = Frame(Box(data.shape), jnp.asarray(pixel_size), psf, wcs, channels)
         if renderer is None:
             renderer = NoRenderer()
         self.renderer = renderer
+        self.pixel_size = Parameter(jnp.asarray(pixel_size), fixed=True) 
         super().__post_init__()
 
     def render(self, model):
@@ -43,7 +45,7 @@ class Observation(Module):
         D = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
         log_norm = D / 2 * jnp.log(2 * jnp.pi)
         log_like = -jnp.sum(self.weights * (model_ - data) ** 2) / 2
-        return log_like - log_norm
+        return log_like - log_norm  
 
     def match(self, frame, renderer=None):
         # choose the renderer
@@ -55,18 +57,28 @@ class Observation(Module):
             if self.frame.channels != frame.channels:
                 renderers.append(ChannelRenderer(frame, self.frame))
 
-            # 2) TODO: rotate and resample to obs orientation
-            # angle, h = interpolation.get_angles(self.wcs, frame.wcs)
-            # same_res = abs(h - 1) < np.finfo(float).eps
-            # same_rot = (np.abs(angle[1]) ** 2) < np.finfo(float).eps
+            # Deconvolve with the model PSF
+            renderers.append(KDeconvRenderer(frame, self.frame))
 
-            # 3) convolve with obs PSF
-            # TODO: if 2) is a resampling operation: model PSF needs to be resampled accordingly
-            # Can be done by passing the renderer up to here to ConvolutionRenderer constructor below
-            # Alternative: deconvolve from model_psf before 2) and convolve with full PSF in 3)
-            # which is more modular but also more expensive unless all operations remain in Fourier space
-            if self.frame.psf != frame.psf:
-                renderers.append(ConvolutionRenderer(frame, self.frame))
+            # Resample at the obs resolution
+            renderers.append(KResampleRenderer(frame, self.frame))
+
+            # Convolve with obs PSF and return real image
+            renderers.append(KConvolveRenderer(frame, self.frame))
+
+            # # 2) TODO: rotate and resample to obs orientation
+            # # angle, h = interpolation.get_angles(self.wcs, frame.wcs)
+            # # same_res = abs(h - 1) < np.finfo(float).eps
+            # # same_rot = (np.abs(angle[1]) ** 2) < np.finfo(float).eps
+
+            # # 3) convolve with obs PSF
+            # # TODO: if 2) is a resampling operation: model PSF needs to be resampled accordingly
+            # # Can be done by passing the renderer up to here to ConvolutionRenderer constructor below
+            # # Alternative: deconvolve from model_psf before 2) and convolve with full PSF in 3)
+            # # which is more modular but also more expensive unless all operations remain in Fourier space
+            # if self.frame.psf != frame.psf:
+            #     renderers.append(ConvolutionRenderer(frame, self.frame))
+            #     print('Am I here?')
 
             # 4) TODO: trim off the edges
 

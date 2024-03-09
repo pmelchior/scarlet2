@@ -34,7 +34,7 @@ def transform(image, fft_shape, axes=None):
 
     image = _pad(image, fft_shape, axes)
     image = jnp.fft.ifftshift(image, axes)
-    image_fft = jnp.fft.rfftn(image, axes=axes)
+    image_fft = jnp.fft.fftn(image, axes=axes)
     return image_fft
 
 
@@ -139,7 +139,6 @@ def _kspace_op(image, kernel, f, padding=3, axes=None, fft_shape=None, return_ff
         return image_fft_
     image_ = inverse(image_fft_, fft_shape, image.shape, axes=axes)
     return image_
-
 
 def _get_fast_shape(im_or_shape1, im_or_shape2, axes=None, padding=3, max_shape=False):
     """Return the fast fft shapes for each spatial axis
