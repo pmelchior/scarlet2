@@ -5,7 +5,6 @@ import jax
 from .fft import convolve, deconvolve, _get_fast_shape, transform, inverse
 
 from .interpolation import resample2d
-# from jii import _lanczos_interp2d, resample2d_
 
 class Renderer(eqx.Module):
     def __call__(self, model, key=None):  # key is needed to chain renderers with eqx.nn.Sequential
@@ -125,30 +124,15 @@ class KResampleRenderer(Renderer):
 
         # compute model k-coordinates of the fourier input image
         ky_in = jnp.linspace(-.5, .5, kimage.shape[1]) / self._in_res
-        # kx_in = jnp.linspace(0, .5, kimage.shape[1]//2+1) / self._in_res
-        kx_in = jnp.linspace(-.5, .5, kimage.shape[1]) / self._in_res
+        kx_in = jnp.linspace(0, .5, kimage.shape[1]//2+1) / self._in_res
 
         ky_out = jnp.linspace(-.5, .5, self._fft_out_shape[0]) / self._out_res
-        # kx_out = jnp.linspace(0, .5, self._fft_out_shape[0]//2+1) / self._out_res
-        kx_out = jnp.linspace(-.5, .5, self._fft_out_shape[0]) / self._out_res
-        # print(kx_in)
-        # print(kx_out)
-        kimage = jnp.fft.fftshift(kimage, (-2, -1))
-
-        kcoords_in = jnp.stack(
-            jnp.meshgrid(kx_in, 
-                         ky_in
-                         ),
-              -1
-              )
+        kx_out = jnp.linspace(0, .5, self._fft_out_shape[0]//2+1) / self._out_res
         
-        kcoords_out = jnp.stack(
-            jnp.meshgrid(
-                kx_out,
-                ky_out
-            ),
-            -1
-        )
+        kimage = jnp.fft.fftshift(kimage, -2)
+
+        kcoords_in = jnp.stack(jnp.meshgrid(kx_in, ky_in), -1)
+        kcoords_out = jnp.stack(jnp.meshgrid(kx_out, ky_out), -1)
         
         # import jii
         k_resampled = jax.vmap(
@@ -160,10 +144,9 @@ class KResampleRenderer(Renderer):
                 3
         )                       
         
-        k_resampled = jnp.fft.ifftshift(k_resampled, (-2, -1))
+        k_resampled = jnp.fft.ifftshift(k_resampled, -2)
 
         # conserve flux
-        
         k_resampled = k_resampled * self._resolution_ratio
 
         return k_resampled

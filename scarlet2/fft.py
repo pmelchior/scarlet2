@@ -34,7 +34,7 @@ def transform(image, fft_shape, axes=None):
 
     image = _pad(image, fft_shape, axes)
     image = jnp.fft.ifftshift(image, axes)
-    image_fft = jnp.fft.fftn(image, axes=axes)
+    image_fft = jnp.fft.rfftn(image, axes=axes)
     return image_fft
 
 

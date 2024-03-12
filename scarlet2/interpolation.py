@@ -76,7 +76,7 @@ def resample2d(signal, coords, warp, n=3):
         res, yind, ky, masky = args
         
         xind = xi + i
-        maskx = (xind >= 0) & (xind < Nx)
+        maskx = (xind >= 0) & (xind < Ny)
 
         kx = lanczos_n(
             (x - coords_x[xind])/h,
@@ -92,7 +92,7 @@ def resample2d(signal, coords, warp, n=3):
         res = args
         
         yind = yi + i
-        masky = (yind >= 0) & (yind < Ny)
+        masky = (yind >= 0) & (yind < Nx)
 
         ky = lanczos_n(
             (y - coords_y[yind])/h, 
