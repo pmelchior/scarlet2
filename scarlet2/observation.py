@@ -55,31 +55,30 @@ class Observation(Module):
             if self.frame.channels != frame.channels:
                 renderers.append(ChannelRenderer(frame, self.frame))
 
-            # Deconvolve with the model PSF
-            renderers.append(KDeconvRenderer(frame, self.frame))
+            if self.frame.psf != frame.psf:
+                if frame.pixel_size != self.frame.pixel_size:
+                    # 2) Deconvolve with the model PSF, returns Fourier space image
+                    renderers.append(KDeconvRenderer(frame, self.frame))
 
-            # Resample at the obs resolution
-            renderers.append(KResampleRenderer(frame, self.frame))
+                    # 3)a) Resample at the obs resolution
+                    renderers.append(KResampleRenderer(frame, self.frame))
 
-            # Convolve with obs PSF and return real image
-            renderers.append(KConvolveRenderer(frame, self.frame))
+                    # 3)b) TODO: rotate and resample to obs orientation
+                    # angle, h = interpolation.get_angles(self.wcs, frame.wcs)
+                    # same_res = abs(h - 1) < np.finfo(float).eps
+                    # same_rot = (np.abs(angle[1]) ** 2) < np.finfo(float).eps
 
-            # # 2) TODO: rotate and resample to obs orientation
-            # # angle, h = interpolation.get_angles(self.wcs, frame.wcs)
-            # # same_res = abs(h - 1) < np.finfo(float).eps
-            # # same_rot = (np.abs(angle[1]) ** 2) < np.finfo(float).eps
+                    # # 4) convolve with obs PSF
+                    # # TODO: if 2) is a resampling operation: model PSF needs to be resampled accordingly
+                    # # Can be done by passing the renderer up to here to ConvolutionRenderer constructor below
+                    # # Alternative: deconvolve from model_psf before 2) and convolve with full PSF in 3)
+                    # # which is more modular but also more expensive unless all operations remain in Fourier space
+                    
+                    # Convolve with obs PSF and return real image
+                    renderers.append(KConvolveRenderer(frame, self.frame))
 
-            # # 3) convolve with obs PSF
-            # # TODO: if 2) is a resampling operation: model PSF needs to be resampled accordingly
-            # # Can be done by passing the renderer up to here to ConvolutionRenderer constructor below
-            # # Alternative: deconvolve from model_psf before 2) and convolve with full PSF in 3)
-            # # which is more modular but also more expensive unless all operations remain in Fourier space
-            
-            # if self.frame.psf != frame.psf:
-            #     renderers.append(ConvolutionRenderer(frame, self.frame))
-            #     print('Am I here?')
-
-            # 4) TODO: trim off the edges
+                else:
+                    renderers.append(ConvolutionRenderer(frame, self.frame))
 
             if len(renderers) == 0:
                 renderer = NoRenderer()
