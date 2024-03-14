@@ -29,7 +29,9 @@ def transform(image, fft_shape, axes=None):
             axes = (axes,)
 
     if len(fft_shape) != len(axes):
-        msg = "fft_shape self.axes must have the same number of dimensions, got {0}, {1}"
+        msg = (
+            "fft_shape self.axes must have the same number of dimensions, got {0}, {1}"
+        )
         raise ValueError(msg.format(fft_shape, axes))
 
     image = _pad(image, fft_shape, axes)
@@ -88,8 +90,15 @@ def convolve(image, kernel, padding=3, axes=None, fft_shape=None, return_fft=Fal
     axes: tuple or None
         Axes that contain the spatial information for the PSFs.
     """
-    return _kspace_op(image, kernel, operator.mul, padding=padding, axes=axes, fft_shape=fft_shape,
-                      return_fft=return_fft)
+    return _kspace_op(
+        image,
+        kernel,
+        operator.mul,
+        padding=padding,
+        axes=axes,
+        fft_shape=fft_shape,
+        return_fft=return_fft,
+    )
 
 
 def deconvolve(image, kernel, padding=3, axes=None, fft_shape=None, return_fft=False):
@@ -110,11 +119,20 @@ def deconvolve(image, kernel, padding=3, axes=None, fft_shape=None, return_fft=F
         Axes that contain the spatial information for the PSFs.
     """
 
-    return _kspace_op(image, kernel, operator.truediv, padding=padding, fft_shape=fft_shape, axes=axes,
-                      return_fft=return_fft)
+    return _kspace_op(
+        image,
+        kernel,
+        operator.truediv,
+        padding=padding,
+        fft_shape=fft_shape,
+        axes=axes,
+        return_fft=return_fft,
+    )
 
 
-def _kspace_op(image, kernel, f, padding=3, axes=None, fft_shape=None, return_fft=False):
+def _kspace_op(
+    image, kernel, f, padding=3, axes=None, fft_shape=None, return_fft=False
+):
     if axes is None:
         axes = range(len(image.shape))
     else:
@@ -126,11 +144,15 @@ def _kspace_op(image, kernel, f, padding=3, axes=None, fft_shape=None, return_ff
     # assumes kernel FFT has been computed with large enough shape to cover also image
     if kernel.dtype in (jnp.complex64, jnp.complex128):
         fft_shape = [kernel.shape[ax] for ax in axes]
-        fft_shape[-1] = 2 * (fft_shape[-1] - 1)  # real-valued FFT has 1/2 of the frequencies
+        fft_shape[-1] = 2 * (
+            fft_shape[-1] - 1
+        )  # real-valued FFT has 1/2 of the frequencies
         kernel_fft = kernel
     else:
         if fft_shape is None:
-            fft_shape = _get_fast_shape(image.shape, kernel.shape, padding=padding, axes=axes)
+            fft_shape = _get_fast_shape(
+                image.shape, kernel.shape, padding=padding, axes=axes
+            )
         kernel_fft = transform(kernel, fft_shape, axes=axes)
 
     image_fft = transform(image, fft_shape, axes=axes)
@@ -139,6 +161,7 @@ def _kspace_op(image, kernel, f, padding=3, axes=None, fft_shape=None, return_ff
         return image_fft_
     image_ = inverse(image_fft_, fft_shape, image.shape, axes=axes)
     return image_
+
 
 def _get_fast_shape(im_or_shape1, im_or_shape2, axes=None, padding=3, max_shape=False):
     """Return the fast fft shapes for each spatial axis
@@ -221,6 +244,7 @@ def _fast_zero_pad(arr, pad_width):
     start = tuple(start for start, end in pad_width)
     result = jax.lax.dynamic_update_slice(result, arr, start_indices=start)
     return result
+
 
 def _pad(arr, newshape, axes=None, mode="constant", constant_values=0):
     """Pad an array to fit into newshape

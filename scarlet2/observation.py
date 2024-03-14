@@ -4,7 +4,15 @@ import jax.numpy as jnp
 from .bbox import Box
 from .frame import Frame
 from .module import Module, Parameter
-from .renderer import Renderer, NoRenderer, ConvolutionRenderer, ChannelRenderer, KDeconvRenderer, KResampleRenderer, KConvolveRenderer
+from .renderer import (
+    Renderer,
+    NoRenderer,
+    ConvolutionRenderer,
+    ChannelRenderer,
+    KDeconvRenderer,
+    KResampleRenderer,
+    KConvolveRenderer,
+)
 
 
 class Observation(Module):
@@ -43,7 +51,7 @@ class Observation(Module):
         D = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
         log_norm = D / 2 * jnp.log(2 * jnp.pi)
         log_like = -jnp.sum(self.weights * (model_ - data) ** 2) / 2
-        return log_like - log_norm  
+        return log_like - log_norm
 
     def match(self, frame, renderer=None):
         # choose the renderer
@@ -73,7 +81,7 @@ class Observation(Module):
                     # # Can be done by passing the renderer up to here to ConvolutionRenderer constructor below
                     # # Alternative: deconvolve from model_psf before 2) and convolve with full PSF in 3)
                     # # which is more modular but also more expensive unless all operations remain in Fourier space
-                    
+
                     # Convolve with obs PSF and return real image
                     renderers.append(KConvolveRenderer(frame, self.frame))
 
@@ -88,7 +96,8 @@ class Observation(Module):
                 renderer = eqx.nn.Sequential(renderers)
         else:
             assert isinstance(renderer, (Renderer, eqx.nn.Sequential))
-            assert renderer(jnp.zeros(frame.bbox.shape)).shape == self.frame.bbox.shape, \
-                "Renderer does not map model frame to observation frame"
-        object.__setattr__(self, 'renderer', renderer)
+            assert (
+                renderer(jnp.zeros(frame.bbox.shape)).shape == self.frame.bbox.shape
+            ), "Renderer does not map model frame to observation frame"
+        object.__setattr__(self, "renderer", renderer)
         return self

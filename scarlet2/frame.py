@@ -18,7 +18,7 @@ class Frame(eqx.Module):
         self.bbox = bbox
         self.psf = psf
         self.wcs = wcs
-        self.pixel_size = get_pixel_size(get_affine(self.wcs))*60*60 # in arcsec
+        self.pixel_size = get_pixel_size(get_affine(self.wcs)) * 60 * 60  # in arcsec
         if channels is None:
             channels = list(range(bbox.shape[0]))
         assert len(channels) == bbox.shape[0]
@@ -48,8 +48,6 @@ class Frame(eqx.Module):
 
         if pixel.size == 2:  # only one coordinate pair
             return pixel[0]
-        print(self)
-        print("pixel", pixel)
         return pixel
 
     def get_sky_coord(self, pixel):
@@ -175,7 +173,7 @@ class Frame(eqx.Module):
 
         # Scale of the smallest pixel
         h = get_pixel_size(get_affine(model_wcs))
-        
+
         # TODO:
         # # If needed and psf is not provided: interpolate psf to smallest pixel
         # if model_psf is None:
@@ -187,10 +185,10 @@ class Frame(eqx.Module):
         #         )
         #     else:
         #         model_psf = model_psf_temp
-        
+
         # Dummy frame for WCS computations
         model_shape = (len(channels), 0, 0)
-        
+
         model_frame = Frame(
             jnp.zeros(model_shape), channels=channels, psf=model_psf, wcs=model_wcs
         )
@@ -221,7 +219,7 @@ class Frame(eqx.Module):
         pad_size = fat_psf_size / h / 2
         offset = (np.round(pad_size).astype("int"), np.round(pad_size).astype("int"))
         model_box -= offset
-        
+
         model_box_shape = tuple(s + 2 * o for s, o in zip(model_box.shape, offset))
 
         # move the reference pixel of the model wcs to the 0/0 pixel of the new shape
@@ -230,7 +228,7 @@ class Frame(eqx.Module):
         model_wcs.array_shape = model_box.shape
 
         # recreate the model frame with the correct shape
-        #frame_shape = (len(channels), model_box_shape)
+        # frame_shape = (len(channels), model_box_shape)
         frame_shape = np.concatenate([[len(channels)], np.array(model_box_shape)])
 
         model_frame = Frame(
@@ -245,7 +243,7 @@ class Frame(eqx.Module):
 
 
 def get_psf_size(psf):
-    """ Measures the size of a psf by computing the size of the area in 3 sigma around the center.
+    """Measures the size of a psf by computing the size of the area in 3 sigma around the center.
 
     This is an approximate method to estimate the size of the psf for setting the size of the frame,
     which does not require a precise measurement.
@@ -288,8 +286,7 @@ def get_affine(wcs):
 
 
 def get_pixel_size(model_affine):
-    """ Extracts the pixel size from a wcs
-    """
+    """Extracts the pixel size from a wcs"""
     pix = np.sqrt(
         np.abs(model_affine[0, 0])
         * np.abs(model_affine[1, 1] - model_affine[0, 1] * model_affine[1, 0])
