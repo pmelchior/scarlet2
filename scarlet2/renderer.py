@@ -95,7 +95,16 @@ class KDeconvRenderer(Renderer):
     model
     """
 
-    def __init__(self, model_frame, obs_frame):
+    def __init__(self, model_frame, padding=None):
+
+        if padding==None:
+            # use 4 times padding
+            pad_factor = 4
+            padding = pad_factor * max(model_frame.bbox.shape[1],
+                                       model_frame.bbox.shape[2])
+        object.__setattr__(self, "_pad_size", padding)
+
+
         # create PSF model
         psf = model_frame.psf()
         if len(psf.shape) == 2:  # only one image for all bands
@@ -107,7 +116,7 @@ class KDeconvRenderer(Renderer):
     def __call__(self, model, key=None):
         psf_model = self._psf_model
         fft_shape = _get_fast_shape(
-            model.shape, psf_model.shape, padding=1000, axes=(-2, -1)
+            model.shape, psf_model.shape, padding=self._pad_size, axes=(-2, -1)
         )
         deconv_ = deconvolve(
             model, psf_model, axes=(-2, -1), fft_shape=fft_shape, return_fft=True
@@ -124,13 +133,19 @@ class KResampleRenderer(Renderer):
     Needs to return a Fourier image sampled at the observation frame resolution
     """
 
-    def __init__(self, model_frame, obs_frame):
+    def __init__(self, model_frame, obs_frame, padding=None):
         object.__setattr__(self, "_in_res", model_frame.pixel_size)
         object.__setattr__(self, "_out_res", obs_frame.pixel_size)
 
+        if padding==None:
+            # use 4 times padding
+            pad_factor = 4
+            padding = pad_factor * max(obs_frame.bbox.shape[1],
+                                       obs_frame.bbox.shape[2])
+
         # find on what grid we will interpolate
         fft_out_shape = _get_fast_shape(
-            obs_frame.bbox.shape, obs_frame.psf().shape, padding=300, axes=(-2, -1)
+            obs_frame.bbox.shape, obs_frame.psf().shape, padding=padding, axes=(-2, -1)
         )
         object.__setattr__(self, "_fft_out_shape", fft_out_shape)
 
@@ -170,8 +185,15 @@ class KConvolveRenderer(Renderer):
     Convolve with obs PSF and return real image
     """
 
-    def __init__(self, model_frame, obs_frame):
+    def __init__(self, obs_frame, padding=None):
         object.__setattr__(self, "_obs_shape", obs_frame.bbox.shape)
+
+        if padding==None:
+            # use 4 times padding
+            pad_factor = 4
+            padding = pad_factor * max(obs_frame.bbox.shape[1],
+                                       obs_frame.bbox.shape[2])
+        object.__setattr__(self, "_pad_size", padding)
 
         # get PSF from obs
         psf = obs_frame.psf()
@@ -182,7 +204,7 @@ class KConvolveRenderer(Renderer):
         object.__setattr__(self, "_psf_model", psf_model)
 
         fft_out_shape = _get_fast_shape(
-            obs_frame.bbox.shape, obs_frame.psf().shape, padding=300, axes=(-2, -1)
+            obs_frame.bbox.shape, obs_frame.psf().shape, padding=padding, axes=(-2, -1)
         )
         object.__setattr__(self, "_fft_out_shape", fft_out_shape)
 

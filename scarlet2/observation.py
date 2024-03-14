@@ -66,7 +66,7 @@ class Observation(Module):
             if self.frame.psf != frame.psf:
                 if frame.pixel_size != self.frame.pixel_size:
                     # 2) Deconvolve with the model PSF, returns Fourier space image
-                    renderers.append(KDeconvRenderer(frame, self.frame))
+                    renderers.append(KDeconvRenderer(frame))
 
                     # 3)a) Resample at the obs resolution
                     renderers.append(KResampleRenderer(frame, self.frame))
@@ -83,7 +83,7 @@ class Observation(Module):
                     # # which is more modular but also more expensive unless all operations remain in Fourier space
 
                     # Convolve with obs PSF and return real image
-                    renderers.append(KConvolveRenderer(frame, self.frame))
+                    renderers.append(KConvolveRenderer(self.frame))
 
                 else:
                     renderers.append(ConvolutionRenderer(frame, self.frame))
