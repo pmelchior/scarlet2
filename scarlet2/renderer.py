@@ -97,13 +97,13 @@ class KDeconvRenderer(Renderer):
 
     def __init__(self, model_frame, padding=None):
 
-        if padding==None:
+        if padding == None:
             # use 4 times padding
             pad_factor = 4
-            padding = pad_factor * max(model_frame.bbox.shape[1],
-                                       model_frame.bbox.shape[2])
+            padding = pad_factor * max(
+                model_frame.bbox.shape[1], model_frame.bbox.shape[2]
+            )
         object.__setattr__(self, "_pad_size", padding)
-
 
         # create PSF model
         psf = model_frame.psf()
@@ -137,11 +137,10 @@ class KResampleRenderer(Renderer):
         object.__setattr__(self, "_in_res", model_frame.pixel_size)
         object.__setattr__(self, "_out_res", obs_frame.pixel_size)
 
-        if padding==None:
+        if padding == None:
             # use 4 times padding
             pad_factor = 4
-            padding = pad_factor * max(obs_frame.bbox.shape[1],
-                                       obs_frame.bbox.shape[2])
+            padding = pad_factor * max(obs_frame.bbox.shape[1], obs_frame.bbox.shape[2])
 
         # find on what grid we will interpolate
         fft_out_shape = _get_fast_shape(
@@ -188,11 +187,10 @@ class KConvolveRenderer(Renderer):
     def __init__(self, obs_frame, padding=None):
         object.__setattr__(self, "_obs_shape", obs_frame.bbox.shape)
 
-        if padding==None:
+        if padding == None:
             # use 4 times padding
             pad_factor = 4
-            padding = pad_factor * max(obs_frame.bbox.shape[1],
-                                       obs_frame.bbox.shape[2])
+            padding = pad_factor * max(obs_frame.bbox.shape[1], obs_frame.bbox.shape[2])
         object.__setattr__(self, "_pad_size", padding)
 
         # get PSF from obs
