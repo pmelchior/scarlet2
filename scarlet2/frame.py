@@ -14,11 +14,11 @@ class Frame(eqx.Module):
     wcs: astropy.wcs.wcs = None
     channels: list
 
-    def __init__(self, bbox, pixel_size, psf=None, wcs=None, channels=None):
+    def __init__(self, bbox, psf=None, wcs=None, channels=None):
         self.bbox = bbox
         self.psf = psf
         self.wcs = wcs
-        self.pixel_size=pixel_size
+        self.pixel_size = get_pixel_size(get_affine(self.wcs))*60*60 # in arcsec
         if channels is None:
             channels = list(range(bbox.shape[0]))
         assert len(channels) == bbox.shape[0]
@@ -27,12 +27,6 @@ class Frame(eqx.Module):
 
     def __hash__(self):
         return hash(self.bbox)
-
-    def get_pixel_scale(self):
-        """Compute the pixel scale in arcsec from WCS
-        """
-        d = self.wcs.pixel_to_world(0, 1, 0) - self.wcs_hsc.pixel_to_world(0, 2, 0)
-        return np.abs(d).dms.s
 
     def get_pixel(self, sky_coord):
         """Get the pixel coordinate from a world coordinate
@@ -180,10 +174,9 @@ class Frame(eqx.Module):
             model_wcs = obs_ref.frame.wcs
 
         # Scale of the smallest pixel
-        pixel_size = obs_ref.pixel_size
         h = get_pixel_size(get_affine(model_wcs))
         
-        
+        # TODO:
         # # If needed and psf is not provided: interpolate psf to smallest pixel
         # if model_psf is None:
         #     # If the reference PSF is not at the highest pixel resolution, make it!
@@ -198,16 +191,8 @@ class Frame(eqx.Module):
         # Dummy frame for WCS computations
         model_shape = (len(channels), 0, 0)
         
-
-
-        # print("model_shape", model_shape)
-        # print("channels", channels)
-        # print("model_psf", model_psf)
-        # print("model_wcs", model_wcs)
-
-
         model_frame = Frame(
-            jnp.zeros(model_shape), pixel_size=pixel_size, channels=channels, psf=model_psf, wcs=model_wcs
+            jnp.zeros(model_shape), channels=channels, psf=model_psf, wcs=model_wcs
         )
 
         # Determine overlap of all observations in pixel coordinates of the model frame
@@ -236,8 +221,7 @@ class Frame(eqx.Module):
         pad_size = fat_psf_size / h / 2
         offset = (np.round(pad_size).astype("int"), np.round(pad_size).astype("int"))
         model_box -= offset
-        # print("model_box", model_box)
-        # print("model_box.shape", model_box.shape)
+        
         model_box_shape = tuple(s + 2 * o for s, o in zip(model_box.shape, offset))
 
         # move the reference pixel of the model wcs to the 0/0 pixel of the new shape
@@ -248,9 +232,9 @@ class Frame(eqx.Module):
         # recreate the model frame with the correct shape
         #frame_shape = (len(channels), model_box_shape)
         frame_shape = np.concatenate([[len(channels)], np.array(model_box_shape)])
-        # print("frame_shape", frame_shape)
+
         model_frame = Frame(
-            jnp.zeros(frame_shape), pixel_size=pixel_size, channels=channels, psf=model_psf, wcs=model_wcs
+            jnp.zeros(frame_shape), channels=channels, psf=model_psf, wcs=model_wcs
         )
 
         # Match observations to this frame

@@ -9,22 +9,20 @@ from .renderer import Renderer, NoRenderer, ConvolutionRenderer, ChannelRenderer
 
 class Observation(Module):
     data: jnp.ndarray
-    pixel_size: jnp.ndarray
     weights: jnp.ndarray
     frame: Frame = eqx.field(static=True)
     renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
 
-    def __init__(self, data, pixel_size, weights, psf=None, wcs=None, channels=None, renderer=None):
+    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
         # TODO: replace by DataStore class, and make that static
         self.data = Parameter(jnp.asarray(data), fixed=True)
         self.weights = Parameter(jnp.asarray(weights), fixed=True)
         if channels is None:
             channels = range(data.shape[0])
-        self.frame = Frame(Box(data.shape), jnp.asarray(pixel_size), psf, wcs, channels)
+        self.frame = Frame(Box(data.shape), psf, wcs, channels)
         if renderer is None:
             renderer = NoRenderer()
         self.renderer = renderer
-        self.pixel_size = Parameter(jnp.asarray(pixel_size), fixed=True) 
         super().__post_init__()
 
     def render(self, model):
@@ -76,6 +74,7 @@ class Observation(Module):
             # # Can be done by passing the renderer up to here to ConvolutionRenderer constructor below
             # # Alternative: deconvolve from model_psf before 2) and convolve with full PSF in 3)
             # # which is more modular but also more expensive unless all operations remain in Fourier space
+            
             # if self.frame.psf != frame.psf:
             #     renderers.append(ConvolutionRenderer(frame, self.frame))
             #     print('Am I here?')
