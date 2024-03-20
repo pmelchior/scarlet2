@@ -4,10 +4,15 @@ import jax.numpy as jnp
 
 def f_1(x, n):
     """
-    We should Taylor expand instead
-    (see galsim code)
+    Approximation from galsim
+    // res = n/(pi x)^2 * sin(pi x) * sin(pi x / n)
+    //     ~= (1 - 1/6 pix^2) * (1 - 1/6 pix^2 / n^2)
+    //     = 1 - 1/6 pix^2 ( 1 + 1/n^2 )
     """
-    return x * 0.0 + 1.0
+    px = jnp.pi * x
+    temp = 1./6. * px * px
+    res = 1. - temp * (1. + 1. / (n * n))
+    return res
 
 
 def f_2(x, n):
