@@ -190,7 +190,7 @@ class Frame(eqx.Module):
         model_shape = (len(channels), 0, 0)
 
         model_frame = Frame(
-            jnp.zeros(model_shape), channels=channels, psf=model_psf, wcs=model_wcs
+            Box(model_shape), channels=channels, psf=model_psf, wcs=model_wcs
         )
 
         # Determine overlap of all observations in pixel coordinates of the model frame
@@ -232,7 +232,7 @@ class Frame(eqx.Module):
         frame_shape = np.concatenate([[len(channels)], np.array(model_box_shape)])
 
         model_frame = Frame(
-            jnp.zeros(frame_shape), channels=channels, psf=model_psf, wcs=model_wcs
+            Box(frame_shape), channels=channels, psf=model_psf, wcs=model_wcs
         )
 
         # Match observations to this frame
