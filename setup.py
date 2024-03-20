@@ -11,6 +11,7 @@ setup(
     packages=['scarlet2'],
     install_requires=[
         'equinox',
+        'jax',
         'astropy',
         'numpy',
         'matplotlib'
