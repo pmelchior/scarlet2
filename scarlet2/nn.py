@@ -150,7 +150,7 @@ class ScorePrior(dist.Distribution):
         return _log_prob(self.model, x)
 
 # define a class for temperature adjustable prior
-class TempScore:
+class TempScore(ScorePrior):
     """Temperature adjustable ScorePrior"""
     def __init__(self, model, temp=0.02):
         self.model = model
