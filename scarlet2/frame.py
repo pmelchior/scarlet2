@@ -9,7 +9,6 @@ from .psf import PSF
 
 class Frame(eqx.Module):
     bbox: Box
-    pixel_size: jnp.ndarray
     psf: PSF = None
     wcs: astropy.wcs.wcs = None
     channels: list
@@ -18,7 +17,6 @@ class Frame(eqx.Module):
         self.bbox = bbox
         self.psf = psf
         self.wcs = wcs
-        self.pixel_size = get_pixel_size(get_affine(self.wcs)) * 60 * 60  # in arcsec
         if channels is None:
             channels = list(range(bbox.shape[0]))
         assert len(channels) == bbox.shape[0]
@@ -27,6 +25,13 @@ class Frame(eqx.Module):
 
     def __hash__(self):
         return hash(self.bbox)
+
+    @property
+    def pixel_size(self):
+        if self.wcs is not None:
+            return get_pixel_size(get_affine(self.wcs)) * 60 * 60  # in arcsec
+        else:
+            return 1
 
     def get_pixel(self, sky_coord):
         """Get the pixel coordinate from a world coordinate
