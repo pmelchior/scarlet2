@@ -69,12 +69,13 @@ class Source(Component):
         # adding a full source will maintain its ownership of components:
         # hierarchical definition of sources withing sources
         self.components.append((component, op))
+        return self
 
     def __iadd__(self, component):
-        self.add_component(component, operator.add)
+        return self.add_component(component, operator.add)
 
     def __imul__(self, component):
-        self.add_component(component, operator.mul)
+        return self.add_component(component, operator.mul)
 
     def __call__(self):
         base = super()
