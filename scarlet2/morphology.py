@@ -1,6 +1,9 @@
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy
+import numpy as np
+from scipy.special import gammaincinv
+from astropy.modeling.models import Sersic2D
 
 from .bbox import Box
 from .module import Module
@@ -25,6 +28,44 @@ class ArrayMorphology(Morphology):
     def __call__(self):
         return self.data
 
+class Sersic2DMorphology(Morphology):
+    x0: jnp.array
+    y0: jnp.array
+    X: jnp.ndarray
+    Y: jnp.ndarray
+    ellip: jnp.array
+    theta: jnp.array
+    r_eff: jnp.array
+    n: jnp.array
+    amplitude : jnp.array
+    def __init__(self, x0, y0, X, Y,
+                 ellip, theta, r_eff, n,
+                 amplitude = jnp.array(1) ):
+        self.x0 = x0
+        self.y0 = y0
+        self.X = X
+        self.Y = Y
+        self.ellip  = ellip
+        self.theta  = theta
+        self.r_eff  = r_eff
+        self.n  = n
+        self.amplitude = amplitude
+        super().__post_init__()
+        self.bbox = Box(self.X.shape)
+    def evaluate(self, x, y, amplitude, r_eff, n, x_0, y_0, ellip, theta):
+        """Two dimensional Sersic profile function."""
+        # bn = gammaincinv(2.0 * n, 0.5)
+        bn = 1.99930938*n -0.32678895
+        a, b = r_eff, (1 - ellip) * r_eff
+        cos_theta, sin_theta = jnp.cos(theta), jnp.sin(theta)
+        x_maj = (x - x_0) * cos_theta + (y - y_0) * sin_theta
+        x_min = -(x - x_0) * sin_theta + (y - y_0) * cos_theta
+        z = jnp.sqrt((x_maj / a) ** 2 + (x_min / b) ** 2)
+        return amplitude * jnp.exp(-bn * (z ** (1 / n) - 1))
+    def __call__(self):
+        return self.evaluate(self.X, self.Y, amplitude = self.amplitude, r_eff = self.r_eff, n = self.n,
+               x_0=self.x0, y_0=self.y0,
+               ellip=self.ellip, theta=self.theta)
 
 class GaussianMorphology(Morphology):
     center: jnp.ndarray
