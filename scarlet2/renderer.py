@@ -167,8 +167,8 @@ class KResampleRenderer(Renderer):
         kcoords_in = jnp.stack(jnp.meshgrid(kx_in, ky_in), -1)
         kcoords_out = jnp.stack(jnp.meshgrid(kx_out, ky_out), -1)
 
-        k_resampled = jax.vmap(resample2d, in_axes=(0, None, None, None))(
-            kimage, kcoords_in, kcoords_out, 3
+        k_resampled = jax.vmap(resample2d, in_axes=(0, None, None))(
+            kimage, kcoords_in, kcoords_out
         )
 
         k_resampled = jnp.fft.ifftshift(k_resampled, -2)

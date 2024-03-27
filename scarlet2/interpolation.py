@@ -1,5 +1,18 @@
 import jax
 import jax.numpy as jnp
+import equinox as eqx
+
+
+### Interpolant class
+
+class Interpolant(eqx.Module):
+    extent: int
+    def __call__(
+        self):
+        raise NotImplementedError
+
+    def kernel(self, x):
+        raise NotImplementedError
 
 ### Quintic interpolant
 
@@ -28,6 +41,13 @@ def quintic(x):
         [b1, (~b1) & b2, (~b2) & b3], 
         [f_0_1_q, f_1_2_q, f_2_3_q, f_3_q]
         )
+
+class Quntic(Interpolant):
+    def __init__(self):
+        self.extent = 3
+    
+    def kernel(self, x):
+        return quintic(x)
 
 ### Lanczos interpolant
 
@@ -60,12 +80,21 @@ def lanczos_n(x, n=3):
     window_n = jnp.abs(x) <= n
 
     return jnp.piecewise(
-        x, [small_x, (~small_x) & window_n], [f_1, f_2, lambda x, n: jnp.array(0)], n
+        x, 
+        [small_x, (~small_x) & window_n], 
+        [f_1, f_2, lambda x, n: jnp.array(0)], n
     )
+
+class Lanczos(Interpolant):
+    def __init__(self, n):
+        self.extent = n
+    
+    def kernel(self, x):
+        return lanczos_n(x, self.extent)
 
 ### Resampling function
 
-def resample2d(signal, coords, warp, n=3):
+def resample2d(signal, coords, warp, interpolant=Lanczos(3)):
     """
     Resample a 2-dimensional image using a Lanczos kernel
 
@@ -93,6 +122,9 @@ def resample2d(signal, coords, warp, n=3):
     resampled_signal: array
     """
 
+    print("interpolant", interpolant)
+    print(interpolant.extent)
+
     x = warp[..., 0].flatten()
     y = warp[..., 1].flatten()
 
@@ -113,8 +145,9 @@ def resample2d(signal, coords, warp, n=3):
         xind = xi + i
         maskx = (xind >= 0) & (xind < Ny)
 
-        kx = quintic((x - coords_x[xind]) / h)
+        # kx = quintic((x - coords_x[xind]) / h)
         # kx = lanczos_n((x - coords_x[xind]) / h, n)
+        kx = interpolant.kernel((x - coords_x[xind]) / h)
 
         k = kx * ky
         mask = maskx & masky
@@ -128,15 +161,16 @@ def resample2d(signal, coords, warp, n=3):
         yind = yi + i
         masky = (yind >= 0) & (yind < Nx)
 
-        ky = quintic((y - coords_y[yind]) / h)
+        # ky = quintic((y - coords_y[yind]) / h)
         # ky = lanczos_n((y - coords_y[yind]) / h, n)
+        ky = interpolant.kernel((y - coords_y[yind]) / h)
 
-        res = jax.lax.fori_loop(-n, n + 1, body_fun_x, (res, yind, ky, masky))[0]
+        res = jax.lax.fori_loop(-interpolant.extent, interpolant.extent + 1, body_fun_x, (res, yind, ky, masky))[0]
 
         return res
 
     res = jax.lax.fori_loop(
-        -n, n + 1, body_fun_y, jnp.zeros_like(x).astype(signal.dtype)
+        -interpolant.extent, interpolant.extent + 1, body_fun_y, jnp.zeros_like(x).astype(signal.dtype)
     )
 
     return res.reshape(warp[..., 0].shape)
