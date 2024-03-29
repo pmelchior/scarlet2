@@ -61,3 +61,4 @@ class GaussianMorphology(Morphology):
         # f = lambda x, s: jnp.exp(-(x ** 2) / (2 * s ** 2)) / (jnp.sqrt(2 * jnp.pi) * s)
 
         return jnp.outer(f(_Y - self.center[0], self.sigma), f(_X - self.center[1], self.sigma))
+

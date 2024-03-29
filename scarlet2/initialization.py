@@ -119,6 +119,8 @@ def fit_morph_params(data, center, bx):
     best_params = lbfgsb.run(x0, bounds=bounds).params
     return best_params
 
+# take the 3 moments of a @D gaussian and construct the covariance matrix to fit the shape
+
 
 def init_simple_morph(
     observation, center, psf_sigma=0.5, noise_thresh=20, corr_thresh=0.8
@@ -313,15 +315,15 @@ def init_spectrum(observations, center, correct_psf=None, models=None):
 
         spectra.append(spectrum)
 
-        if jnp.any(spectrum <= 0):
+        #if jnp.any(spectrum <= 0):
             # If the flux in all channels is  <=0,
             # the new sed will be filled with NaN values,
             # which will cause the code to crash later
-            msg = f"Zero or negative spectrum {spectrum} at {center}"
-            if np.all(spectrum <= 0):
-                logger.warning(msg)
-            else:
-                logger.info(msg)
+        #    msg = f"Zero or negative spectrum {spectrum} at {center}"
+        #    if np.all(spectrum <= 0):
+        #        logger.warning(msg)
+        #    else:
+        #        logger.info(msg)
 
     if single:
         return spectra[0]
