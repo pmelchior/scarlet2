@@ -247,10 +247,9 @@ def init_morphology(
         central_col = cols // 2
         morph[central_row, central_col] = 1.1  # extra brightening central pixel
         morph = (morph - np.min(morph)) / (np.max(morph) - np.min(morph))
-        # TODO: Same box size now just for testing
         if bx > 30 and components == 2:
             morph2 = create_gaussian_array(
-                bx // 2, 1.35, 1.35, 0
+                bx // 2, 1.5, 1.5, 0
             )  # create a second component as a gaussian blob
             morph2 = (morph2 - np.min(morph2)) / (np.max(morph2) - np.min(morph2))
             return [morph, morph2]

@@ -1,6 +1,7 @@
 import copy
 import operator
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 
@@ -37,12 +38,14 @@ class DustComponent(Component):
 
 class Source(Component):
     components: list
+    component_ops: list = eqx.field(static=True)
 
     def __init__(self, center, spectrum, morphology):
         # set the base component
         super().__init__(center, spectrum, morphology)
         # create the empty component list
         self.components = list()
+        self.component_ops = list()
 
         # add this source to the active scene
         try:
@@ -66,9 +69,11 @@ class Source(Component):
                 raise
             except ValueError:
                 pass
+
         # adding a full source will maintain its ownership of components:
         # hierarchical definition of sources withing sources
-        self.components.append((component, op))
+        self.components.append(component)
+        self.component_ops.append(op)
         return self
 
     def __iadd__(self, component):
@@ -80,7 +85,7 @@ class Source(Component):
     def __call__(self):
         base = super()
         model = base.__call__()
-        for component, op in self.components:
+        for component, op in zip(self.components, self.component_ops):
             model_ = component()
             # cut out regions from model and model_
             bbox, bbox_ = overlap_slices(base.bbox, component.bbox, return_boxes=True)
@@ -108,4 +113,3 @@ class PointSource(Source):
         morphology = copy.deepcopy(frame.psf.morphology)
         object.__setattr__(morphology, 'center', center)
         super().__init__(center, spectrum, morphology)
-
