@@ -249,7 +249,7 @@ def init_morphology(
         morph = (morph - np.min(morph)) / (np.max(morph) - np.min(morph))
         if bx > 30 and components == 2:
             morph2 = create_gaussian_array(
-                bx // 2, 1.5, 1.5, 0
+                bx, 1.25, 1.25, 0
             )  # create a second component as a gaussian blob
             morph2 = (morph2 - np.min(morph2)) / (np.max(morph2) - np.min(morph2))
             return [morph, morph2]
