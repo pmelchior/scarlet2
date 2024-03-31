@@ -20,7 +20,6 @@ class Scene(Module):
         self.sources = list()
         super().__post_init__()
 
-    #TODO: Matt - alter this for the multi-component sources
     def __call__(self):
         model = jnp.zeros(self.frame.bbox.shape)
         for source in self.sources:
