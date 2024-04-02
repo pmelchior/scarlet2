@@ -3,14 +3,18 @@ import jax.numpy as jnp
 import jax.scipy
 
 from .bbox import Box
-from .module import Module
+from .module import Module, Parameter
 
 
 class Morphology(Module):
     bbox: Box = eqx.field(static=True, init=False)
 
     def center_bbox(self, center):
-        center_ = tuple(_.item() for _ in center.astype(int))
+        if isinstance(center, Parameter):
+            center_ = center.value
+        else:
+            center_ = center
+        center_ = tuple(_.item() for _ in center_.astype(int))
         self.bbox.set_center(center_)
 
 
