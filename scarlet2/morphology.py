@@ -1,8 +1,6 @@
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy
-from scipy.special import gammaincinv
-from astropy.modeling.models import Sersic2D
 
 from .bbox import Box
 from .module import Module
@@ -27,59 +25,27 @@ class ArrayMorphology(Morphology):
     def __call__(self):
         return self.data
 
-class Sersic2DMorphology(Morphology):
-    x0: jnp.array
-    y0: jnp.array
-    X: jnp.ndarray
-    Y: jnp.ndarray
-    ellip: jnp.array
-    theta: jnp.array
-    r_eff: jnp.array
-    n: jnp.array
-    amplitude : jnp.array
-    
-    def __init__(self, x0, y0, X, Y,
-                 ellip, theta, r_eff, n,
-                 amplitude = jnp.array(1) ):
-        self.x0 = x0
-        self.y0 = y0
-        self.X = X
-        self.Y = Y
-        self.ellip  = ellip
-        self.theta  = theta
-        self.r_eff  = r_eff
-        self.n  = n
-        self.amplitude = amplitude
-        super().__post_init__()
-        self.bbox = Box(self.X.shape)
-    
-    def evaluate(self, x, y, amplitude, r_eff, n, x_0, y_0, ellip, theta):
-        """Two dimensional Sersic profile function.""" 
-        bn = 1.99930938*n -0.32678895
-        a, b = r_eff, (1 - ellip) * r_eff
-        cos_theta, sin_theta = jnp.cos(theta), jnp.sin(theta)
-        x_maj = (x - x_0) * cos_theta + (y - y_0) * sin_theta
-        x_min = -(x - x_0) * sin_theta + (y - y_0) * cos_theta
-        z = jnp.sqrt((x_maj / a) ** 2 + (x_min / b) ** 2)
-        return amplitude * jnp.exp(-bn * (z ** (1 / n) - 1))
-    
-    def __call__(self):
-        return self.evaluate(self.X, self.Y, amplitude = self.amplitude, r_eff = self.r_eff, n = self.n,
-        x_0=self.x0, y_0=self.y0,ellip=self.ellip, theta=self.theta)
 
-class GaussianMorphology(Morphology):
-    center: jnp.ndarray
-    sigma: float
+class ProfileMorphology(Morphology):
+    f: callable
+    center: jnp.array
+    size: float
+    ellipticity: (None, jnp.array)
 
-    def __init__(self, center, sigma, bbox=None):
-        self.sigma = sigma
+    def __init__(self, f, center, size, ellipticity=None, bbox=None):
+
+        # define radial profile function
+        self.f = f
         self.center = center
+        self.size = size
+        self.ellipticity = ellipticity
+
         super().__post_init__()
 
         if bbox is None:
-            max_sigma = jnp.max(self.sigma)
+            max_size = jnp.max(self.size)
             # explicit call to int() to avoid bbox sizes being jax-traced
-            size = 10 * int(jnp.ceil(max_sigma))
+            size = 10 * int(jnp.ceil(max_size))
             if size % 2 == 0:
                 size += 1
             center_int = jnp.floor(self.center)
@@ -89,16 +55,78 @@ class GaussianMorphology(Morphology):
         self.bbox = bbox
 
     def __call__(self):
-        # grid positions in X/Y
-        _Y = jnp.arange(self.bbox.shape[-2]) + self.bbox.origin[-2]
-        _X = jnp.arange(self.bbox.shape[-1]) + self.bbox.origin[-1]
 
-        # with pixel integration
-        f = lambda x, s: 0.5 * (
-                1 - jax.scipy.special.erfc((0.5 - x) / jnp.sqrt(2) / s) +
-                1 - jax.scipy.special.erfc((0.5 + x) / jnp.sqrt(2) / s)
-        )
-        # # without pixel integration
-        # f = lambda x, s: jnp.exp(-(x ** 2) / (2 * s ** 2)) / (jnp.sqrt(2 * jnp.pi) * s)
+        _Y = jnp.arange(self.bbox.shape[-2], dtype=jnp.float) + self.bbox.origin[-2] - self.center[-2]
+        _X = jnp.arange(self.bbox.shape[-1], dtype=jnp.float) + self.bbox.origin[-1] - self.center[-1]
 
-        return jnp.outer(f(_Y - self.center[0], self.sigma), f(_X - self.center[1], self.sigma))
+        if self.ellipticity is not None:
+            R2 = _Y[:, None] ** 2 + _X[None, :] ** 2
+        else:
+            e1, e2 = self.ellipticity
+            __X = ((1 - e1) * _X[None, :] - e2 * _Y[:, None]) / np.sqrt(
+                1 - (e1 ** 2 + e2 ** 2)
+            )
+            __Y = (-e2 * _X[None, :] + (1 + e1) * _Y[:, None]) / np.sqrt(
+                1 - (e1 ** 2 + e2 ** 2)
+            )
+            R2 = __Y ** 2 + __X ** 2
+
+        R2 /= self.size ** 2
+
+        morph = self.f(R2)
+        return morph
+
+
+class GaussianMorphology(ProfileMorphology):
+
+    def __init__(self, center, size, ellipticity=None, bbox=None):
+        super().__init__(lambda R2: jnp.exp(-R2 / 2), center, size, ellipticity=ellipticity, bbox=bbox)
+
+    def __call__(self):
+
+        # faster circular 2D Gaussian: instead of N^2 evaluations, use outer product of 2 1D Gaussian evals
+        if self.ellipticity is None:
+
+            _Y = jnp.arange(self.bbox.shape[-2]) + self.bbox.origin[-2] - self.center[-2]
+            _X = jnp.arange(self.bbox.shape[-1]) + self.bbox.origin[-1] - self.center[-1]
+
+            # with pixel integration
+            f = lambda x, s: 0.5 * (
+                    1 - jax.scipy.special.erfc((0.5 - x) / jnp.sqrt(2) / s) +
+                    1 - jax.scipy.special.erfc((0.5 + x) / jnp.sqrt(2) / s)
+            )
+            # # without pixel integration
+            # f = lambda x, s: jnp.exp(-(x ** 2) / (2 * s ** 2)) / (jnp.sqrt(2 * jnp.pi) * s)
+
+            return jnp.outer(f(_Y, self.size), f(_X, self.size))
+
+        else:
+            return super().__call__(self)
+
+
+class SersicMorphology(ProfileMorphology):
+    n: float
+
+    def __init__(self, n, center, size, ellipticity=None, bbox=None):
+        self.n = n
+        super().__init__(self._f, center, size, ellipticity=ellipticity, bbox=bbox)
+
+    def _f(self, R2):
+        n = self.n
+        n2 = n * n
+        # simplest form of bn: Capaccioli (1989)
+        # bn = 1.9992 * n - 0.3271
+        #
+        # better treatment in  Ciotti & Bertin (1999), eq. 18
+        # stable to n > 0.36, with errors < 10^5
+        if n > 0.36:
+            bn = 2 * n - 0.333333 + 0.009877 / n + 0.001803 / n2 + 0.000114 / (n2 * n) - 0.000072 / (n2 * n2)
+
+        # MacArthur, Courteau, & Holtzman (2003), eq. A2
+        # much more stable for n < 0.36
+        if n <= 0.36:
+            bn = 0.01945 - 0.8902 * n + 10.95 * n2 - 19.67 * n2 * n + 13.43 * n2 * n2
+
+        # Graham & Driver 2005, eq. 1
+        # we're given R^2, so we use R2^(0.5/n) instead of 1/n
+        return jnp.exp(-bn * (R2 ** (0.5 / self.n) - 1))
