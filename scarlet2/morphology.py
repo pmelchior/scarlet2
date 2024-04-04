@@ -9,6 +9,9 @@ from .module import Module, Parameter
 class Morphology(Module):
     bbox: Box = eqx.field(static=True, init=False)
 
+    def normalize(self, x):
+        return x / x.max()
+
     def center_bbox(self, center):
         if isinstance(center, Parameter):
             center_ = center.value
@@ -27,7 +30,7 @@ class ArrayMorphology(Morphology):
         self.bbox = Box(self.data.shape)
 
     def __call__(self):
-        return self.data
+        return self.normalize(self.data)
 
 
 class ProfileMorphology(Morphology):
@@ -77,7 +80,7 @@ class ProfileMorphology(Morphology):
 
         R2 /= self.size ** 2
         R2 = jnp.maximum(R2, 1e-3)  # prevents infs at R2 = 0
-        morph = self.f(R2)
+        morph = self.normalize(self.f(R2))
         return morph
 
 
@@ -105,7 +108,7 @@ class GaussianMorphology(ProfileMorphology):
             # # without pixel integration
             # f = lambda x, s: jnp.exp(-(x ** 2) / (2 * s ** 2)) / (jnp.sqrt(2 * jnp.pi) * s)
 
-            return jnp.outer(f(_Y, self.size), f(_X, self.size))
+            return self.normalize(jnp.outer(f(_Y, self.size), f(_X, self.size)))
 
         else:
             return super().__call__()
