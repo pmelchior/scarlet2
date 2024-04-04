@@ -31,19 +31,16 @@ class ArrayMorphology(Morphology):
 
 
 class ProfileMorphology(Morphology):
-    f: callable
     center: jnp.array
     size: float
     ellipticity: (None, jnp.array)
 
-    def __init__(self, f, center, size, ellipticity=None, bbox=None):
+    def __init__(self, center, size, ellipticity=None, bbox=None):
 
         # define radial profile function
-        self.f = f
         self.center = center
         self.size = size
         self.ellipticity = ellipticity
-
         super().__post_init__()
 
         if bbox is None:
@@ -58,25 +55,28 @@ class ProfileMorphology(Morphology):
             bbox = Box(shape, origin=origin)
         self.bbox = bbox
 
+    def f(self, R2):
+        raise NotImplementedError
+
     def __call__(self):
 
-        _Y = jnp.arange(self.bbox.shape[-2], dtype=jnp.float) + self.bbox.origin[-2] - self.center[-2]
-        _X = jnp.arange(self.bbox.shape[-1], dtype=jnp.float) + self.bbox.origin[-1] - self.center[-1]
+        _Y = jnp.arange(self.bbox.shape[-2], dtype=float) + self.bbox.origin[-2] - self.center[-2]
+        _X = jnp.arange(self.bbox.shape[-1], dtype=float) + self.bbox.origin[-1] - self.center[-1]
 
-        if self.ellipticity is not None:
+        if self.ellipticity is None:
             R2 = _Y[:, None] ** 2 + _X[None, :] ** 2
         else:
             e1, e2 = self.ellipticity
-            __X = ((1 - e1) * _X[None, :] - e2 * _Y[:, None]) / np.sqrt(
+            __X = ((1 - e1) * _X[None, :] - e2 * _Y[:, None]) / jnp.sqrt(
                 1 - (e1 ** 2 + e2 ** 2)
             )
-            __Y = (-e2 * _X[None, :] + (1 + e1) * _Y[:, None]) / np.sqrt(
+            __Y = (-e2 * _X[None, :] + (1 + e1) * _Y[:, None]) / jnp.sqrt(
                 1 - (e1 ** 2 + e2 ** 2)
             )
             R2 = __Y ** 2 + __X ** 2
 
         R2 /= self.size ** 2
-
+        R2 = jnp.maximum(R2, 1e-3)  # prevents infs at R2 = 0
         morph = self.f(R2)
         return morph
 
@@ -84,7 +84,10 @@ class ProfileMorphology(Morphology):
 class GaussianMorphology(ProfileMorphology):
 
     def __init__(self, center, size, ellipticity=None, bbox=None):
-        super().__init__(lambda R2: jnp.exp(-R2 / 2), center, size, ellipticity=ellipticity, bbox=bbox)
+        super().__init__(center, size, ellipticity=ellipticity, bbox=bbox)
+
+    def f(self, R2):
+        return jnp.exp(-R2 / 2)
 
     def __call__(self):
 
@@ -105,7 +108,7 @@ class GaussianMorphology(ProfileMorphology):
             return jnp.outer(f(_Y, self.size), f(_X, self.size))
 
         else:
-            return super().__call__(self)
+            return super().__call__()
 
 
 class SersicMorphology(ProfileMorphology):
@@ -113,9 +116,9 @@ class SersicMorphology(ProfileMorphology):
 
     def __init__(self, n, center, size, ellipticity=None, bbox=None):
         self.n = n
-        super().__init__(self._f, center, size, ellipticity=ellipticity, bbox=bbox)
+        super().__init__(center, size, ellipticity=ellipticity, bbox=bbox)
 
-    def _f(self, R2):
+    def f(self, R2):
         n = self.n
         n2 = n * n
         # simplest form of bn: Capaccioli (1989)
@@ -123,14 +126,13 @@ class SersicMorphology(ProfileMorphology):
         #
         # better treatment in  Ciotti & Bertin (1999), eq. 18
         # stable to n > 0.36, with errors < 10^5
-        if n > 0.36:
-            bn = 2 * n - 0.333333 + 0.009877 / n + 0.001803 / n2 + 0.000114 / (n2 * n) - 0.000072 / (n2 * n2)
+        bn = 2 * n - 0.333333 + 0.009877 / n + 0.001803 / n2 + 0.000114 / (n2 * n) - 0.000072 / (n2 * n2)
 
         # MacArthur, Courteau, & Holtzman (2003), eq. A2
         # much more stable for n < 0.36
-        if n <= 0.36:
-            bn = 0.01945 - 0.8902 * n + 10.95 * n2 - 19.67 * n2 * n + 13.43 * n2 * n2
+        # not using it here to avoid if clause in jitted code
+        #     bn = 0.01945 - 0.8902 * n + 10.95 * n2 - 19.67 * n2 * n + 13.43 * n2 * n2
 
         # Graham & Driver 2005, eq. 1
         # we're given R^2, so we use R2^(0.5/n) instead of 1/n
-        return jnp.exp(-bn * (R2 ** (0.5 / self.n) - 1))
+        return jnp.exp(-bn * (R2 ** (0.5 / n) - 1))
