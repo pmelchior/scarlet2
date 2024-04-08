@@ -175,11 +175,10 @@ def init_simple_morph(
         spectra = []
         spectrum_avg = 0
         for obs, model in zip((observation,), models):
+            psf_model = obs.frame.psf() 
+            psf_peak = psf_model.max(axis=(1, 2))
             for i in range(perimeter_pixels.shape[1]):
                 spectrum = perimeter_pixels[:, i]
-                psf_model = obs.frame.psf()
-                # psf_model = jnp.expand_dims(psf_model, axis=0)
-                psf_peak = psf_model.max(axis=(1, 2))
                 spectrum /= psf_peak
                 spectrum_avg += spectrum
             spectrum_avg /= perimeter_pixels.shape[1]
@@ -246,7 +245,6 @@ def init_morphology(
         rows, cols = morph.shape
         central_row = rows // 2
         central_col = cols // 2
-        morph[central_row, central_col] = 1.1  # extra brightening central pixel
         morph = (morph - np.min(morph)) / (np.max(morph) - np.min(morph))
         if bx > 30 and components == 2:
             morph2 = create_gaussian_array(
@@ -260,7 +258,7 @@ def init_morphology(
 
 
 # initialise the spectrum
-def init_spectrum(observations, center, correct_psf=None, models=None):
+def init_spectrum(observations, center, correct_psf=None):
     """Get the spectrum at center of observation.
 
     Yields the spectrum of a single-pixel source with flux 1 in every channel,
@@ -280,25 +278,17 @@ def init_spectrum(observations, center, correct_psf=None, models=None):
         Observation to extract SED from.
     correct_psf: bool
         If PSF shape variations in the observations should be corrected.
-    models: instance or list of arrays
-        Rendered models for this source in every observation
 
     Returns
     -------
     spectrum: `~numpy.array` or list thereof
     """
-    if models is not None:
-        assert correct_psf is False
-
     if not hasattr(observations, "__iter__"):
         single = True
         observations = (observations,)
-        models = (models,)
+        models = (None,) * len(observations)
     else:
-        if models is not None:
-            assert len(models) == len(observations)
-        else:
-            models = (None,) * len(observations)
+        models = (None,) * len(observations)
         single = False
 
     spectra = []
@@ -316,15 +306,17 @@ def init_spectrum(observations, center, correct_psf=None, models=None):
 
         spectra.append(spectrum)
 
-        # if jnp.any(spectrum <= 0):
+        if jnp.any(spectrum <= 0):
         # If the flux in all channels is  <=0,
         # the new sed will be filled with NaN values,
         # which will cause the code to crash later
-        #    msg = f"Zero or negative spectrum {spectrum} at {center}"
-        #    if np.all(spectrum <= 0):
-        #        logger.warning(msg)
-        #    else:
-        #        logger.info(msg)
+            msg = f"Zero or negative spectrum {spectrum} at {center}"
+            if np.all(spectrum <= 0):
+                print("Zero or negative spectrum at all sources")
+                print("Setting spectrum bands to 1")
+                spectrum = np.ones_like(spectrum)
+            else:
+                print(msg)
 
     if single:
         return spectra[0]

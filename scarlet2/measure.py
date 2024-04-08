@@ -148,3 +148,48 @@ def moments(component, N=2, centroid=None, weight=None):
                 axis=(-2, -1)
             )
     return M
+
+
+# code port to get deconvolved moments of a Gaussian profile
+# https://github.com/pmelchior/shapelens/blob/32393c390c8f8dada5448f120fbcd6d8ecb74e84/src/DEIMOS.cc
+def binomial(n, k):
+    if k == 0:
+        return 1
+    if k > n // 2:
+        return binomial(n, n - k)
+    result = 1
+    for i in range(1, k + 1):
+        result *= (n - i + 1)
+        result //= i
+    return result
+
+# moments of the Gaussian
+def deconvolve(g, p):
+    Nmin = min(p.shape[0], g.shape[0])
+    R2 = np.dot(np.dot(g.T, p), g)
+
+    # use explicit relations for up to 2nd moments
+    g /= p[0, 0]
+    if Nmin >= 1:
+        g[0, 1] -= g[0, 0] * p[0, 1] / p[0, 0]
+        g[1, 0] -= g[0, 0] * p[1, 0] / p[0, 0]
+        g[0, 1] /= p[0, 0]
+        g[1, 0] /= p[0, 0]
+        if Nmin >= 2:
+            g[0, 2] -= (g[0, 0] * p[0, 2] + 2 * g[0, 1] * p[0, 1]) / p[0, 0]
+            g[1, 1] -= (g[0, 0] * p[1, 1] + g[0, 1] * p[1, 0] + g[1, 0] * p[0, 1]) / p[0, 0]
+            g[2, 0] -= (g[0, 0] * p[2, 0] + 2 * g[1, 0] * p[1, 0]) / p[0, 0]
+            if Nmin >= 3:
+                # use general formula
+                for n in range(3, Nmin + 1):
+                    for i in range(n + 1):
+                        for j in range(n - i):
+                            for k in range(i):
+                                for l in range(j):
+                                    g[i, j] -= binomial(i, k) * binomial(j, l) * g[k, l] * p[i - k, j - l]
+                            for k in range(i):
+                                g[i, j] -= binomial(i, k) * g[k, j] * p[i - k, 0]
+                            for l in range(j):
+                                g[i, j] -= binomial(j, l) * g[i, l] * p[0, j - l]
+                    g[i, j] /= p[0, 0]
+    return g
