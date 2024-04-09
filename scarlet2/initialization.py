@@ -19,6 +19,7 @@ from .morphology import GaussianMorphology
 from jaxopt import ScipyBoundedMinimize
 import dm_pix
 from functools import partial
+from .measure import moments, binomial, deconvolve
 
 
 # function to calculate values of perimeter pixels
@@ -175,7 +176,7 @@ def init_simple_morph(
         spectra = []
         spectrum_avg = 0
         for obs, model in zip((observation,), models):
-            psf_model = obs.frame.psf() 
+            psf_model = obs.frame.psf()
             psf_peak = psf_model.max(axis=(1, 2))
             for i in range(perimeter_pixels.shape[1]):
                 spectrum = perimeter_pixels[:, i]
@@ -233,6 +234,8 @@ def init_morphology(
     morph : np.ndarray morphology of the source normalised to (0,1)
     """
     morph = init_simple_morph(obs, center, psf_sigma, noise_thresh, corr_thresh)
+    # TODO: here create descending box size morphologies, and check for the SNR
+    # use the moments from .measure
     if morph.shape[0] <= max_size:
         return morph
     # fit for a more complex morphology for bigger sources
@@ -307,9 +310,9 @@ def init_spectrum(observations, center, correct_psf=None):
         spectra.append(spectrum)
 
         if jnp.any(spectrum <= 0):
-        # If the flux in all channels is  <=0,
-        # the new sed will be filled with NaN values,
-        # which will cause the code to crash later
+            # If the flux in all channels is  <=0,
+            # the new sed will be filled with NaN values,
+            # which will cause the code to crash later
             msg = f"Zero or negative spectrum {spectrum} at {center}"
             if np.all(spectrum <= 0):
                 print("Zero or negative spectrum at all sources")

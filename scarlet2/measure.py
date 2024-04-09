@@ -91,7 +91,7 @@ def snr(component, observations):
         model_ = obs.render(model)
         M.append(model_.reshape(-1))
         W.append((model_ / (model_.sum(axis=(-2, -1))[:, None, None])).reshape(-1))
-        noise_var = obs.noise_rms ** 2
+        noise_var = obs.noise_rms**2
         var.append(noise_var.reshape(-1))
     M = np.concatenate(M)
     W = np.concatenate(W)
@@ -144,14 +144,13 @@ def moments(component, N=2, centroid=None, weight=None):
     for n in range(N + 1):
         for m in range(n + 1):
             # moments ordered by power in y, then x
-            M[m, n - m] = (grid_y ** m * grid_x ** (n - m) * model * weight).sum(
+            M[m, n - m] = (grid_y**m * grid_x ** (n - m) * model * weight).sum(
                 axis=(-2, -1)
             )
     return M
 
 
-# code port to get deconvolved moments of a Gaussian profile
-# https://github.com/pmelchior/shapelens/blob/32393c390c8f8dada5448f120fbcd6d8ecb74e84/src/DEIMOS.cc
+# adapted from  https://github.com/pmelchior/shapelens/blob/src/DEIMOS.cc
 def binomial(n, k):
     if k == 0:
         return 1
@@ -159,9 +158,10 @@ def binomial(n, k):
         return binomial(n, n - k)
     result = 1
     for i in range(1, k + 1):
-        result *= (n - i + 1)
+        result *= n - i + 1
         result //= i
     return result
+
 
 # moments of the Gaussian
 def deconvolve(g, p):
@@ -177,7 +177,9 @@ def deconvolve(g, p):
         g[1, 0] /= p[0, 0]
         if Nmin >= 2:
             g[0, 2] -= (g[0, 0] * p[0, 2] + 2 * g[0, 1] * p[0, 1]) / p[0, 0]
-            g[1, 1] -= (g[0, 0] * p[1, 1] + g[0, 1] * p[1, 0] + g[1, 0] * p[0, 1]) / p[0, 0]
+            g[1, 1] -= (g[0, 0] * p[1, 1] + g[0, 1] * p[1, 0] + g[1, 0] * p[0, 1]) / p[
+                0, 0
+            ]
             g[2, 0] -= (g[0, 0] * p[2, 0] + 2 * g[1, 0] * p[1, 0]) / p[0, 0]
             if Nmin >= 3:
                 # use general formula
@@ -186,7 +188,12 @@ def deconvolve(g, p):
                         for j in range(n - i):
                             for k in range(i):
                                 for l in range(j):
-                                    g[i, j] -= binomial(i, k) * binomial(j, l) * g[k, l] * p[i - k, j - l]
+                                    g[i, j] -= (
+                                        binomial(i, k)
+                                        * binomial(j, l)
+                                        * g[k, l]
+                                        * p[i - k, j - l]
+                                    )
                             for k in range(i):
                                 g[i, j] -= binomial(i, k) * g[k, j] * p[i - k, 0]
                             for l in range(j):
