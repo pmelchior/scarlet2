@@ -167,26 +167,20 @@ def binomial(n, k):
 def deconvolve(g, p):
     """Deconvolve moments of a Gaussian from moments of a general distribution"""
 
-    # convert to numpy arrays
-    arrays = [p[key] for key in p]
-    p = np.array(arrays)
-    arrays = [g[key] for key in g]
-    g = np.array(arrays)
-
     # Hard code as 2 for now
     Nmin = 2  # min(p.shape[0], g.shape[0])
 
     # use explicit relations for up to 2nd moments
-    g[0, 0] /= p[0, 0]
+    g[(0, 0)] /= p[(0, 0)]
     if Nmin >= 1:
-        g[0, 1] -= g[0, 0] * p[0, 1]
-        g[1, 0] -= g[0, 0] * p[1, 0]
-        g[0, 1] /= p[0, 0]
-        g[1, 0] /= p[0, 0]
+        g[(0, 1)] -= g[(0, 0)] * p[(0, 1)]
+        g[(1, 0)] -= g[(0, 0)] * p[(1, 0)]
+        g[(0, 1)] /= p[(0, 0)]
+        g[(1, 0)] /= p[(0, 0)]
         if Nmin >= 2:
-            g[0, 2] -= g[0, 0] * p[0, 2] + 2 * g[0, 1] * p[0, 1]
-            g[1, 1] -= g[0, 0] * p[1, 1] + g[0, 1] * p[1, 0] + g[1, 0] * p[0, 1]
-            g[2, 0] -= g[0, 0] * p[2, 0] + 2 * g[1, 0] * p[1, 0]
+            g[(0, 2)] -= g[(0, 0)] * p[(0, 2)] + 2 * g[(0, 1)] * p[(0, 1)]
+            g[(1, 1)] -= g[(0, 0)] * p[(1, 1)] + g[(0, 1)] * p[(1, 0)] + g[(1, 0)] * p[(0, 1)]
+            g[(2, 0)] -= g[(0, 0)] * p[(2, 0)] + 2 * g[(1, 0)] * p[(1, 0)]
             if Nmin >= 3:
                 # use general formula
                 for n in range(3, Nmin + 1):
@@ -194,23 +188,16 @@ def deconvolve(g, p):
                         for j in range(n - i):
                             for k in range(i):
                                 for l in range(j):
-                                    g[i, j] -= (
+                                    g[(i, j)] -= (
                                         binomial(i, k)
                                         * binomial(j, l)
                                         * g[k, l]
                                         * p[i - k, j - l]
                                     )
                             for k in range(i):
-                                g[i, j] -= binomial(i, k) * g[k, j] * p[i - k, 0]
+                                g[(i, j)] -= binomial(i, k) * g[k, j] * p[i - k, 0]
                             for l in range(j):
-                                g[i, j] -= binomial(j, l) * g[i, l] * p[0, j - l]
-                    g[i, j] /= p[0, 0]
+                                g[(i, j)] -= binomial(j, l) * g[i, l] * p[0, j - l]
+                    g[(i, j)] /= p[(0, 0)]
 
-    # convert back to dictionary
-    M = {}
-    idx = 0
-    for i in range(len(g) // 2):
-        for j in range(2):
-            M[i, j] = g[idx]
-            idx += 1
-    return M
+    return g
