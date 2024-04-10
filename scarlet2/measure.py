@@ -1,4 +1,5 @@
 import numpy as np
+import numpy.ma as ma
 import jax.numpy as jnp
 from . import initialization
 from .bbox import Box
@@ -88,10 +89,12 @@ def snr(component, observations):
     # flatten in channel direction because it may not have all C channels; concatenate
     # do same thing for noise variance
     for obs in observations:
+        noise_rms = 1 / np.sqrt(ma.masked_equal(obs.weights, 0))
+        ma.set_fill_value(noise_rms, np.inf)
         model_ = obs.render(model)
         M.append(model_.reshape(-1))
         W.append((model_ / (model_.sum(axis=(-2, -1))[:, None, None])).reshape(-1))
-        noise_var = obs.noise_rms**2
+        noise_var = noise_rms**2
         var.append(noise_var.reshape(-1))
     M = np.concatenate(M)
     W = np.concatenate(W)
