@@ -1,7 +1,6 @@
 import numpy as np
 import numpy.ma as ma
 import jax.numpy as jnp
-from . import initialization
 from .bbox import Box
 
 

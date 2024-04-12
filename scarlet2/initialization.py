@@ -9,15 +9,12 @@
 # For spectrums, we input the observational image as with the morphology, we   #
 # just take the pixel value of the center of the source for each band.         #
 # ---------------------------------------------------------------------------- #
-
 import numpy as np
 import numpy.ma as ma
 import jax.numpy as jnp
 import jax
 from .plot import cut_square_box
 from .morphology import GaussianMorphology, ProfileMorphology
-from jaxopt import ScipyBoundedMinimize
-import dm_pix
 from functools import partial
 from .measure import moments
 
@@ -89,39 +86,9 @@ def create_gaussian_array(boxsize, sigma_x=1, sigma_y=1, theta=0):
     )
     gaussian_profile = jnp.array(gaussian_profile, dtype=jnp.float32)
     gaussian_profile = jnp.expand_dims(gaussian_profile, axis=-1)
-    data = dm_pix.rotate(gaussian_profile, theta)
+    data = gaussian_profile #dm_pix.rotate(gaussian_profile, theta)
     return jnp.squeeze(data)
 
-
-def fit_morph_params(data, center, bx):
-    """Fit a 2D Gaussian to the source.
-
-    Parameters
-    ----------
-    data : jnp.ndarray 2D cutout of the source in single band
-    center : tuple (int, int) central pixel of the source
-    bx : int (boxsize)
-
-    Returns
-    -------
-    best_params : jnp.ndarray best fit parameters for the 2D Gaussian
-
-    """
-    data_cut = (data - jnp.min(data)) / (jnp.max(data) - jnp.min(data))
-    central_gaussian = create_gaussian_array(bx, 1.75, 1.75, 0)
-    fn = lambda x: jnp.mean(
-        central_gaussian * (data_cut - create_gaussian_array(bx, x[0], x[1], x[2])) ** 2
-    )
-    x0 = jnp.array([1.5, 1.5, 0])
-    lbfgsb = ScipyBoundedMinimize(fun=fn, method="l-bfgs-b", jit=True)
-    lower_bounds = jnp.array([1, 1, jnp.pi / 2])
-    upper_bounds = jnp.array([7, 7, jnp.pi])
-    bounds = (lower_bounds, upper_bounds)
-    best_params = lbfgsb.run(x0, bounds=bounds).params
-    return best_params
-
-
-# take the 3 moments of a @D gaussian and construct the covariance matrix to fit the shape
 def init_simple_morph(
     observation, center, psf_sigma=0.5, noise_thresh=20, corr_thresh=0.8
 ):
@@ -151,8 +118,10 @@ def init_simple_morph(
     size = 15
     # loop over box size until SNR is below threshold
     while converged == False:
-        morph = GaussianMorphology(center, size=size)
-        box = morph.bbox.shape
+        # NOTE: Size is the same as sigma for this
+        morph = create_gaussian_array(size, 1.4, 1.4, 0)
+        #morph = GaussianMorphology(center, size=size)
+        box = morph.shape #morph.bbox.shape
 
         # now grab the perimeter values of the box
         perimeter_pixels = [None] * len(observation.data)
@@ -207,7 +176,7 @@ def init_simple_morph(
             break
 
     # normalise the morphology between 0 and 1
-    morph = morph()
+    #morph = morph()
     morph = (morph - jnp.min(morph)) / (jnp.max(morph) - jnp.min(morph))
     return morph
 
@@ -247,20 +216,26 @@ def init_morphology(
         for key, array in g_multi.items():
             g[key] = sum(array) / len(array)
 
-        # create the Gaussian morphology
-        # size T = \sqrt{Q_11 + Q_22}
-        # ellipticity = [Q_11 - Q_22 + 2iQ_12] / [Q_11 + Q_12 + 2\sqrt{Q_11Q_22 - Q_12^2}]
-        T = np.sqrt(g[(2, 0)] + g[(0, 2)])
-        T = np.min([T, 64])  # cannot work with larger than 64x64
+        # create the 2D Gaussian moments
+        ''' 
+        size T = \sqrt{Q_11 + Q_22 / Q_00} (ie Flux)
+        ellipticity = [Q_11 - Q_22 + 2iQ_12] / [Q_11 + Q_12 + 2\sqrt{Q_11Q_22 - Q_12^2}]
+        '''
+        T = np.sqrt((g[(2, 0)] + g[(0, 2)]) / g[(0, 0)] )
         ellipticity = (g[(2, 0)] - g[(0, 2)] + 2j * g[(1, 1)]) / (
             g[(2, 0)] + g[(1, 1)] + 2 * np.sqrt(g[(2, 0)] * g[(0, 2)] - g[(1, 1)] ** 2)
         )
 
+        print(f"Size: {T}, Ellipticity: {ellipticity}")
+
+        # TODO: Check this
+        ellipticity = np.array([ellipticity.real, ellipticity.imag])
+
         # create the more complex morphology
-        morph = ProfileMorphology(center, T, ellipticity, bbox=morph.shape)
+        morph = GaussianMorphology(center, T, ellipticity)
         # create the simple morphology
-        morph_simple = GaussianMorphology(center, size=5, bbox=morph.bbox)
-        return [morph, morph_simple]
+        morph_simple = GaussianMorphology(center, size=5) # TODO: properly do this when sorted
+        return [morph(), morph_simple()] 
 
 
 # initialise the spectrum
