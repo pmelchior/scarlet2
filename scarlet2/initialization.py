@@ -15,11 +15,11 @@ import numpy.ma as ma
 import jax.numpy as jnp
 import jax
 from .plot import cut_square_box
-from .morphology import GaussianMorphology
+from .morphology import GaussianMorphology, ProfileMorphology
 from jaxopt import ScipyBoundedMinimize
 import dm_pix
 from functools import partial
-from .measure import moments, binomial, deconvolve, snr
+from .measure import moments
 
 
 # function to calculate values of perimeter pixels
@@ -148,10 +148,10 @@ def init_simple_morph(
     spectra_prev = peak_spec
     noise_rms = 1 / np.sqrt(ma.masked_equal(observation.weights, 0))
     ma.set_fill_value(noise_rms, np.inf)
-
+    size = 15
     # loop over box size until SNR is below threshold
     while converged == False:
-        morph = GaussianMorphology(center, sigma=sigma)
+        morph = GaussianMorphology(center, size=size)
         box = morph.bbox.shape
 
         # now grab the perimeter values of the box
@@ -198,10 +198,10 @@ def init_simple_morph(
         # check if flux on boundaries increased with larger size
         elif (spectra_box >= peak_spec).any() or (spectra_box >= spectra_prev).any():
             converged = True
-        # increase box/morpgology size
+        # increase box/morphology size
         else:
             spectra_prev = spectra_box
-            sigma += 1
+            size += 5
         # for debugging
         if sigma > 5:
             break
@@ -232,30 +232,35 @@ def init_morphology(
     morph : np.ndarray morphology of the source normalised to (0,1)
     """
     morph = init_simple_morph(obs, center, psf_sigma, noise_thresh, corr_thresh)
-    # TODO: here create descending box size morphologies, and check for the SNR
-    # use the moments from .measure
-    if morph.shape[0] <= max_size:
+    if (morph.shape[0] <= max_size) or (components == 1):
         return morph
+
     # fit for a more complex morphology for bigger sources
     else:
         bx = morph.shape[0]
-        cutout = cut_square_box(obs.data[0], center, bx)
-        sx, sy, th = fit_morph_params(cutout, center, bx)
-        morph = create_gaussian_array(bx, sx, sy, th)
-        morph = np.array(morph, dtype=np.float32)  # convert to numpy to make mutable
-        rows, cols = morph.shape
-        central_row = rows // 2
-        central_col = cols // 2
-        morph = (morph - np.min(morph)) / (np.max(morph) - np.min(morph))
-        if bx > 30 and components == 2:
-            morph2 = create_gaussian_array(
-                bx, 1.25, 1.25, 0
-            )  # create a second component as a gaussian blob
-            morph2 = (morph2 - np.min(morph2)) / (np.max(morph2) - np.min(morph2))
-            return [morph, morph2]
-        else:
-            # if single component just return the fitted morhpology
-            return morph
+        cutout_obs = cut_square_box(obs.data, center, bx)
+
+        # getting Gaussian moments
+        g_multi = moments(component=cutout_obs, N=2)
+        # take the multi-band averages
+        g = {}
+        for key, array in g_multi.items():
+            g[key] = sum(array) / len(array)
+
+        # create the Gaussian morphology
+        # size T = \sqrt{Q_11 + Q_22}
+        # ellipticity = [Q_11 - Q_22 + 2iQ_12] / [Q_11 + Q_12 + 2\sqrt{Q_11Q_22 - Q_12^2}]
+        T = np.sqrt(g[(2, 0)] + g[(0, 2)])
+        T = np.min([T, 64])  # cannot work with larger than 64x64
+        ellipticity = (g[(2, 0)] - g[(0, 2)] + 2j * g[(1, 1)]) / (
+            g[(2, 0)] + g[(1, 1)] + 2 * np.sqrt(g[(2, 0)] * g[(0, 2)] - g[(1, 1)] ** 2)
+        )
+
+        # create the more complex morphology
+        morph = ProfileMorphology(center, T, ellipticity, bbox=morph.shape)
+        # create the simple morphology
+        morph_simple = GaussianMorphology(center, size=5, bbox=morph.bbox)
+        return [morph, morph_simple]
 
 
 # initialise the spectrum
@@ -322,108 +327,3 @@ def init_spectrum(observations, center, correct_psf=None):
     if single:
         return spectra[0]
     return spectra
-
-
-
-def init_simple_morph_beta(
-    observation, center, psf_sigma=0.5, noise_thresh=20, corr_thresh=0.8
-):
-    """
-    Initialize the morphology of a source by fitting a 2D Gaussian to the cutout of the source.
-    The boxsize will initially be fit as a compact point-source and then expanded until the snr
-    is below a desired threshold.
-
-    Parameters
-    ----------
-    observation: `~scarlet.Observation`
-    center: tuple --> center of source
-    psf_sigma: float --> initial psf used in model
-    noise_thresh: float --> threshold for noise
-    corr_thresh: float --> threshold for spectrum correlations
-
-    Returns
-    -------
-    morph: `jnp.array` --> 2D Gaussian morphology
-    """
-    sigma = psf_sigma
-    converged = False
-    peak_spec = init_spectrum(observation, center, correct_psf=True)
-    spectra_prev = peak_spec
-    noise_rms = 1 / np.sqrt(ma.masked_equal(observation.weights, 0))
-    ma.set_fill_value(noise_rms, np.inf)
-    boxsize = 5 # initial boxsize
-
-    # loop over box size until SNR is below threshold
-    while converged == False:
-        morph = GaussianMorphology(center, sigma=sigma)
-        box = (boxsize, boxsize)
-
-        # now grab the perimeter values of the box
-        perimeter_pixels = [None] * len(observation.data)
-        perimeter_noise_rms = [None] * len(observation.data)
-
-        # create the cutout and noise rms for each band
-        for idx, band in enumerate(observation.data):
-            cutout_obs = cut_square_box(band, center, box[0])
-            cutout_noise = cut_square_box(noise_rms[idx], center, box[0])
-            perimeter_pixels[idx] = jnp.array([perimeter_values(cutout_obs)])
-            perimeter_noise_rms[idx] = jnp.array([perimeter_values(cutout_noise)])
-        perimeter_pixels = jnp.squeeze(jnp.stack(perimeter_pixels, axis=0), axis=1)
-        perimeter_noise_rms = jnp.squeeze(
-            jnp.stack(perimeter_noise_rms, axis=0), axis=1
-        )
-        F_e = jnp.mean(perimeter_pixels, axis=0) # average flux of the perimeter pixels
-
-        # simplified spectrum calculation for perimeter average around cutout
-        models = (None,) * len(observation.data)
-        spectra = []
-        spectrum_avg = 0
-        for obs, model in zip((observation,), models):
-            psf_model = obs.frame.psf()
-            psf_peak = psf_model.max(axis=(1, 2))
-            for i in range(perimeter_pixels.shape[1]):
-                spectrum = perimeter_pixels[:, i]
-                spectrum /= psf_peak
-                spectrum_avg += spectrum
-            spectrum_avg /= perimeter_pixels.shape[1]
-            spectra.append(spectrum_avg)
-        spectra_box = spectra[0]
-
-        # getting Gaussian moments 
-        g = moments(cutout_obs, center, box[0])
-
-        # create the Gaussian morphology
-        # size T = \sqrt{Q_11 + Q_22}
-        # ellipticity = [Q_11 - Q_22 + 2iQ_12] / [Q_11 + Q_12 + 2\sqrt{Q_11Q_22 - Q_12^2}]
-        T = np.sqrt( g[(2, 0)] + g[(0, 2)] )
-        ellipticity = ( g[(2, 0)] - g[(0, 2)] + 2j*g[(1, 1)] ) / ( g[(2, 0)] + g[(1, 1)] + 2*np.sqrt(g[(2, 0)]*g[(0, 2)] - g[(1, 1)]**2) )
-
-        # now check the SNR and spectrum correlations
-        noise_avg = jnp.mean(perimeter_noise_rms, axis=1) * noise_thresh
-        snr = spectra_box / noise_avg
-        spec_corr = jnp.dot(spectra_box, peak_spec) / jnp.dot(
-            jnp.sqrt(jnp.dot(spectra_box, spectra_box)),
-            jnp.sqrt(jnp.dot(peak_spec, peak_spec)),
-        )
-
-        # check if SNR is below threshold or spectrum correlation is below threshold
-        if snr.all() < 1 or spec_corr < corr_thresh:
-            converged = True
-        # check if flux on boundaries increased with larger size
-        elif (spectra_box >= peak_spec).any() or (spectra_box >= spectra_prev).any():
-            converged = True
-        # increase box/morpgology size
-        else:
-            spectra_prev = spectra_box
-            sigma += 1
-        # for debugging
-        if sigma > 5:
-            break
-
-        # if end of loop reached increase the box size
-        boxsize += 10
-
-    # normalise the morphology between 0 and 1
-    morph = morph()
-    morph = (morph - jnp.min(morph)) / (jnp.max(morph) - jnp.min(morph))
-    return morph
