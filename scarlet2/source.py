@@ -111,5 +111,5 @@ class PointSource(Source):
 
         # use frame's PSF but with free center parameter
         morphology = copy.deepcopy(frame.psf.morphology)
-        object.__setattr__(morphology, 'center', center)
+        morphology.set("center", center)
         super().__init__(center, spectrum, morphology)
