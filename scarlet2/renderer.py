@@ -174,7 +174,7 @@ class KResampleRenderer(Renderer):
         k_resampled = jnp.fft.ifftshift(k_resampled, -2)
 
         # conserve flux
-        k_resampled = k_resampled * self._resolution_ratio
+        k_resampled = k_resampled
 
         return k_resampled
 
