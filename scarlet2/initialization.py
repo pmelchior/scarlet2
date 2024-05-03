@@ -113,14 +113,15 @@ def init_simple_morph(
     converged = False
     peak_spec = init_spectrum(observation, center, correct_psf=True)
     spectra_prev = peak_spec
+    assert observation.weights is not None, "Observation weights are required" 
     noise_rms = 1 / np.sqrt(ma.masked_equal(observation.weights, 0))
     ma.set_fill_value(noise_rms, np.inf)
-    size = 15
+    #size = 15
     # loop over box size until SNR is below threshold
     while converged == False:
         # NOTE: Size is the same as sigma for this
-        morph = create_gaussian_array(size, 1.4, 1.4, 0)
-        #morph = GaussianMorphology(center, size=size)
+        #morph = create_gaussian_array(size, 1.4, 1.4, 0)
+        morph = GaussianMorphology(center, size=sigma)()
         box = morph.shape #morph.bbox.shape
 
         # now grab the perimeter values of the box
@@ -170,7 +171,7 @@ def init_simple_morph(
         # increase box/morphology size
         else:
             spectra_prev = spectra_box
-            size += 5
+            sigma += 1
         # for debugging
         if sigma > 5:
             break
@@ -223,12 +224,10 @@ def init_morphology(
         '''
         T = np.sqrt((g[(2, 0)] + g[(0, 2)]) / g[(0, 0)] )
         ellipticity = (g[(2, 0)] - g[(0, 2)] + 2j * g[(1, 1)]) / (
-            g[(2, 0)] + g[(1, 1)] + 2 * np.sqrt(g[(2, 0)] * g[(0, 2)] - g[(1, 1)] ** 2)
+            g[(2, 0)] + g[(0, 2)] + 2 * np.sqrt(g[(2, 0)] * g[(0, 2)] - g[(1, 1)] ** 2)
         )
 
         print(f"Size: {T}, Ellipticity: {ellipticity}")
-
-        # TODO: Check this
         ellipticity = np.array([ellipticity.real, ellipticity.imag])
 
         # create the more complex morphology
