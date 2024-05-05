@@ -37,12 +37,18 @@ class ProfileMorphology(Morphology):
     center: jnp.array
     size: float
     ellipticity: (None, jnp.array)
+    g: (None, jnp.array)
 
     def __init__(self, center, size, ellipticity=None, bbox=None):
 
         # define radial profile function
         self.center = center
         self.size = size
+        self.ellipticity = ellipticity
+
+        g_factor = 1 / (1. + jnp.sqrt(1. - (ellipticity[0]**2 + ellipticity[1]**2)))
+        self.g = self.ellipticity * g_factor
+
         self.ellipticity = ellipticity
         super().__post_init__()
 
@@ -69,12 +75,13 @@ class ProfileMorphology(Morphology):
         if self.ellipticity is None:
             R2 = _Y[:, None] ** 2 + _X[None, :] ** 2
         else:
-            e1, e2 = self.ellipticity
-            __X = ((1 - e1) * _X[None, :] - e2 * _Y[:, None]) / jnp.sqrt(
-                1 - (e1 ** 2 + e2 ** 2)
+
+            g1, g2 = self.g
+            __X = ((1 - g1) * _X[None, :] - g2 * _Y[:, None]) / jnp.sqrt(
+                1 - (g1 ** 2 + g2 ** 2)
             )
-            __Y = (-e2 * _X[None, :] + (1 + e1) * _Y[:, None]) / jnp.sqrt(
-                1 - (e1 ** 2 + e2 ** 2)
+            __Y = (-g2 * _X[None, :] + (1 + g1) * _Y[:, None]) / jnp.sqrt(
+                1 - (g1 ** 2 + g2 ** 2)
             )
             R2 = __Y ** 2 + __X ** 2
 
