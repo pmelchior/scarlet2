@@ -37,19 +37,17 @@ class ProfileMorphology(Morphology):
     center: jnp.array
     size: float
     ellipticity: (None, jnp.array)
-    g: (None, jnp.array)
 
     def __init__(self, center, size, ellipticity=None, bbox=None):
 
         # define radial profile function
         self.center = center
         self.size = size
-        self.ellipticity = ellipticity
+        if ellipticity is None:
+            self.ellipticity = jnp.zeros((2,))
+        else:
+            self.ellipticity = ellipticity
 
-        g_factor = 1 / (1. + jnp.sqrt(1. - (ellipticity[0]**2 + ellipticity[1]**2)))
-        self.g = self.ellipticity * g_factor
-
-        self.ellipticity = ellipticity
         super().__post_init__()
 
         if bbox is None:
@@ -64,6 +62,11 @@ class ProfileMorphology(Morphology):
             bbox = Box(shape, origin=origin)
         self.bbox = bbox
 
+    @property
+    def g(self):
+        g_factor = 1 / (1. + jnp.sqrt(1. - (self.ellipticity[0]**2 + self.ellipticity[1]**2)))
+        return self.ellipticity * g_factor
+
     def f(self, R2):
         raise NotImplementedError
 
@@ -72,18 +75,15 @@ class ProfileMorphology(Morphology):
         _Y = jnp.arange(self.bbox.shape[-2], dtype=float) + self.bbox.origin[-2] - self.center[-2]
         _X = jnp.arange(self.bbox.shape[-1], dtype=float) + self.bbox.origin[-1] - self.center[-1]
 
-        if self.ellipticity is None:
-            R2 = _Y[:, None] ** 2 + _X[None, :] ** 2
-        else:
+        g1, g2 = self.g
 
-            g1, g2 = self.g
-            __X = ((1 - g1) * _X[None, :] - g2 * _Y[:, None]) / jnp.sqrt(
-                1 - (g1 ** 2 + g2 ** 2)
-            )
-            __Y = (-g2 * _X[None, :] + (1 + g1) * _Y[:, None]) / jnp.sqrt(
-                1 - (g1 ** 2 + g2 ** 2)
-            )
-            R2 = __Y ** 2 + __X ** 2
+        __X = ((1 - g1) * _X[None, :] - g2 * _Y[:, None]) / jnp.sqrt(
+            1 - (g1 ** 2 + g2 ** 2)
+        )
+        __Y = (-g2 * _X[None, :] + (1 + g1) * _Y[:, None]) / jnp.sqrt(
+            1 - (g1 ** 2 + g2 ** 2)
+        )
+        R2 = __Y ** 2 + __X ** 2
 
         R2 /= self.size ** 2
         R2 = jnp.maximum(R2, 1e-3)  # prevents infs at R2 = 0
@@ -102,7 +102,7 @@ class GaussianMorphology(ProfileMorphology):
     def __call__(self):
 
         # faster circular 2D Gaussian: instead of N^2 evaluations, use outer product of 2 1D Gaussian evals
-        if self.ellipticity is None:
+        if self.ellipticity==jnp.zeros((2,)):
 
             _Y = jnp.arange(self.bbox.shape[-2]) + self.bbox.origin[-2] - self.center[-2]
             _X = jnp.arange(self.bbox.shape[-1]) + self.bbox.origin[-1] - self.center[-1]
