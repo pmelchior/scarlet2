@@ -5,6 +5,7 @@ import jax.scipy
 from .bbox import Box
 from .module import Module, Parameter
 
+import numpy as np
 
 class Morphology(Module):
     bbox: Box = eqx.field(static=True, init=False)
@@ -102,8 +103,7 @@ class GaussianMorphology(ProfileMorphology):
     def __call__(self):
 
         # faster circular 2D Gaussian: instead of N^2 evaluations, use outer product of 2 1D Gaussian evals
-        if (self.ellipticity==jnp.zeros((2,))).all():
-
+        if abs(self.ellipticity).sum() == 0:
             _Y = jnp.arange(self.bbox.shape[-2]) + self.bbox.origin[-2] - self.center[-2]
             _X = jnp.arange(self.bbox.shape[-1]) + self.bbox.origin[-1] - self.center[-1]
 
