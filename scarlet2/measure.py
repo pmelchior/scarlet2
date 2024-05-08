@@ -1,7 +1,7 @@
-import numpy as np
+import numpy as jnp
 import numpy.ma as ma
-import jax.numpy as jnp
-from .bbox import Box
+
+from .module import Module
 
 
 def max_pixel(component):
@@ -12,14 +12,14 @@ def max_pixel(component):
     component: `scarlet.Component` or array
         Component to analyze or its hyperspectral model
     """
-    if hasattr(component, "get_model"):
-        model = component.get_model()
+    if isinstance(component, Module):
+        model = component()
         origin = component.bbox.origin
     else:
         model = component
         origin = 0
 
-    return tuple(np.array(np.unravel_index(np.argmax(model), model.shape)) + origin)
+    return tuple(jnp.array(jnp.unravel_index(jnp.argmax(model), model.shape)) + origin)
 
 
 def flux(component):
@@ -30,8 +30,8 @@ def flux(component):
     component: `scarlet.Component` or array
         Component to analyze or its hyperspectral model
     """
-    if hasattr(component, "get_model"):
-        model = component.get_model()
+    if isinstance(component, Module):
+        model = component()
     else:
         model = component
 
@@ -46,15 +46,15 @@ def centroid(component):
     component: `scarlet.Component` or array
         Component to analyze or its hyperspectral model
     """
-    if hasattr(component, "get_model"):
-        model = component.get_model()
+    if isinstance(component, Module):
+        model = component()
         origin = component.bbox.origin
     else:
         model = component
         origin = 0
 
-    indices = np.indices(model.shape)
-    centroid = np.array([np.sum(ind * model) for ind in indices]) / model.sum()
+    indices = jnp.indices(model.shape)
+    centroid = jnp.array([jnp.sum(ind * model) for ind in indices]) / model.sum()
     return centroid + origin
 
 
@@ -76,10 +76,8 @@ def snr(component, observations):
         if not prerender:
             frame = observations[0].model_frame
         model = component.get_model(frame=frame)
-        bbox = component.bbox
     else:
         model = component
-        bbox = Box(model.shape)
 
     M = []
     W = []
@@ -88,27 +86,27 @@ def snr(component, observations):
     # flatten in channel direction because it may not have all C channels; concatenate
     # do same thing for noise variance
     for obs in observations:
-        noise_rms = 1 / np.sqrt(ma.masked_equal(obs.weights, 0))
-        ma.set_fill_value(noise_rms, np.inf)
+        noise_rms = 1 / jnp.sqrt(ma.masked_equal(obs.weights, 0))
+        ma.set_fill_value(noise_rms, jnp.inf)
         model_ = obs.render(model)
         M.append(model_.reshape(-1))
         W.append((model_ / (model_.sum(axis=(-2, -1))[:, None, None])).reshape(-1))
-        noise_var = noise_rms**2
+        noise_var = noise_rms ** 2
         var.append(noise_var.reshape(-1))
-    M = np.concatenate(M)
-    W = np.concatenate(W)
-    var = np.concatenate(var)
+    M = jnp.concatenate(M)
+    W = jnp.concatenate(W)
+    var = jnp.concatenate(var)
 
     # SNR from Erben (2001), eq. 16, extended to multiple bands
     # SNR = (I @ W) / sqrt(W @ Sigma^2 @ W)
     # with W = morph, Sigma^2 = diagonal variance matrix
-    snr = (M * W).sum() / np.sqrt(((var * W) * W).sum())
+    snr = (M * W).sum() / jnp.sqrt(((var * W) * W).sum())
 
     return snr
 
 
 # adapted from https://github.com/pmelchior/shapelens/blob/master/src/Moments.cc
-def moments(component, N=2, centroid=None, weight=None):
+def moments(component, N=2, center=None, weight=None):
     """Determine SNR with morphology as weight function
 
     Parameters
@@ -117,13 +115,13 @@ def moments(component, N=2, centroid=None, weight=None):
         Component to analyze or its hyperspectral model
     N: int >=0
         Moment order
-    centroid: array
+    center: array
         2D coordinate in frame of `component`
     weight: array
         weight function with same shape as `component`
     """
-    if hasattr(component, "get_model"):
-        model = component.get_model()
+    if isinstance(component, Module):
+        model = component()
     else:
         model = component
 
@@ -132,24 +130,51 @@ def moments(component, N=2, centroid=None, weight=None):
     else:
         assert model.shape == weight.shape
 
-    if centroid is None:
-        centroid = np.array(model.shape) // 2
+    if center is None:
+        center = centroid(model)
 
-    grid_x, grid_y = np.indices(model.shape[-2:], dtype=np.float64)
+    grid_x, grid_y = jnp.indices(model.shape[-2:], dtype=jnp.float64)
     if len(model.shape) == 3:
         grid_y = grid_y[None, :, :]
         grid_x = grid_x[None, :, :]
-    grid_y -= centroid[0]
-    grid_x -= centroid[1]
+    grid_y -= center[0]
+    grid_x -= center[1]
 
     M = dict()
     for n in range(N + 1):
         for m in range(n + 1):
             # moments ordered by power in y, then x
-            M[m, n - m] = (grid_y**m * grid_x ** (n - m) * model * weight).sum(
+            M[m, n - m] = (grid_y ** m * grid_x ** (n - m) * model * weight).sum(
                 axis=(-2, -1)
             )
     return M
+
+
+def size(moments):
+    """Determine size from moments
+
+    Parameters
+    ----------
+    moments: moment dictionary from moments()
+    """
+    flux = moments[(0, 0)]
+    T = (moments[(0, 2)] / flux * moments[(2, 0)] / flux - (moments[(1, 1)] / flux) ** 2) ** (1 / 4)
+    return T
+
+
+def ellipticity(moments):
+    """Determine complex ellipticity from moments.
+
+    Parameters
+    ----------
+    moments: moment dictionary from moments()
+
+    Returns:
+    --------
+    jnp.array
+    """
+    ellipticity = (moments[(2, 0)] - moments[(0, 2)] + 2j * moments[(1, 1)]) / (moments[(2, 0)] + moments[(0, 2)])
+    return jnp.array((ellipticity.real, ellipticity.imag))
 
 
 # adapted from  https://github.com/pmelchior/shapelens/blob/src/DEIMOS.cc
