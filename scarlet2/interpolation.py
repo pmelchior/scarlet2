@@ -63,12 +63,12 @@ class Quintic(Interpolant):
         """
         u = jnp.abs(u)
         s = jnp.sinc(u)
-        piu = jnp.pi * u
+        piu = jnp.pi*u
         c = jnp.cos(piu)
-        ssq = s * s
-        piusq = piu * piu
+        ssq = s*s
+        piusq = piu*piu
         
-        return s * ssq * ssq * (s * (55.0 - 19.0 * piusq) + 2.0 * c * (piusq - 27.0))
+        return s * ssq * ssq * (s * (55. - 19. * piusq) + 2. * c * (piusq - 27.))
 
 ### Lanczos interpolant
 

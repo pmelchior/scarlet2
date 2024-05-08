@@ -36,7 +36,6 @@ psf_hst = np.array(psf_hst[None,:,:], np.float32)
 psf_hst = jnp.pad(psf_hst, ((0,0), (1,0), (1,0)))
 psf_hst = np.repeat(psf_hst, 5, 0)
 
-print(psf_hst.shape)
 psf_hst = scarlet2.ArrayPSF(psf_hst)
 
 # Scale the HST data

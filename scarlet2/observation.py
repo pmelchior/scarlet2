@@ -65,10 +65,11 @@ class Observation(Module):
 
             if self.frame.psf != frame.psf:
                 if frame.pixel_size != self.frame.pixel_size:
-                    # 2) Deconvolve with the model PSF, returns Fourier space image
+                    # 2) Pad model, model psf and obs psf and Fourier transform
                     renderers.append(PreprocessMultiresRenderer(frame, self.frame))
 
-                    # 3)a) Resample at the obs resolution
+                    # 3)a) Resample at the obs resolution, deconvolve model PSF and
+                    # convolve with obs PSF in Fourier space
                     renderers.append(ResamplingMultiresRenderer(frame, self.frame))
 
                     # 3)b) TODO: rotate and resample to obs orientation
@@ -76,14 +77,14 @@ class Observation(Module):
                     # same_res = abs(h - 1) < np.finfo(float).eps
                     # same_rot = (np.abs(angle[1]) ** 2) < np.finfo(float).eps
 
-                    # # 4) convolve with obs PSF
+                    # # convolve with obs PSF
                     # # TODO: if 2) is a resampling operation: model PSF needs to be resampled accordingly
                     # # Can be done by passing the renderer up to here to ConvolutionRenderer constructor below
                     # # Alternative: deconvolve from model_psf before 2) and convolve with full PSF in 3)
                     # # which is more modular but also more expensive unless all operations remain in Fourier space
 
-                    # Convolve with obs PSF and return real image
-                    renderers.append(PostprocessMultiresRenderer())
+                    # 4) Wrap the Fourier image and crop to obs frame
+                    renderers.append(PostprocessMultiresRenderer(frame, self.frame))
 
                 else:
                     renderers.append(ConvolutionRenderer(frame, self.frame))
