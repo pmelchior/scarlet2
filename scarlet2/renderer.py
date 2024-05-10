@@ -96,13 +96,13 @@ Preprocess:
     - return kimages
 
 Resample:
-    - resample the three kimage on the target kgrid
-    - return these images
+    - resample the three kimages on the target kgrid
+    - return these kimages
 
 Postprocess:
-    - multiply these k images
+    - Deconvolve model PSF and convolve obs PSF in Fourier space
     - kwrapping
-    - ifft
+    - ifft and cropping to obs frame
 """
 
 class PreprocessMultiresRenderer(Renderer):
@@ -156,7 +156,7 @@ class PreprocessMultiresRenderer(Renderer):
     
 class ResamplingMultiresRenderer(Renderer):
     """
-    Perform the intepolation of the model, model psf and obs psf on the same
+    Perform the interpolation of the model, model psf and obs psf on the same
     target grid
     """
 
