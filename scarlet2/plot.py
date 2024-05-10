@@ -265,7 +265,7 @@ class AsinhAutomaticNorm(AsinhNorm):
             Makes images more vibrant but causes slight color shifts in the highlights.
         """
         if channel_map is None:
-            channel_map = channels_to_rgb(observation.frame.bbox.shape[0])
+            channel_map = channels_to_rgb(observation.frame.C)
 
         im3 = img_to_3channel(observation.data, channel_map=channel_map)
         # TODO: need to mask this

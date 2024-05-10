@@ -1,9 +1,9 @@
 import jax.numpy as jnp
 
+from . import Scenery
 from . import measure
 from .bbox import Box
 from .morphology import GaussianMorphology
-from .scene import Scenery
 
 
 # function to calculate values of perimeter pixels
@@ -144,7 +144,7 @@ def gaussian_morphology(
 
 
 # initialise the spectrum
-def pixel_spectrum(observations, pos, correct_psf=None):
+def pixel_spectrum(observations, pos, correct_psf=False):
     """Get the spectrum at a given position in the observation(s).
 
     Yields the spectrum of a single-pixel source with flux 1 in every channel,
