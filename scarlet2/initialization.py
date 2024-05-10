@@ -24,8 +24,9 @@ def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, 
     """
     Create image of a Gaussian from the centered 2nd moments of the observation.
 
-    This method finds small box around the center so that the edge flux has a minimum SNR
-    and the color of the edge pixels remains highly correlated to the center pixel color.
+    This method finds small box around the center so that the edge flux has a minimum SNR,
+    the color of the edge pixels remains highly correlated to the center pixel color,
+    and the flux in all channels is lower than with the last acceptable box size.
     This should effectively isolate the source against the noise background and neighboring objects.
 
     Parameters
@@ -49,7 +50,7 @@ def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, 
     assert obs.weights is not None, "Observation weights are required"
 
     peak_spectrum = pixel_spectrum(obs, center, correct_psf=True)
-    peak_spectrum /= jnp.sqrt(jnp.dot(peak_spectrum, peak_spectrum))  # for correlation coefficient
+    last_spectrum = peak_spectrum.copy()
     box2d = Box((min_size, min_size))
     center_pix = obs.frame.get_pixel(center)
     box2d.set_center(center_pix.astype(int))
@@ -68,9 +69,10 @@ def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, 
         if mean_snr < min_snr:
             break
 
-        spec_corr = jnp.dot(edge_spectrum, peak_spectrum)
+        spec_corr = jnp.dot(edge_spectrum, peak_spectrum) / \
+                    jnp.sqrt(jnp.dot(peak_spectrum, peak_spectrum)) / jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
 
-        if spec_corr < min_corr:
+        if spec_corr < min_corr or jnp.any(edge_spectrum > last_spectrum):
             if box2d.shape[-1] > min_size:
                 box2d = box2d.shrink(delta_size)
             break
