@@ -30,7 +30,7 @@ class Parameter(eqx.Module):
         return self.prior.log_prob(self.value)
 
 
-def relative_step(x, *args, factor=0.1, minimum=1e-6):
+def relative_step(x, *args, factor=0.01, minimum=1e-6):
     """Step size set at `factor` times the norm of `x`
 
     As step size functions have the signature (array, int) -> float, *args captures, 
@@ -119,10 +119,16 @@ class Module(eqx.Module):
                     get_info(name_, p, infodict)
             elif isinstance(a, (list, tuple)):
                 for i, a_ in enumerate(a):
-                    params_ = a_.get_parameters(return_info=True, list_fixed=list_fixed)
-                    for k, (p, infodict) in params_.items():
-                        name_ = f"{name}.{i}.{k}"
-                        get_info(name_, p, infodict)
+                    try:
+                        params_ = a_.get_parameters(return_info=True, list_fixed=list_fixed)
+                        for k, (p, infodict) in params_.items():
+                            name_ = f"{name}.{i}.{k}"
+                            get_info(name_, p, infodict)
+                    except AttributeError:
+                        pass
+            else:
+                continue
+
         if return_value:
             if return_info:
                 params = {k: (params[k], info[k]) for k in params.keys()}
