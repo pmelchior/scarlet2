@@ -4,7 +4,6 @@ warnings.filterwarnings('ignore')
 import numpy as np
 from numpy.testing import assert_allclose
 import scarlet2
-import galsim
 
 import numpy as np
 import astropy.io.fits as fits
@@ -76,40 +75,6 @@ def test_hst_to_hsc_against_galsim():
     hst_resampled = obs_hsc.render(data_hst)
 
     # Perform the same operations with galsim 
+    out_galsim = np.load('../scarlet-test-data/galsim_hst_to_hsc_resolution.npy')
 
-    # Initialize images
-    h_hst = 0.03
-    h_hsc = 0.168
-
-    gi_hst_im = galsim.Image(np.array(data_hst[0]), scale=h_hst)
-
-    gii_hst_im = galsim.InterpolatedImage(gi_hst_im, 
-                                    x_interpolant=galsim.Quintic(),
-                                k_interpolant=galsim.Quintic()
-                                )
-
-    hst_psf = psf_hst()[0]
-
-    gi_hst_psf = galsim.Image(np.array(hst_psf), scale=h_hst)
-    gii_hst_psf = galsim.InterpolatedImage(gi_hst_psf,
-                                x_interpolant=galsim.Quintic(),
-                                k_interpolant=galsim.Quintic()
-                                )
-
-    hsc_psf = psf_hsc()[0]
-
-    gi_hsc_psf = galsim.Image(np.array(hsc_psf), scale=h_hsc)
-    gii_hsc_psf = galsim.InterpolatedImage(gi_hsc_psf,
-                                x_interpolant=galsim.Quintic(),
-                                k_interpolant=galsim.Quintic()
-                                )
-
-    # Deconvolution and Reconvolution
-    inv_gii_hst_psf = galsim.Deconvolve(gii_hst_psf)
-    deconv_hst = galsim.Convolve(inv_gii_hst_psf, gii_hst_im)
-    reconv_hsc = galsim.Convolve(gii_hsc_psf, deconv_hst)
-
-    out_galsim = reconv_hsc.drawImage(nx=N1, ny=N2, scale=0.168, method='no_pixel')
-
-
-    assert_allclose(out_galsim.array, hst_resampled[0], atol=1.3e-4)
+    assert_allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
