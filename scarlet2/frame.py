@@ -41,7 +41,7 @@ class Frame(eqx.Module):
         sky_coord: tuple, array
             Coordinates on the sky
         """
-        sky = jnp.asarray(sky_coord, dtype=jnp.float64).reshape(-1, 2)
+        sky = jnp.asarray(sky_coord, dtype=jnp.float32).reshape(-1, 2)
 
         if self.wcs is not None:
             wcs_ = self.wcs.celestial  # only use celestial portion

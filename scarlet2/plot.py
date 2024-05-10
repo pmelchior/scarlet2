@@ -265,7 +265,7 @@ class AsinhAutomaticNorm(AsinhNorm):
             Makes images more vibrant but causes slight color shifts in the highlights.
         """
         if channel_map is None:
-            channel_map = channels_to_rgb(observation.C)
+            channel_map = channels_to_rgb(observation.frame.bbox.shape[0])
 
         im3 = img_to_3channel(observation.data, channel_map=channel_map)
         # TODO: need to mask this
@@ -279,7 +279,7 @@ class AsinhAutomaticNorm(AsinhNorm):
         (M,) = np.percentile(I.flatten(), [upper_percentile])
         m = minimum
 
-        # find a good turnover point for arcshinh: ~noise level
+        # find a good turnover point for arcsinh: ~noise level
         rms = np.median(np.sqrt(V))
         beta = rms * noise_level
 

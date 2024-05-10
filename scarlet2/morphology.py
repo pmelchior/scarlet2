@@ -17,8 +17,7 @@ class Morphology(Module):
             center_ = center.value
         else:
             center_ = center
-        center_ = tuple(_.item() for _ in center_.astype(int))
-        self.bbox.set_center(center_)
+        self.bbox.set_center(center_.astype(int))
 
 
 class ArrayMorphology(Morphology):
