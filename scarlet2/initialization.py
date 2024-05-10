@@ -1,245 +1,149 @@
-# ---------------------------------------------------------------------------- #
-# Initialization routine for Scarlet2. We define function allowing for the     #
-# initialization of source morphologies and spectrums of indentified sources.  #
-#                                                                              #
-# For morphologies, we input the observational image with the locations of the #
-# sources calculated. Then we fit a 2D Gaussian to the cutout and optimize for #
-# the best fit with a maximum amplitute of 1.                                  #
-#                                                                              #
-# For spectrums, we input the observational image as with the morphology, we   #
-# just take the pixel value of the center of the source for each band.         #
-# ---------------------------------------------------------------------------- #
-import numpy as np
-import numpy.ma as ma
 import jax.numpy as jnp
-import jax
-from .plot import cut_square_box
-from .morphology import GaussianMorphology, ProfileMorphology
-from functools import partial
-from .measure import moments
+
+from . import measure
+from .bbox import Box
+from .morphology import GaussianMorphology
+from .scene import Scenery
 
 
 # function to calculate values of perimeter pixels
-def perimeter_values(array_2d):
-    """Return the values of the perimeter pixels of a 2D array."""
-    rows, cols = len(array_2d), len(array_2d[0])
-    perimeter_values = []
-    # Top row
-    perimeter_values.extend(array_2d[0])
-    # Bottom row
-    if rows > 1:
-        perimeter_values.extend(array_2d[-1])
-    # Left and right columns, excluding corners to avoid double counting
-    if cols > 1:
-        perimeter_values.extend(array_2d[i][0] for i in range(1, rows - 1))
-        if (
-            cols > 2
-        ):  # Check if there are more than 2 columns to avoid duplicate corner values
-            perimeter_values.extend(array_2d[i][-1] for i in range(1, rows - 1))
-
-    return perimeter_values
+def _get_edge_pixels(img, box):
+    box_slices = box.slices
+    box_start = box.start
+    box_stop = box.stop
+    edge = [
+        img[:, box_slices[0], box_start[1]],
+        img[:, box_slices[0], box_stop[1]],
+        img[:, box_start[0], box_slices[1]],
+        img[:, box_stop[0], box_slices[1]],
+    ]
+    return jnp.concatenate(edge, axis=1)
 
 
-# create a 2D Gaussian for simple feature free Initializations
-def gaussian_2d(x, y, mu_x, mu_y, sigma_x, sigma_y):
-    """2D Gaussian function.
-    Parameters
-    ----------
-    x : jnp.ndarray
-    y : jnp.ndarray
-    mu_x : float mean of the Gaussian in the x direction
-    mu_y : float mean of the Gaussian in the y direction
-    sigma_x : float standard deviation of the Gaussian in the x direction
-    sigma_y : float standard deviation of the Gaussian in the y direction
-
-    Returns
-    -------
-    jnp.ndarray 2D Gaussian profile
+def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, min_corr=0.99):
     """
-    return jnp.exp(
-        -((x - mu_x) ** 2 / (2 * sigma_x**2) + (y - mu_y) ** 2 / (2 * sigma_y**2))
-    )
+    Create image of a Gaussian from the centered 2nd moments of the observation.
 
-
-@partial(jax.jit, static_argnums=0)
-def create_gaussian_array(boxsize, sigma_x=1, sigma_y=1, theta=0):
-    """Create a 2D array with a Gaussian profile in the center.
-    Parameters
-    ----------
-    boxsize : int size of the bounding box around source
-    sigma_x : float standard deviation of the Gaussian in the x direction
-    sigma_y : float standard deviation of the Gaussian in the y direction
-    theta : float rotation angle of the 2D Gaussian
-
-    Returns
-    -------
-    jnp.ndarray 2D array with a Gaussian profile rotated by theta
-    """
-    x = jnp.linspace(-boxsize / 2, boxsize / 2, boxsize)
-    x, y = jnp.meshgrid(x, x)
-    # Center of the Gaussian profile
-    mu_x, mu_y = 0, 0
-    # Generate the Gaussian profile
-    gaussian_profile = gaussian_2d(x, y, mu_x, mu_y, sigma_x, sigma_y)
-    gaussian_profile = (gaussian_profile - jnp.min(gaussian_profile)) / (
-        jnp.max(gaussian_profile) - jnp.min(gaussian_profile)
-    )
-    gaussian_profile = jnp.array(gaussian_profile, dtype=jnp.float32)
-    gaussian_profile = jnp.expand_dims(gaussian_profile, axis=-1)
-    data = gaussian_profile #dm_pix.rotate(gaussian_profile, theta)
-    return jnp.squeeze(data)
-
-def init_simple_morph(
-    observation, center, psf_sigma=0.5, noise_thresh=20, corr_thresh=0.8
-):
-    """
-    Initialize the morphology of a source by fitting a 2D Gaussian to the cutout of the source.
-    The boxsize will initially be fit as a compact point-source and then expanded until the snr
-    is below a desired threshold.
+    This method finds small box around the center so that the edge flux has a minimum SNR
+    and the color of the edge pixels remains highly correlated to the center pixel color.
+    This should effectively isolate the source against the noise background and neighboring objects.
 
     Parameters
     ----------
-    observation: `~scarlet.Observation`
-    center: tuple --> center of source
-    psf_sigma: float --> initial psf used in model
-    noise_thresh: float --> threshold for noise
-    corr_thresh: float --> threshold for spectrum correlations
+    obs: `~scarlet2.Observation`
+    center: tuple
+        source enter, in pixel or sky coordinates
+    min_size: int
+        smallest box size
+    delta_size: int
+        incremental increase of box size
+    min_snr: float
+        minimum SNR of edge pixels (aggregated over all observation channel) to allow increase of box size
+    min_corr: float
+        minimum correlation coefficient between center and edge color to allow increase of box size
 
     Returns
     -------
-    morph: `jnp.array` --> 2D Gaussian morphology
+    jnp.array morphology image, normalized to (0,1)
     """
-    sigma = psf_sigma
-    converged = False
-    peak_spec = init_spectrum(observation, center, correct_psf=True)
-    spectra_prev = peak_spec
-    assert observation.weights is not None, "Observation weights are required" 
-    noise_rms = 1 / np.sqrt(ma.masked_equal(observation.weights, 0))
-    ma.set_fill_value(noise_rms, np.inf)
-    #size = 15
-    # loop over box size until SNR is below threshold
-    while converged == False:
-        # NOTE: Size is the same as sigma for this
-        #morph = create_gaussian_array(size, 1.4, 1.4, 0)
-        morph = GaussianMorphology(center, size=sigma)()
-        box = morph.shape #morph.bbox.shape
+    assert obs.weights is not None, "Observation weights are required"
 
-        # now grab the perimeter values of the box
-        perimeter_pixels = [None] * len(observation.data)
-        perimeter_noise_rms = [None] * len(observation.data)
+    peak_spectrum = pixel_spectrum(obs, center, correct_psf=True)
+    peak_spectrum /= jnp.sqrt(jnp.dot(peak_spectrum, peak_spectrum))  # for correlation coefficient
+    box2d = Box((min_size, min_size))
+    center_pix = obs.frame.get_pixel(center)
+    box2d.set_center(center_pix.astype(int))
 
-        # create the cutout and noise rms for each band
-        for idx, band in enumerate(observation.data):
-            cutout_obs = cut_square_box(band, center, box[0])
-            cutout_noise = cut_square_box(noise_rms[idx], center, box[0])
-            perimeter_pixels[idx] = jnp.array([perimeter_values(cutout_obs)])
-            perimeter_noise_rms[idx] = jnp.array([perimeter_values(cutout_noise)])
-        perimeter_pixels = jnp.squeeze(jnp.stack(perimeter_pixels, axis=0), axis=1)
-        perimeter_noise_rms = jnp.squeeze(
-            jnp.stack(perimeter_noise_rms, axis=0), axis=1
-        )
+    # increase box size until SNR is below threshold or spectrum changes significantly
+    while max(box2d.shape) < max(obs.data.shape[-2:]):
+        edge_pixels = _get_edge_pixels(obs.data, box2d)
+        edge_spectrum = jnp.mean(edge_pixels, axis=-1)
+        edge_spectrum /= jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
 
-        # simplified spectrum calculation for perimeter average around cutout
-        models = (None,) * len(observation.data)
-        spectra = []
-        spectrum_avg = 0
-        for obs, model in zip((observation,), models):
-            psf_model = obs.frame.psf()
-            psf_peak = psf_model.max(axis=(1, 2))
-            for i in range(perimeter_pixels.shape[1]):
-                spectrum = perimeter_pixels[:, i]
-                spectrum /= psf_peak
-                spectrum_avg += spectrum
-            spectrum_avg /= perimeter_pixels.shape[1]
-            spectra.append(spectrum_avg)
-        spectra_box = spectra[0]
+        weight_edge_pixels = _get_edge_pixels(obs.weights, box2d)
+        snr_edge_pixels = edge_pixels * jnp.sqrt(weight_edge_pixels)
+        valid_edge_pixel = weight_edge_pixels > 0
+        mean_snr = jnp.sum(jnp.sum(snr_edge_pixels, axis=-1) / jnp.sum(valid_edge_pixel, axis=-1))
 
-        # now check the SNR and spectrum correlations
-        noise_avg = jnp.mean(perimeter_noise_rms, axis=1) * noise_thresh
-        snr = spectra_box / noise_avg
-        spec_corr = jnp.dot(spectra_box, peak_spec) / jnp.dot(
-            jnp.sqrt(jnp.dot(spectra_box, spectra_box)),
-            jnp.sqrt(jnp.dot(peak_spec, peak_spec)),
-        )
-
-        # check if SNR is below threshold or spectrum correlation is below threshold
-        if snr.all() < 1 or spec_corr < corr_thresh:
-            converged = True
-        # check if flux on boundaries increased with larger size
-        elif (spectra_box >= peak_spec).any() or (spectra_box >= spectra_prev).any():
-            converged = True
-        # increase box/morphology size
-        else:
-            spectra_prev = spectra_box
-            sigma += 1
-        # for debugging
-        if sigma > 5:
+        if mean_snr < min_snr:
             break
 
-    # normalise the morphology between 0 and 1
-    #morph = morph()
-    morph = (morph - jnp.min(morph)) / (jnp.max(morph) - jnp.min(morph))
+        spec_corr = jnp.dot(edge_spectrum, peak_spectrum)
+
+        if spec_corr < min_corr:
+            if box2d.shape[-1] > min_size:
+                box2d = box2d.shrink(delta_size)
+            break
+
+        box2d = box2d.grow(delta_size)
+
+    box = obs.frame.bbox[0] @ box2d
+    return gaussian_morphology(obs, center_pix, box)
+
+
+def compact_morphology():
+    """
+    Create image of the PointSourceMorphology model, i.e. the most compact source possible.
+
+    Returns
+    -------
+    jnp.array morphology image, normalized to (0,1)
+
+    """
+    try:
+        frame = Scenery.scene.frame
+    except AttributeError:
+        print("Compact morphology can only be created within the context of a Scene")
+        print("Use 'with Scene(frame) as scene: Source(...)'")
+        raise
+    if frame.psf is None:
+        raise AttributeError("Compact morphology can only be create with a PSF in the model frame")
+
+    morph = frame.psf.morphology()
     return morph
 
 
-def init_morphology(
-    obs,
-    center,
-    psf_sigma=1,
-    noise_thresh=100,
-    corr_thresh=0.8,
-    max_size=32,
-    components=1,
+def gaussian_morphology(
+        obs,
+        center_pix,
+        bbox,
 ):
-    """Initialize the morphology of the sources.
+    """Create image of a Gaussian from the 2nd moments of the observation in the region of the bounding box.
+
     Parameters
     ----------
-    obs : `~scarlet.observation.Observation` instance
-    center : tuple (int, int) central pixel of the sources
+    obs : `~scarlet2.Observation`
+    center_pix : tuple
+        central pixel of the sources
+    bbox: `~scarlet2.BBox`
+        box to cut out source from observation, in pixel coordinates
 
     Returns
     -------
-    morph : np.ndarray morphology of the source normalised to (0,1)
+    jnp.array morphology image, normalized to (0,1)
     """
-    morph = init_simple_morph(obs, center, psf_sigma, noise_thresh, corr_thresh)
-    if (morph.shape[0] <= max_size) or (components == 1):
-        return morph
 
-    # fit for a more complex morphology for bigger sources
-    else:
-        bx = morph.shape[0]
-        cutout_obs = cut_square_box(obs.data, center, bx)
+    # cut out image from observation
+    cutout_obs = obs.data[bbox.slices]
+    center_box = tuple(center_pix[i] - bbox.origin[i + 1] for i in range(2))
+    # flatten image across channels
+    # TODO: use spectrum-based detection coadd instead
+    cutout_img = jnp.sum(cutout_obs, axis=0)
 
-        # getting Gaussian moments
-        g_multi = moments(component=cutout_obs, N=2)
-        # take the multi-band averages
-        g = {}
-        for key, array in g_multi.items():
-            g[key] = sum(array) / len(array)
+    # getting moment measures
+    g = measure.moments(cutout_img, center=center_box, N=2)
+    T = measure.size(g)
+    ellipticity = measure.ellipticity(g)
 
-        # create the 2D Gaussian moments
-        ''' 
-        size T = \sqrt{Q_11 + Q_22 / Q_00} (ie Flux)
-        ellipticity = [Q_11 - Q_22 + 2iQ_12] / [Q_11 + Q_12 + 2\sqrt{Q_11Q_22 - Q_12^2}]
-        '''
-        T = np.sqrt((g[(2, 0)] + g[(0, 2)]) / g[(0, 0)] )
-        ellipticity = (g[(2, 0)] - g[(0, 2)] + 2j * g[(1, 1)]) / (
-            g[(2, 0)] + g[(0, 2)] + 2 * np.sqrt(g[(2, 0)] * g[(0, 2)] - g[(1, 1)] ** 2)
-        )
+    # create image of Gaussian with these 2nd moments
+    morph = GaussianMorphology(center_pix, T, ellipticity, bbox=bbox)()
 
-        print(f"Size: {T}, Ellipticity: {ellipticity}")
-        ellipticity = np.array([ellipticity.real, ellipticity.imag])
-
-        # create the more complex morphology
-        morph = GaussianMorphology(center, T, ellipticity)
-        # create the simple morphology
-        morph_simple = GaussianMorphology(center, size=5) # TODO: properly do this when sorted
-        return [morph(), morph_simple()] 
+    return morph
 
 
 # initialise the spectrum
-def init_spectrum(observations, center, correct_psf=None):
-    """Get the spectrum at center of observation.
+def pixel_spectrum(observations, pos, correct_psf=None):
+    """Get the spectrum at a given position in the observation(s).
 
     Yields the spectrum of a single-pixel source with flux 1 in every channel,
     concatenated for all observations.
@@ -252,51 +156,45 @@ def init_spectrum(observations, center, correct_psf=None):
 
     Parameters
     ----------
-    center: tuple
-        Position in the observation
     observations: instance or list of `~scarlet.Observation`
         Observation to extract SED from.
+    pos: tuple
+        Position in the observation
     correct_psf: bool
         If PSF shape variations in the observations should be corrected.
 
     Returns
     -------
-    spectrum: `~numpy.array` or list thereof
+    spectrum: `~jnp.array` or list thereof if given list of observations
     """
     if not hasattr(observations, "__iter__"):
         single = True
         observations = (observations,)
-        models = (None,) * len(observations)
     else:
-        models = (None,) * len(observations)
         single = False
 
     spectra = []
-    for obs, model in zip(observations, models):
-        spectrum = obs.data[:, center[0], center[1]].copy()
+    for obs in observations:
+        pixel = obs.frame.get_pixel(pos).astype(int)
+        spectrum = obs.data[:, pixel[0], pixel[1]].copy()
 
         if correct_psf and obs.frame.psf is not None:
             # correct spectrum for PSF-induced change in peak pixel intensity
             psf_model = obs.frame.psf()
             psf_peak = psf_model.max(axis=(1, 2))
             spectrum /= psf_peak
-        elif model is not None:
-            model_value = model[:, center[0], center[1]].copy()
-            spectrum /= model_value
-
-        spectra.append(spectrum)
 
         if jnp.any(spectrum <= 0):
             # If the flux in all channels is  <=0,
             # the new sed will be filled with NaN values,
             # which will cause the code to crash later
-            msg = f"Zero or negative spectrum {spectrum} at {center}"
-            if np.all(spectrum <= 0):
-                print("Zero or negative spectrum at all sources")
-                print("Setting spectrum bands to 1")
-                spectrum = np.ones_like(spectrum)
-            else:
-                print(msg)
+            msg = f"Zero or negative spectrum {spectrum} at {pos}"
+            if jnp.all(spectrum <= 0):
+                print("Zero or negative spectrum in all channels: Setting spectrum to 1")
+                spectrum = jnp.ones_like(spectrum)
+            print(msg)
+
+        spectra.append(spectrum)
 
     if single:
         return spectra[0]
