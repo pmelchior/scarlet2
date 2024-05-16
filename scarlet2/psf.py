@@ -20,7 +20,6 @@ class GaussianPSF(PSF):
 
     def __init__(self, sigma):
         self.morphology = GaussianMorphology(jnp.zeros(2), sigma)
-        super().__post_init__()
 
     def __call__(self):
         morph = self.morphology()

@@ -24,6 +24,12 @@ class Parameter(eqx.Module):
     stepsize: float = 1
     fixed: bool = False
 
+    @property
+    def shape(self):
+        if isinstance(self.value, jnp.ndarray):
+            return self.value.shape
+        return None
+
     def log_prior(self):
         if self.prior is None:
             return 0
@@ -40,10 +46,11 @@ def relative_step(x, *args, factor=0.01, minimum=1e-6):
 
 
 class Module(eqx.Module):
-    _param_info: dict = eqx.field(static=True, init=False, repr=False)
+    _param_info: dict = eqx.field(default_factory=dict, static=True, repr=False, init=False, kw_only=True)
 
-    def __post_init__(self):
-        self._param_info = dict()
+    def __check_init__(self):
+        object.__setattr__(self, "_param_info", dict())
+        # self._param_info = dict()
         # if user specifies Parameter instead of ndarray:
         # extract value from Parameter instances, but save their metadata
         for name in self.__dataclass_fields__.keys():

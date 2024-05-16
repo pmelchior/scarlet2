@@ -18,7 +18,6 @@ class Scene(Module):
     def __init__(self, frame):
         self.frame = frame
         self.sources = list()
-        super().__post_init__()
 
     def __call__(self):
         model = jnp.zeros(self.frame.bbox.shape)
@@ -221,7 +220,7 @@ def _constraint_replace(self, constraint_fn, inv=False):
 
 
 # update step for optax optimizer
-@eqx.filter_jit
+# @eqx.filter_jit
 def _make_step(model, observations, optim, opt_state, filter_spec=None, constraint_fn=None):
 
     def loss_fn(model):

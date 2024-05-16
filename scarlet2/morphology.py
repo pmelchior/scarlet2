@@ -26,7 +26,6 @@ class ArrayMorphology(Morphology):
 
     def __init__(self, data):
         self.data = data
-        super().__post_init__()
         self.bbox = Box(self.data.shape)
 
     def __call__(self):
@@ -44,7 +43,6 @@ class ProfileMorphology(Morphology):
         self.center = center
         self.size = size
         self.ellipticity = ellipticity
-        super().__post_init__()
 
         if bbox is None:
             max_size = jnp.max(self.size)
@@ -85,9 +83,6 @@ class ProfileMorphology(Morphology):
 
 
 class GaussianMorphology(ProfileMorphology):
-
-    def __init__(self, center, size, ellipticity=None, bbox=None):
-        super().__init__(center, size, ellipticity=ellipticity, bbox=bbox)
 
     def f(self, R2):
         return jnp.exp(-R2 / 2)

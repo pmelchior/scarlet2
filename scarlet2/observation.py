@@ -31,7 +31,6 @@ class Observation(Module):
         if renderer is None:
             renderer = NoRenderer()
         self.renderer = renderer
-        super().__post_init__()
 
     def render(self, model):
         # render the model in the frame of the observation

@@ -20,7 +20,6 @@ class Component(Module):
         self.spectrum = spectrum
         self.morphology = morphology
         self.morphology.center_bbox(center)
-        super().__post_init__()
 
     def __call__(self):
         # Boxed model
