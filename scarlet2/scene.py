@@ -4,7 +4,7 @@ import jax.numpy as jnp
 
 from .bbox import overlap_slices
 from .frame import Frame
-from .module import Module, rgetattr
+from .module import Module
 
 
 class Scenery:
@@ -109,7 +109,8 @@ class Scene(Module):
         mcmc.run(rng_key, self, obs=observations)
         return mcmc
 
-    def fit(self, observations, schedule=None, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None, **kwargs):
+    def fit(self, observations, parameters, schedule=None, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None,
+            **kwargs):
         # optax fit with adam optimizer
         # Transforms constrained parameters into unconstrained ones
         # and filters out fixed parameters
@@ -122,18 +123,16 @@ class Scene(Module):
         except ImportError:
             raise ImportError("scarlet2.Scene.fit() requires optax and numpyro.")
 
-        # dealing with multiple observations
+        # making sure we can iterate
         if not isinstance(observations, (list, tuple)):
             observations = (observations,)
-        else:
-            observations = observations
 
-        # get step sizes for each parameter
-        parameters = self.get_parameters(return_info=True)
-        stepsizes = {name: info["stepsize"] for name, (p, info) in parameters.items()}
+        if not isinstance(parameters, (list, tuple)):
+            parameters = (parameters,)
+
         # make a stepsize tree
-        where = lambda model: tuple(rgetattr(model, n) for n in stepsizes.keys())
-        replace = tuple(stepsizes.values())
+        where = lambda model: tuple(model.get(p) for p in parameters)
+        replace = tuple(p.stepsize for p in parameters)
         steps = eqx.tree_at(where, self, replace=replace)
 
         def scale_by_stepsize() -> base.GradientTransformation:
@@ -157,17 +156,16 @@ class Scene(Module):
         # run adam, followed by stepsize adjustments
         optim = optax.chain(
             optax.scale_by_adam(**kwargs),
-            optax.scale_by_schedule(schedule if callable(schedule) else lambda x: 1 ),
+            optax.scale_by_schedule(schedule if callable(schedule) else lambda x: 1),
             scale_by_stepsize(),
         )
 
         # transform to unconstrained parameters
-        constraint_fn = {name: biject_to(info["constraint"]) for name, (value, info) in parameters.items() if
-                         info["constraint"] is not None}
-        scene = _constraint_replace(self, constraint_fn, inv=True)
+        constraint_fns = {p.name: biject_to(p.constraint) for p in parameters if p.constraint is not None}
+        scene = _constraint_replace(self, constraint_fns, inv=True)
 
-        # get optimizer initialized with the filtered (=non-fixed) parameters
-        filter_spec = self.filter_spec
+        # get optimizer initialized with the optimization parameters
+        filter_spec = self.get_filter_spec(parameters)
         if filter_spec is None:
             opt_state = optim.init(scene)
         else:
@@ -176,17 +174,17 @@ class Scene(Module):
         with tqdm.trange(max_iter, disable=not progress_bar) as t:
             for step in t:
                 # optimizer step
-                scene, loss, opt_state, convergence = _make_step(scene, observations, optim, opt_state,
+                scene, loss, opt_state, convergence = _make_step(scene, observations, parameters, optim, opt_state,
                                                                  filter_spec=filter_spec,
-                                                                 constraint_fn=constraint_fn)
+                                                                 constraint_fns=constraint_fns)
 
                 # compute max change across all non-fixed parameters for convergence test
                 max_change = jax.tree_util.tree_reduce(lambda a, b: max(a, b), convergence)
 
                 # report current iteration results to callback
                 if callback is not None:
-                    if constraint_fn is not None:
-                        scene_ = _constraint_replace(scene, constraint_fn)
+                    if constraint_fns is not None:
+                        scene_ = _constraint_replace(scene, constraint_fns)
                     else:
                         scene_ = scene
                     callback(scene_, convergence, loss)
@@ -198,44 +196,37 @@ class Scene(Module):
                 if max_change < e_rel:
                     break
 
-        return _constraint_replace(scene, constraint_fn)  # transform back to constrained variables
+        return _constraint_replace(scene, constraint_fns)  # transform back to constrained variables
 
 
-def _constraint_replace(self, constraint_fn, inv=False):
-    # replace any parameter with constraints into unconstrained ones by calling constraint_fn
+def _constraint_replace(self, constraint_fns, inv=False):
+    # replace any parameter with constraints into unconstrained ones by calling constraint_fns
     # return transformed pytree
-    parameters = self.get_parameters(return_info=True)
-    names = tuple(name
-                  for name, (value, info) in parameters.items()
-                  if info["constraint"] is not None
-                  )
-    transform = lambda value, fn: fn(value)
-    inv_transform = lambda value, fn: fn.inv(value)
-    transform = (transform, inv_transform)
-    values = tuple(transform[inv](value, constraint_fn[name])
-                   for name, (value, info) in parameters.items()
-                   if info["constraint"] is not None
-                   )
-    return self.replace(names, values)
+    where = lambda model: tuple(model.get(name) for name in constraint_fns.keys())
+    if not inv:
+        replace = tuple(transform(self.get(name)) for name, transform in constraint_fns.items())
+    else:
+        replace = tuple(transform.inv(self.get(name)) for name, transform in constraint_fns.items())
 
+    return eqx.tree_at(where, self, replace=replace)
 
 # update step for optax optimizer
-# @eqx.filter_jit
-def _make_step(model, observations, optim, opt_state, filter_spec=None, constraint_fn=None):
-
+@eqx.filter_jit
+def _make_step(model, observations, parameters, optim, opt_state, filter_spec=None, constraint_fns=None):
     def loss_fn(model):
-        if constraint_fn is not None:
+        if constraint_fns is not None:
             # parameters now obey constraints
             # transformation happens in the grad path, so gradients are wrt to unconstrained variables
             # likelihood and prior grads transparently apply the Jacobians of these transformations
-            model = _constraint_replace(model, constraint_fn)
+            model = _constraint_replace(model, constraint_fns)
 
         pred = model()
-        parameters = model.get_parameters(return_info=True)
         log_like = sum(obs.log_likelihood(pred) for obs in observations)
-        log_prior = sum(info["prior"].log_prob(p)
-                        for name, (p, info) in parameters.items()
-                        if info["prior"] is not None
+
+        param_values = model.get(parameters)
+        log_prior = sum(param.prior.log_prob(value)
+                        for param, value in zip(parameters, param_values)
+                        if param.prior is not None
                         )
         return -(log_like + log_prior)
 
