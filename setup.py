@@ -14,7 +14,6 @@ setup(
         'jax',
         'astropy',
         'numpy',
-        'matplotlib',
-        'varname'
+        'matplotlib'
     ],
 )

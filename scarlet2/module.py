@@ -1,7 +1,7 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from varname import argname
+import jax.tree_util as jtu
 
 
 class Module(eqx.Module):
@@ -9,11 +9,14 @@ class Module(eqx.Module):
     def __call__(self):
         raise NotImplementedError
 
+    def make_param(self, node, constraint=None, prior=None, stepsize=0):
+        return Parameter(self, node, constraint=constraint, prior=prior, stepsize=stepsize)
+
     def get(self, parameter):
         if isinstance(parameter, (list, tuple, {}.keys().__class__)):
             return tuple(self.get(p) for p in parameter)
         assert isinstance(parameter, Parameter)
-        return parameter << self
+        return parameter.extract_from(self)
 
     def replace(self, parameters, values):
         """Replace attribute with given name by other value
@@ -40,21 +43,19 @@ class Module(eqx.Module):
 
 
 class Parameter:
-    # name: str
-    # where_in: callable = eqx.field(repr=False)
-    # constraint: (None, object)
-    # constraint_transform: (None, callable) = eqx.field(repr=False, default=None)
-    # prior: (None, object)
-    # stepsize: float
 
-    def __init__(self, node, constraint=None, prior=None, stepsize=1):
-        # find name of variable node
-        self.name = argname('node', vars_only=False)
-        # find base dataclass
-        name_root = self.name.split(".")[0]
-        # create function that ingests root and returns node
-        lambda_str = f"lambda {name_root}: {self.name}"
-        self.where_in = eval(lambda_str)
+    def __init__(self, base, node, constraint=None, prior=None, stepsize=0):
+        self.base = base
+        self.node = node
+        self.extract_from = None
+        leaves = jtu.tree_leaves(base)
+        for i, leaf in enumerate(leaves):
+            if leaf is node:
+                # create function that ingests base and returns node
+                self.extract_from = lambda base: jtu.tree_leaves(base)[i]
+                break
+        if self.extract_from is None:
+            raise RuntimeError(f"{node} not in {base}!")
 
         if constraint is not None:
             self.constraint = constraint
@@ -68,8 +69,6 @@ class Parameter:
         self.prior = prior
         self.stepsize = stepsize
 
-    def __lshift__(self, root):
-        return self.where_in(root)
 
 
 def relative_step(x, *args, factor=0.01, minimum=1e-6):
