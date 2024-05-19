@@ -1,20 +1,7 @@
-import functools
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-
-
-# recursively finding attributes:
-# from https://stackoverflow.com/a/31174427
-# with modification to unpack a list with an attribute counter
-def rgetattr(obj, attr, *args):
-    def _getattr(obj, attr):
-        if not isinstance(obj, (list, tuple)):
-            return getattr(obj, attr, *args)
-        return obj.__getitem__(int(attr))
-
-    return functools.reduce(_getattr, [obj] + attr.split('.'))
+from varname import argname
 
 
 class Module(eqx.Module):
@@ -25,13 +12,8 @@ class Module(eqx.Module):
     def get(self, parameter):
         if isinstance(parameter, (list, tuple, {}.keys().__class__)):
             return tuple(self.get(p) for p in parameter)
-        if isinstance(parameter, Parameter):
-            name = parameter.name
-        elif isinstance(parameter, str):
-            name = parameter
-        else:
-            return None
-        return rgetattr(self, name)
+        assert isinstance(parameter, Parameter)
+        return parameter << self
 
     def replace(self, parameters, values):
         """Replace attribute with given name by other value
@@ -39,9 +21,8 @@ class Module(eqx.Module):
         if not isinstance(parameters, (list, tuple, {}.keys().__class__)):
             parameters = (parameters,)
             values = (values,)
-        where = lambda model: tuple(model.get(p) for p in parameters)
-        replace = values
-        return eqx.tree_at(where, self, replace=replace)
+        where = lambda model: model.get(parameters)
+        return eqx.tree_at(where, self, replace=values)
 
     def get_filter_spec(self, parameters):
         """Get equinox filter_spec for all fields named in parameters
@@ -50,19 +31,45 @@ class Module(eqx.Module):
             parameters = (parameters,)
 
         filtered = jax.tree_util.tree_map(lambda _: False, self)
-        where = lambda model: tuple(model.get(p) for p in parameters)
-        replace = tuple(True for n in range(len(parameters)))
-        filter = eqx.tree_at(where, filtered, replace=replace)
-        if all(jax.tree_util.tree_leaves(filter)):
+        where = lambda model: model.get(parameters)
+        values = (True,) * len(parameters)
+        filtered = eqx.tree_at(where, filtered, replace=values)
+        if all(jax.tree_util.tree_leaves(filtered)):
             return None
-        return filter
+        return filtered
 
 
-class Parameter(Module):
-    name: str
-    constraint: (None, object) = None
-    prior: (None, object) = None
-    stepsize: float = 1
+class Parameter:
+    # name: str
+    # where_in: callable = eqx.field(repr=False)
+    # constraint: (None, object)
+    # constraint_transform: (None, callable) = eqx.field(repr=False, default=None)
+    # prior: (None, object)
+    # stepsize: float
+
+    def __init__(self, node, constraint=None, prior=None, stepsize=1):
+        # find name of variable node
+        self.name = argname('node', vars_only=False)
+        # find base dataclass
+        name_root = self.name.split(".")[0]
+        # create function that ingests root and returns node
+        lambda_str = f"lambda {name_root}: {self.name}"
+        self.where_in = eval(lambda_str)
+
+        if constraint is not None:
+            self.constraint = constraint
+            try:
+                from numpyro.distributions.transforms import biject_to
+            except ImportError:
+                raise ImportError("scarlet2.Parameter requires numpyro.")
+            # transformation to unconstrained parameters
+            self.constraint_transform = biject_to(constraint)
+
+        self.prior = prior
+        self.stepsize = stepsize
+
+    def __lshift__(self, root):
+        return self.where_in(root)
 
 
 def relative_step(x, *args, factor=0.01, minimum=1e-6):

@@ -131,7 +131,7 @@ class Scene(Module):
             parameters = (parameters,)
 
         # make a stepsize tree
-        where = lambda model: tuple(model.get(p) for p in parameters)
+        where = lambda model: model.get(parameters)
         replace = tuple(p.stepsize for p in parameters)
         steps = eqx.tree_at(where, self, replace=replace)
 
@@ -161,8 +161,7 @@ class Scene(Module):
         )
 
         # transform to unconstrained parameters
-        constraint_fns = {p.name: biject_to(p.constraint) for p in parameters if p.constraint is not None}
-        scene = _constraint_replace(self, constraint_fns, inv=True)
+        scene = _constraint_replace(self, parameters, inv=True)
 
         # get optimizer initialized with the optimization parameters
         filter_spec = self.get_filter_spec(parameters)
@@ -175,8 +174,7 @@ class Scene(Module):
             for step in t:
                 # optimizer step
                 scene, loss, opt_state, convergence = _make_step(scene, observations, parameters, optim, opt_state,
-                                                                 filter_spec=filter_spec,
-                                                                 constraint_fns=constraint_fns)
+                                                                 filter_spec=filter_spec)
 
                 # compute max change across all non-fixed parameters for convergence test
                 max_change = jax.tree_util.tree_reduce(lambda a, b: max(a, b), convergence)
@@ -184,7 +182,7 @@ class Scene(Module):
                 # report current iteration results to callback
                 if callback is not None:
                     if constraint_fns is not None:
-                        scene_ = _constraint_replace(scene, constraint_fns)
+                        scene_ = _constraint_replace(scene, parameters)
                     else:
                         scene_ = scene
                     callback(scene_, convergence, loss)
@@ -196,29 +194,30 @@ class Scene(Module):
                 if max_change < e_rel:
                     break
 
-        return _constraint_replace(scene, constraint_fns)  # transform back to constrained variables
+        return _constraint_replace(scene, parameters)  # transform back to constrained variables
 
 
-def _constraint_replace(self, constraint_fns, inv=False):
+def _constraint_replace(self, parameters, inv=False):
     # replace any parameter with constraints into unconstrained ones by calling constraint_fns
     # return transformed pytree
-    where = lambda model: tuple(model.get(name) for name in constraint_fns.keys())
+    where_in = lambda model: model.get(parameters)
+    param_values = where_in(self)
     if not inv:
-        replace = tuple(transform(self.get(name)) for name, transform in constraint_fns.items())
+        replace = tuple(p.constraint_transform(v) for p, v in zip(parameters, param_values))
     else:
-        replace = tuple(transform.inv(self.get(name)) for name, transform in constraint_fns.items())
+        replace = tuple(p.constraint_transform.inv(v) for p, v in zip(parameters, param_values))
 
-    return eqx.tree_at(where, self, replace=replace)
+    return eqx.tree_at(where_in, self, replace=replace)
 
 # update step for optax optimizer
 @eqx.filter_jit
-def _make_step(model, observations, parameters, optim, opt_state, filter_spec=None, constraint_fns=None):
+def _make_step(model, observations, parameters, optim, opt_state, filter_spec=None):
     def loss_fn(model):
-        if constraint_fns is not None:
+        if any(param.constraint is not None for param in parameters):
             # parameters now obey constraints
             # transformation happens in the grad path, so gradients are wrt to unconstrained variables
             # likelihood and prior grads transparently apply the Jacobians of these transformations
-            model = _constraint_replace(model, constraint_fns)
+            model = _constraint_replace(model, parameters)
 
         pred = model()
         log_like = sum(obs.log_likelihood(pred) for obs in observations)
