@@ -4,7 +4,7 @@ import jax.numpy as jnp
 
 from .bbox import overlap_slices
 from .frame import Frame
-from .module import Module
+from .module import Module, Parameters
 
 
 class Scenery:
@@ -126,9 +126,7 @@ class Scene(Module):
         # making sure we can iterate
         if not isinstance(observations, (list, tuple)):
             observations = (observations,)
-
-        if not isinstance(parameters, (list, tuple)):
-            parameters = (parameters,)
+        assert isinstance(parameters, Parameters)
 
         # make a stepsize tree
         where = lambda model: model.get(parameters)
