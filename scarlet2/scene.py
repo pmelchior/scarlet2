@@ -44,7 +44,7 @@ class Scene(Module):
     def __exit__(self, exc_type, exc_value, traceback):
         Scenery.scene = None
 
-    def sample(self, observations, num_warmup=50, num_samples=100, **kwargs):
+    def sample(self, observations, parameters, num_warmup=50, num_samples=100, **kwargs):
         # uses numpyro NUTS on all non-fixed parameters
         # requires that those have priors set
         try:
@@ -80,8 +80,7 @@ class Scene(Module):
                 return self.obs._log_likelihood(self.model, value)
 
         # find all non-fixed parameters and their priors
-        parameters = self.get_parameters(return_info=True)
-        priors = {name: info["prior"] for name, (p, info) in parameters.items()}
+        priors = {p.name: p.prior for p in parameters}
         has_none = any(prior is None for prior in priors.values())
         if has_none:
             from pprint import pformat
@@ -91,9 +90,8 @@ class Scene(Module):
         # define the pyro model, where every parameter becomes a sample,
         # and the observations sample from their likelihood given the rendered model
         def pyro_model(model, obs=None):
-            names = tuple(priors.keys())
-            samples = tuple(numpyro.sample(name, prior) for name, prior in priors.items())
-            model = model.replace(names, samples)
+            samples = tuple(numpyro.sample(p.name, p.prior) for p in parameters)
+            model = model.replace(parameters, samples)
             pred = model()  # create prediction once for all observations
             # dealing with multiple observations
             if not isinstance(observations, (list, tuple)):

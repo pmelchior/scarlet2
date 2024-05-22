@@ -97,7 +97,8 @@ class Parameters:
                 found = True
                 break
         if not found:
-            raise RuntimeError(f"{parameter.node} not in {self.base}!")
+            mess = f"Parameter '{parameter.name}' not in {self.base.__class__.__name__}!"
+            raise RuntimeError(mess)
         return self
 
     def __isub__(self, name):
