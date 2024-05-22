@@ -100,15 +100,13 @@ class Parameters:
             raise RuntimeError(f"{parameter.node} not in {self.base}!")
         return self
 
-    # def __isub__(self, node):
-    #     assert isinstance(parameter, Parameter)
-    #     for i, param in enumerate(self.params):
-    #         if param.node is node:
-    #             del self.params[i]
-    #             break
-    #     for i, idx in enumerate(self.leave_idx):
-    #         if self.base_leaves[idx] is node:
-    #             del self.leaves_idx[i]
+    def __isub__(self, name):
+        for i, param in enumerate(self._params):
+            if param.name == name:
+                del self._params[i]
+                del self._leave_idx[i]
+                break
+        return self
 
     def __getitem__(self, i):
         return self._params[i]
