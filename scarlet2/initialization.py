@@ -53,6 +53,8 @@ def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, 
     last_spectrum = peak_spectrum.copy()
     box2d = Box((min_size, min_size))
     center_pix = obs.frame.get_pixel(center)
+    if not obs.frame.bbox[-2:].contains(center_pix):
+        raise ValueError(f"Pixel coordinate expected, got {center_pix}")
     box2d.set_center(center_pix.astype(int))
 
     # increase box size until SNR is below threshold or spectrum changes significantly
@@ -80,7 +82,7 @@ def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, 
         box2d = box2d.grow(delta_size)
 
     box = obs.frame.bbox[0] @ box2d
-    return gaussian_morphology(obs, center_pix, box)
+    return gaussian_morphology(obs, box)
 
 
 def compact_morphology():
@@ -107,7 +109,6 @@ def compact_morphology():
 
 def gaussian_morphology(
         obs,
-        center_pix,
         bbox,
 ):
     """Create image of a Gaussian from the 2nd moments of the observation in the region of the bounding box.
@@ -127,18 +128,23 @@ def gaussian_morphology(
 
     # cut out image from observation
     cutout_obs = obs.data[bbox.slices]
-    center_box = tuple(center_pix[i] - bbox.origin[i + 1] for i in range(2))
     # flatten image across channels
     # TODO: use spectrum-based detection coadd instead
     cutout_img = jnp.sum(cutout_obs, axis=0)
+    center = measure.centroid(cutout_img)
 
     # getting moment measures
-    g = measure.moments(cutout_img, center=center_box, N=2)
+    g = measure.moments(cutout_img, center=center, N=2)
     T = measure.size(g)
     ellipticity = measure.ellipticity(g)
 
     # create image of Gaussian with these 2nd moments
-    morph = GaussianMorphology(center_pix, T, ellipticity, bbox=bbox)()
+    if jnp.isfinite(center).all() and jnp.isfinite(T) and jnp.isfinite(ellipticity).all():
+        center += jnp.array(bbox[-2:].origin)
+        morph = GaussianMorphology(center, T, ellipticity, bbox=bbox)()
+    else:
+        raise ValueError(
+            f"Gaussian morphology not possible with center={center}, size={T}, and ellipticity={ellipticity}!")
 
     return morph
 
@@ -178,6 +184,10 @@ def pixel_spectrum(observations, pos, correct_psf=False):
     spectra = []
     for obs in observations:
         pixel = obs.frame.get_pixel(pos).astype(int)
+
+        if not obs.frame.bbox[-2:].contains(pixel):
+            raise ValueError(f"Pixel coordinate expected, got {pixel}")
+
         spectrum = obs.data[:, pixel[0], pixel[1]].copy()
 
         if correct_psf and obs.frame.psf is not None:

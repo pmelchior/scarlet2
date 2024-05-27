@@ -43,19 +43,16 @@ def centroid(component):
 
     Parameters
     ----------
-    component: `scarlet.Component` or array
+    component: `scarlet2.Component` or array
         Component to analyze or its hyperspectral model
     """
     if isinstance(component, Module):
         model = component()
-        origin = component.bbox.origin
     else:
         model = component
-        origin = 0
-
     indices = jnp.indices(model.shape)
     centroid = jnp.array([jnp.sum(ind * model) for ind in indices]) / model.sum()
-    return centroid + origin
+    return centroid
 
 
 def snr(component, observations):
