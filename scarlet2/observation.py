@@ -32,6 +32,10 @@ class Observation(Module):
             renderer = NoRenderer()
         self.renderer = renderer
 
+    @property
+    def C(self):
+        return self.frame.C
+
     def render(self, model):
         # render the model in the frame of the observation
         return self.renderer(model)

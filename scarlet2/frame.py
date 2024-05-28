@@ -27,6 +27,10 @@ class Frame(eqx.Module):
         return hash(self.bbox)
 
     @property
+    def C(self):
+        return len(self.channels)
+
+    @property
     def pixel_size(self):
         if self.wcs is not None:
             return get_pixel_size(get_affine(self.wcs)) * 60 * 60  # in arcsec

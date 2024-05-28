@@ -52,6 +52,11 @@ class Parameter:
             # transformation to unconstrained parameters
             self.constraint_transform = biject_to(constraint)
 
+            # check if parameter is valid under transform
+            unconstrained = self.constraint_transform.inv(self.node)
+            if not jnp.isfinite(unconstrained).all():
+                raise ValueError(f"Parameter {self.name} has infeasible values for constraint {self.constraint}!")
+
         self.prior = prior
         self.stepsize = stepsize
 
