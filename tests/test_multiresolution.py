@@ -2,16 +2,13 @@ import os
 import warnings
 warnings.filterwarnings('ignore')
 
-import numpy as np
 from numpy.testing import assert_allclose
 
 import scarlet2
-
 from utils import import_scarlet_test_data
 import_scarlet_test_data()
 from scarlet_test_data import data_path, tests_path
 
-import numpy as np
 import astropy.io.fits as fits
 from astropy.wcs import WCS
 
@@ -40,14 +37,14 @@ channels_hst = ['F814W']
 
 # Load the HST PSF data
 psf_hst = fits.open(os.path.join(data_path, "test_resampling", "PSF_HST.fits"))[0].data
-psf_hst = np.array(psf_hst[None,:,:], np.float32)
-psf_hst = jnp.pad(psf_hst, ((0,0), (1,0), (1,0)))
-psf_hst = np.repeat(psf_hst, 5, 0)
+psf_hst = jnp.array(psf_hst[None, :, :], jnp.float32)
+psf_hst = jnp.pad(psf_hst, ((0, 0), (1, 0), (1, 0)))
+psf_hst = jnp.repeat(psf_hst, 5, 0)
 
 psf_hst = scarlet2.ArrayPSF(psf_hst)
 
 # Scale the HST data
-n1,n2 = np.shape(data_hst)
+n1, n2 = jnp.shape(data_hst)
 data_hst = data_hst.reshape(1, n1, n2).byteswap().newbyteorder()
 data_hst *= data_hsc.max() / data_hst.max()
 
@@ -84,8 +81,7 @@ def test_hst_to_hsc_against_galsim():
     hst_resampled = obs_hsc.render(data_hst)
 
     # Perform the same operations with galsim 
-    # out_galsim = np.load('../scarlet-test-data/galsim_hst_to_hsc_resolution.npy')
-    out_galsim = np.load(os.path.join(tests_path, "galsim_hst_to_hsc_resolution.npy"))
+    out_galsim = jnp.load(os.path.join(tests_path, "galsim_hst_to_hsc_resolution.npy"))
 
     assert_allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
 
