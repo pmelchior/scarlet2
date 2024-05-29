@@ -27,6 +27,10 @@ class Frame(eqx.Module):
         return hash(self.bbox)
 
     @property
+    def C(self):
+        return self.bbox.shape[0]
+
+    @property
     def pixel_size(self):
         if self.wcs is not None:
             return get_pixel_size(get_affine(self.wcs)) * 60 * 60  # in arcsec
@@ -41,7 +45,7 @@ class Frame(eqx.Module):
         sky_coord: tuple, array
             Coordinates on the sky
         """
-        sky = jnp.asarray(sky_coord, dtype=jnp.float64).reshape(-1, 2)
+        sky = jnp.asarray(sky_coord, dtype=jnp.float32).reshape(-1, 2)
 
         if self.wcs is not None:
             wcs_ = self.wcs.celestial  # only use celestial portion
@@ -280,13 +284,14 @@ def get_psf_size(psf):
 
     return sigma3
 
-
 def get_affine(wcs):
     try:
         model_affine = wcs.wcs.pc
     except AttributeError:
-        model_affine = wcs.cd
-
+        try:
+            model_affine = wcs.cd
+        except AttributeError:
+            model_affine = wcs.wcs.cd
     return model_affine
 
 

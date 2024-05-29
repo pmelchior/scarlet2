@@ -1,3 +1,10 @@
+class Scenery:
+    # static store for context manager
+    scene = None
+
+
+from . import initialization as init
+from . import measure
 from . import plot
 from .bbox import Box
 from .frame import Frame

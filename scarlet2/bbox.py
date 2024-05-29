@@ -115,16 +115,26 @@ class Box(eqx.Module):
     def set_center(self, pos):
         """Center box at given position
         """
-        origin = tuple(o + p - c for o, p, c in zip(self.origin, pos, self.center))
+        pos_ = tuple(_.item() for _ in pos)
+        origin = tuple(o + p - c for o, p, c in zip(self.origin, pos_, self.center))
         object.__setattr__(self, 'origin', origin)
 
-    def grow(self, radius):
-        """Grow the Box by the given radius in each direction
+    def grow(self, delta):
+        """Grow the Box by the given delta in each direction
         """
-        if not hasattr(radius, "__iter__"):
-            radius = [radius] * self.D
-        origin = tuple([self.origin[d] - radius[d] for d in range(self.D)])
-        shape = tuple([self.shape[d] + 2 * radius[d] for d in range(self.D)])
+        if not hasattr(delta, "__iter__"):
+            delta = [delta] * self.D
+        origin = tuple([self.origin[d] - delta[d] for d in range(self.D)])
+        shape = tuple([self.shape[d] + 2 * delta[d] for d in range(self.D)])
+        return Box(shape, origin=origin)
+
+    def shrink(self, delta):
+        """Shrink the Box by the given delta in each direction
+        """
+        if not hasattr(delta, "__iter__"):
+            delta = [delta] * self.D
+        origin = tuple([self.origin[d] + delta[d] for d in range(self.D)])
+        shape = tuple([self.shape[d] - 2 * delta[d] for d in range(self.D)])
         return Box(shape, origin=origin)
 
     def __or__(self, other):

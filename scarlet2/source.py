@@ -5,10 +5,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from . import Scenery
 from .bbox import overlap_slices
 from .module import Module
 from .morphology import Morphology
-from .scene import Scenery
 from .spectrum import Spectrum
 
 
