@@ -1,9 +1,9 @@
 import equinox as eqx
 import jax.numpy as jnp
 
+from . import Scenery
 from .bbox import Box
 from .module import Module
-from .scene import Scenery
 
 
 class Spectrum(Module):

@@ -1,4 +1,5 @@
 import operator
+import math
 
 import jax.lax
 import jax.numpy as jnp
@@ -274,8 +275,76 @@ def _pad(arr, newshape, axes=None, mode="constant", constant_values=0):
             endind = dS - startind
             pad_width[axis] = (startind, endind)
 
-    # if mode == "constant" and constant_values == 0:
+    # if mode == "constant" and constant_values == 0:   
     # result = _fast_zero_pad(arr, pad_width)
     # else:
     result = jnp.pad(arr, pad_width, mode=mode)
     return result
+
+
+def good_fft_size(input_size):
+    # Code from JAX-Galsim
+    # https://github.com/GalSim-developers/JAX-GalSim/blob/4b12d6b3520938cd823ae3978c400bb9a2b454d3/jax_galsim/image.py#L830
+    # Reference from GalSim C++
+    # https://github.com/GalSim-developers/GalSim/blob/ece3bd32c1ae6ed771f2b489c5ab1b25729e0ea4/src/Image.cpp#L1009
+    # Reduce slightly to eliminate potential rounding errors:
+    insize = (1.0 - 1.0e-5) * input_size
+    log2n = math.log(2.0) * math.ceil(math.log(insize) / math.log(2.0))
+    log2n3 = math.log(3.0) + math.log(2.0) * math.ceil(
+        (math.log(insize) - math.log(3.0)) / math.log(2.0)
+    )
+    log2n3 = max(log2n3, math.log(6.0))  # must be even number
+    Nk = max(int(math.ceil(math.exp(min(log2n, log2n3)) - 1.0e-5)), 2)
+    return Nk
+
+def wrap_hermitian_x(im, im_xmin, im_ymin, wrap_xmin, wrap_ymin, wrap_nx, wrap_ny):
+    """
+    Bernstein & Gruen (2014) arxiv:1401.2636
+    This function is taken from JAX-Galsim wrap_image utils written by Matthew R. Becker
+    https://github.com/GalSim-developers/JAX-GalSim/blob/4b12d6b3520938cd823ae3978c400bb9a2b454d3/jax_galsim/core/wrap_image.py#L6C1-L54C40
+    """
+
+    def wrap_nonhermitian(im, xmin, ymin, nxwrap, nywrap):
+        def _body_j(j, vals):
+            i, im = vals
+
+            ii = (i - ymin) % nywrap + ymin
+            jj = (j - xmin) % nxwrap + xmin
+
+            im = jax.lax.cond(
+                # weird way to say if ii != i and jj != j
+                # I tried other ways and got test failures
+                jnp.abs(ii - i) + jnp.abs(jj - j) != 0,
+                lambda im, i, j, ii, jj: im.at[ii, jj].add(im[i, j]),
+                lambda im, i, j, ii, jj: im,
+                im,
+                i,
+                j,
+                ii,
+                jj,
+            )
+
+            return [i, im]
+
+        def _body_i(i, vals):
+            im = vals
+            _, im = jax.lax.fori_loop(0, im.shape[1], _body_j, [i, im])
+            return im
+
+        im = jax.lax.fori_loop(0, im.shape[0], _body_i, im)
+        return im
+
+
+    def expand_hermitian_x(im):
+        return jnp.concatenate([im[:, 1:][::-1, ::-1].conjugate(), im], axis=1)
+
+
+    def contract_hermitian_x(im):
+        return im[:, im.shape[1] // 2 :]
+
+    
+    im_exp = expand_hermitian_x(im)
+    im_exp = wrap_nonhermitian(
+        im_exp, wrap_xmin - im_xmin, wrap_ymin - im_ymin, wrap_nx, wrap_ny
+    )
+    return contract_hermitian_x(im_exp)

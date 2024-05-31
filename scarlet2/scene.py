@@ -2,14 +2,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from . import Scenery
 from .bbox import overlap_slices
 from .frame import Frame
 from .module import Module, Parameters
+from .renderer import ChannelRenderer
+from .spectrum import ArraySpectrum
 
-
-class Scenery:
-    # static store for context manager
-    scene = None
 
 class Scene(Module):
     frame: Frame = eqx.field(static=True)
@@ -22,16 +21,18 @@ class Scene(Module):
     def __call__(self):
         model = jnp.zeros(self.frame.bbox.shape)
         for source in self.sources:
-            model_ = source()
+            model += self._eval_src_in_frame(source)
+        return model
 
-            # cut out region from model, add single source model
-            bbox, bbox_ = overlap_slices(self.frame.bbox, source.bbox, return_boxes=True)
-            sub_model = jax.lax.dynamic_slice(model, bbox.start, bbox.shape)
-            sub_model_ = jax.lax.dynamic_slice(model_, bbox_.start, bbox_.shape)
-            sub_model += sub_model_
+    def _eval_src_in_frame(self, source):
+        model_ = source()
+        # cut out region from model, add single source model
+        bbox, bbox_ = overlap_slices(self.frame.bbox, source.bbox, return_boxes=True)
+        sub_model_ = jax.lax.dynamic_slice(model_, bbox_.start, bbox_.shape)
 
-            # add model_ back in full model
-            model = jax.lax.dynamic_update_slice(model, sub_model, bbox.start)
+        # add model_ back in full model
+        model = jnp.zeros(self.frame.bbox.shape)
+        model = jax.lax.dynamic_update_slice(model, sub_model_, bbox.start)
         return model
 
     def __enter__(self):
@@ -192,6 +193,93 @@ class Scene(Module):
 
         return _constraint_replace(scene, parameters)  # transform back to constrained variables
 
+    def set_spectra_to_match(self, observations):
+        """Sets the spectra of every source in the scene to match the observations.
+
+        Computes the best-fit amplitude of the rendered model of all components in every
+        channel of every observation as a linear inverse problem.
+
+        Parameters
+        ----------
+        observations: `scarlet2.Observation` or list thereof
+        """
+
+        if not hasattr(observations, "__iter__"):
+            observations = (observations,)
+        model_frame = self.frame
+
+        # extract multi-channel model for every non-degenerate component
+        parameters = []
+        update_of = []
+        models = []
+        for i, src in enumerate(self.sources):
+            spectrum = src.spectrum
+            if isinstance(spectrum, ArraySpectrum):
+                params = spectrum.get_parameters(return_info=True)
+                p, info = params["data"]
+                parameters.append((i, src, info))
+                # update source to have flat spectrum
+                if not info["fixed"]:
+                    src = eqx.tree_at(lambda src: src.spectrum.data, src, jnp.ones_like(p))
+
+            # evaluate the model for any source so that fit includes it even if its spectrum is not updated
+            model = self._eval_src_in_frame(src)  # assumes all sources are single components
+
+            # check for models with identical initializations, see scarlet repo issue #282
+            # if duplicate: remove morph[k] from linear fit, but keep track of parameters[k]
+            # to set spectrum later: update_of: component index -> updated spectrum index
+            K_ = len(models)
+            update_of.append(K_)
+            for l in range(K_):
+                if jnp.allclose(model, models[l]):
+                    update_of[-1] = l
+                    message = f"Source {i} has a model identical to another source.\n"
+                    message += "This is likely not intended, and the source should be deleted. "
+                    message += "Spectra will be identical."
+                    print(message)
+            if update_of[-1] == K_:
+                models.append(model)
+        models = jnp.array(models)
+        K_ = len(models)
+
+        for obs in observations:
+            # independent channels, no mixing
+            # solve the linear inverse problem of the amplitudes in every channel
+            # given all the rendered morphologies
+            # spectrum = (M^T Sigma^-1 M)^-1 M^T Sigma^-1 * im
+            C = obs.frame.C
+            images = obs.data
+            weights = obs.weights
+            morphs = jnp.stack([obs.render(model) for model in models], axis=0)
+            spectra = jnp.zeros((K_, C))
+            for c in range(C):
+                im = images[c].reshape(-1)
+                w = weights[c].reshape(-1)
+                m = morphs[:, c, :, :].reshape(K_, -1)
+                mw = m * w[None, :]
+                # check if all components have nonzero flux in c.
+                # because of convolutions, flux can be outside the box,
+                # so we need to compare weighted flux with unweighted flux,
+                # which is the same (up to a constant) for constant weights.
+                # so we check if *most* of the flux is from pixels with non-zero weight
+                nonzero = jnp.sum(mw, axis=1) / jnp.sum(m, axis=1) / jnp.mean(w) > 0.1
+                nonzero = jnp.flatnonzero(nonzero)
+                if len(nonzero) == K_:
+                    covar = jnp.linalg.inv(mw @ m.T)
+                    spectra = spectra.at[:, c].set(covar @ m @ (im * w))
+                else:
+                    covar = jnp.linalg.inv(mw[nonzero] @ m[nonzero].T)
+                    spectra = spectra.at[nonzero, c].set(covar @ m[nonzero] @ (im * w))
+
+            # update the parameters with the best-fit spectrum solution
+            channel_map = ChannelRenderer(self.frame, obs.frame).channel_map
+            noise_bg = 1 / jnp.median(jnp.sqrt(obs.weights), axis=(-2, -1))
+            for k, (i, src, info) in enumerate(parameters):
+                if not info["fixed"]:
+                    l = update_of[k]
+                    p = src.spectrum.data.at[channel_map].set(spectra[l])
+                    p = jnp.maximum(p, noise_bg)  # faint galaxy can have erratic solution, set them to noise_bg
+                    self.sources[i] = eqx.tree_at(lambda src: src.spectrum.data, src, p)
 
 def _constraint_replace(self, parameters, inv=False):
     # replace any parameter with constraints into unconstrained ones by calling constraint_fns

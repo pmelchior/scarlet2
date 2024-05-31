@@ -12,7 +12,7 @@ class ArrayPSF(PSF):
     morphology: jnp.ndarray
 
     def __call__(self):
-        return self.morphology / self.morphology.sum()
+        return self.morphology / self.morphology.sum((-2,-1), keepdims=True)
 
 
 class GaussianPSF(PSF):
@@ -23,5 +23,5 @@ class GaussianPSF(PSF):
 
     def __call__(self):
         morph = self.morphology()
-        morph /= morph.sum()
+        morph /= morph.sum((-2,-1), keepdims=True)
         return morph

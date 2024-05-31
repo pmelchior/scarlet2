@@ -2,10 +2,11 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax
 
-from .fft import convolve, deconvolve, _get_fast_shape, transform, inverse
+from .fft import convolve, deconvolve, _get_fast_shape, transform, good_fft_size, _trim
 
-from .interpolation import resample2d
+from .interpolation import resample_ops
 
+from .fft import wrap_hermitian_x
 
 class Renderer(eqx.Module):
     def __call__(
@@ -70,6 +71,7 @@ class ConvolutionRenderer(Renderer):
             psf_model = jnp.tile(psf, (obs_frame.bbox.shape[0], 1, 1))
         else:
             psf_model = psf
+        
         # make sure fft uses a shape large enough to cover the convolved model
         fft_shape = _get_fast_shape(
             model_frame.bbox.shape, psf_model.shape, padding=3, axes=(-2, -1)
@@ -88,132 +90,153 @@ class ConvolutionRenderer(Renderer):
     def __call__(self, model, key=None):
         return convolve(model, self._diff_kernel_fft, axes=(-2, -1))
 
+"""
+Preprocess:
+    - padd img, psf_in and psf_out on the according goodfftsize
+    - return kimages
 
-class KDeconvRenderer(Renderer):
+Resample:
+    - resample the three kimages on the target kgrid
+    - return these kimages
+
+Postprocess:
+    - Deconvolve model PSF and convolve obs PSF in Fourier space
+    - kwrapping
+    - ifft and cropping to obs frame
+"""
+
+class PreprocessMultiresRenderer(Renderer):
     """
-    Perform decovolution in Fourier space and return the Fourier decovolved
-    model
-    """
-
-    def __init__(self, model_frame, padding=None):
-
-        if padding == None:
-            # use 4 times padding
-            pad_factor = 4
-            padding = pad_factor * max(
-                model_frame.bbox.shape[1], model_frame.bbox.shape[2]
-            )
-        object.__setattr__(self, "_pad_size", padding)
-
-        # create PSF model
-        psf = model_frame.psf()
-        if len(psf.shape) == 2:  # only one image for all bands
-            psf_model = jnp.tile(psf, (model_frame.bbox.shape[0], 1, 1))
-        else:
-            psf_model = psf
-        object.__setattr__(self, "_psf_model", psf_model)
-
-    def __call__(self, model, key=None):
-        psf_model = self._psf_model
-        fft_shape = _get_fast_shape(
-            model.shape, psf_model.shape, padding=self._pad_size, axes=(-2, -1)
-        )
-        deconv_ = deconvolve(
-            model, psf_model, axes=(-2, -1), fft_shape=fft_shape, return_fft=True
-        )
-
-        return deconv_
-
-
-class KResampleRenderer(Renderer):
-    """
-    Perform resampling in Fourier space
-
-    Should get as input a Fourier image sampled at the model frame resolution
-    Needs to return a Fourier image sampled at the observation frame resolution
+    Perform padding and Fourier transform of the model image, model psf and
+    observed psf
     """
 
     def __init__(self, model_frame, obs_frame, padding=None):
-        object.__setattr__(self, "_in_res", model_frame.pixel_size)
-        object.__setattr__(self, "_out_res", obs_frame.pixel_size)
 
         if padding == None:
             # use 4 times padding
-            pad_factor = 4
-            padding = pad_factor * max(obs_frame.bbox.shape[1], obs_frame.bbox.shape[2])
+            padding = 4
+        object.__setattr__(self, "_padding", padding)
 
-        # find on what grid we will interpolate
-        fft_out_shape = _get_fast_shape(
-            obs_frame.bbox.shape, obs_frame.psf().shape, padding=padding, axes=(-2, -1)
-        )
-        object.__setattr__(self, "_fft_out_shape", fft_out_shape)
-
-        # compute resolution ratio for flux conservation
-        object.__setattr__(
-            self, "_resolution_ratio", obs_frame.pixel_size / model_frame.pixel_size
-        )
-
-    def __call__(self, kimage, key=None):
-
-        # compute model k-coordinates of the fourier input image
-        ky_in = jnp.linspace(-0.5, 0.5, kimage.shape[1]) / self._in_res
-        kx_in = jnp.linspace(0, 0.5, kimage.shape[1] // 2 + 1) / self._in_res
-
-        ky_out = jnp.linspace(-0.5, 0.5, self._fft_out_shape[0]) / self._out_res
-        kx_out = jnp.linspace(0, 0.5, self._fft_out_shape[0] // 2 + 1) / self._out_res
-
-        kimage = jnp.fft.fftshift(kimage, -2)
-
-        kcoords_in = jnp.stack(jnp.meshgrid(kx_in, ky_in), -1)
-        kcoords_out = jnp.stack(jnp.meshgrid(kx_out, ky_out), -1)
-
-        k_resampled = jax.vmap(resample2d, in_axes=(0, None, None, None))(
-            kimage, kcoords_in, kcoords_out, 3
-        )
-
-        k_resampled = jnp.fft.ifftshift(k_resampled, -2)
-
-        # conserve flux
-        k_resampled = k_resampled * self._resolution_ratio
-
-        return k_resampled
-
-
-class KConvolveRenderer(Renderer):
-    """
-    Convolve with obs PSF and return real image
-    """
-
-    def __init__(self, obs_frame, padding=None):
-        object.__setattr__(self, "_obs_shape", obs_frame.bbox.shape)
-
-        if padding == None:
-            # use 4 times padding
-            pad_factor = 4
-            padding = pad_factor * max(obs_frame.bbox.shape[1], obs_frame.bbox.shape[2])
-        object.__setattr__(self, "_pad_size", padding)
-
-        # get PSF from obs
-        psf = obs_frame.psf()
-        if len(psf.shape) == 2:  # only one image for all bands
-            psf_model = jnp.tile(psf, (obs_frame.bbox.shape[0], 1, 1))
-        else:
-            psf_model = psf
+        # create PSF model
+        psf_model = model_frame.psf()
+        
+        if len(psf_model.shape) == 2:  # only one image for all bands
+            psf_model = jnp.tile(psf_model, (model_frame.bbox.shape[0], 1, 1))
+        
         object.__setattr__(self, "_psf_model", psf_model)
 
-        fft_out_shape = _get_fast_shape(
-            obs_frame.bbox.shape, obs_frame.psf().shape, padding=padding, axes=(-2, -1)
+        psf_obs = obs_frame.psf()
+
+        object.__setattr__(self, "_psf_obs", psf_obs)
+
+        fft_shape_model_im = good_fft_size(self._padding*max(model_frame.bbox.shape))
+        fft_shape_model_psf = good_fft_size(self._padding*max(psf_model.shape))
+        fft_shape_obs_psf = good_fft_size(self._padding*max(psf_obs.shape))
+
+        object.__setattr__(self, "fft_shape_model_im", fft_shape_model_im)
+        object.__setattr__(self, "fft_shape_model_psf", fft_shape_model_psf)
+        object.__setattr__(self, "fft_shape_obs_psf", fft_shape_obs_psf)
+
+    def __call__(self, model, key=None):
+        psf_model = self._psf_model
+        psf_obs = self._psf_obs
+
+        model_kim = jnp.fft.fftshift(
+            transform(model, (self.fft_shape_model_im, self.fft_shape_model_im), (-2, -1)),
+            (-2))
+        model_kpsf = jnp.fft.fftshift(
+            transform(psf_model, (self.fft_shape_model_psf, self.fft_shape_model_psf), (-2, -1)),
+            (-2))
+        obs_kpsf = jnp.fft.fftshift(
+            transform(psf_obs, (self.fft_shape_obs_psf, self.fft_shape_obs_psf), (-2, -1)),
+            (-2))
+
+        return model_kim, model_kpsf, obs_kpsf
+    
+class ResamplingMultiresRenderer(Renderer):
+    """
+    Perform the interpolation of the model, model psf and obs psf on the same
+    target grid
+    """
+
+    def __init__(self, model_frame, obs_frame, padding=None):
+        
+        if padding == None:
+            # use 4 times padding
+            padding = 4
+        object.__setattr__(self, "_padding", padding)
+
+        fft_shape_model_im = good_fft_size(self._padding*max(model_frame.bbox.shape))
+        fft_shape_model_psf = good_fft_size(self._padding*max(model_frame.psf().shape))
+        fft_shape_obs_psf = good_fft_size(self._padding*max(obs_frame.psf().shape))
+
+        # getting the smallest grid to perform the interpolation
+        # odd shape is required for k-wrapping later
+        fft_shape_target = min(fft_shape_model_im, fft_shape_model_psf, fft_shape_obs_psf) + 1
+        object.__setattr__(self, "fft_shape_target", fft_shape_target)
+
+        object.__setattr__(self, "res_in", model_frame.pixel_size)
+        object.__setattr__(self, "res_out", obs_frame.pixel_size)
+
+    def __call__(self, kimages, key=None):
+
+        model_kim, model_kpsf, obs_kpsf = kimages
+
+        model_kim_interp = resample_ops(model_kim, model_kim.shape[-2], 
+                                        self.fft_shape_target, self.res_in, self.res_out)
+
+        model_kpsf_interp = resample_ops(model_kpsf, model_kpsf.shape[-2], 
+                                        self.fft_shape_target, self.res_in, self.res_out)
+        
+        obs_kpsf_interp = resample_ops(obs_kpsf, obs_kpsf.shape[-2], 
+                                        self.fft_shape_target, self.res_out, self.res_out)
+        
+        return model_kim_interp, model_kpsf_interp, obs_kpsf_interp
+    
+
+class PostprocessMultiresRenderer(Renderer):
+    def __init__(self, model_frame, obs_frame, padding=None):
+        if padding == None:
+            # use 4 times padding
+            padding = 4
+        object.__setattr__(self, "_padding", padding)
+
+        fft_shape_model_im = good_fft_size(self._padding*max(model_frame.bbox.shape))
+        fft_shape_model_psf = good_fft_size(self._padding*max(model_frame.psf().shape))
+        fft_shape_obs_psf = good_fft_size(self._padding*max(obs_frame.psf().shape))
+        object.__setattr__(self, "real_shape_target", obs_frame.bbox.shape)
+        
+        # getting the smallest grid to perform the interpolation
+        # odd shape is required for k-wrapping later
+        fft_shape_target = min(fft_shape_model_im, fft_shape_model_psf, fft_shape_obs_psf) + 1
+        object.__setattr__(self, "fft_shape_target", fft_shape_target)
+
+    def __call__(self, kimages, key=None):
+
+        model_kim, model_kpsf, obs_kpsf = kimages
+
+        kimage_final = model_kim / model_kpsf * obs_kpsf
+        
+        kimage_final_wrap = jax.vmap(wrap_hermitian_x, in_axes=(0, None, None, None, None, None, None))(
+                            kimage_final,
+                            -self.fft_shape_target//2,
+                            -self.fft_shape_target//2,
+                            -self.fft_shape_target//2+1,
+                            -self.fft_shape_target//2,
+                            self.fft_shape_target-1,
+                            self.fft_shape_target-1
         )
-        object.__setattr__(self, "_fft_out_shape", fft_out_shape)
 
-    def __call__(self, kimage, key=None):
+        kimage_final_wrap = kimage_final_wrap[:, :-1, :]
+    
+        kimg_shift = jnp.fft.ifftshift(kimage_final_wrap, axes=(-2,))
 
-        # Convolve with obs PSF
+        real_image_arr = jnp.fft.fftshift(
+            jnp.fft.irfft2(kimg_shift, 
+                           [self.fft_shape_target-1, self.fft_shape_target-1], (-2, -1)), (-2, -1)
+        )
 
-        kpsf = transform(self._psf_model, self._fft_out_shape, (-2, -1))
+        img_trimed = _trim(real_image_arr, [real_image_arr.shape[0], self.real_shape_target[-2], self.real_shape_target[-1]])
 
-        kconv = kimage * kpsf
-
-        img = inverse(kconv, self._fft_out_shape, self._obs_shape, axes=(-2, -1))
-
-        return img
+        return img_trimed

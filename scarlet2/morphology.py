@@ -17,8 +17,7 @@ class Morphology(Module):
             center_ = center.value
         else:
             center_ = center
-        center_ = tuple(_.item() for _ in center_.astype(int))
-        self.bbox.set_center(center_)
+        self.bbox.set_center(center_.astype(int))
 
 
 class ArrayMorphology(Morphology):
@@ -68,11 +67,13 @@ class ProfileMorphology(Morphology):
             R2 = _Y[:, None] ** 2 + _X[None, :] ** 2
         else:
             e1, e2 = self.ellipticity
-            __X = ((1 - e1) * _X[None, :] - e2 * _Y[:, None]) / jnp.sqrt(
-                1 - (e1 ** 2 + e2 ** 2)
+            g_factor = 1 / (1. + jnp.sqrt(1. - (e1 ** 2 + e2 ** 2)))
+            g1, g2 = self.ellipticity * g_factor
+            __X = ((1 - g1) * _X[None, :] - g2 * _Y[:, None]) / jnp.sqrt(
+                1 - (g1 ** 2 + g2 ** 2)
             )
-            __Y = (-e2 * _X[None, :] + (1 + e1) * _Y[:, None]) / jnp.sqrt(
-                1 - (e1 ** 2 + e2 ** 2)
+            __Y = (-g2 * _X[None, :] + (1 + g1) * _Y[:, None]) / jnp.sqrt(
+                1 - (g1 ** 2 + g2 ** 2)
             )
             R2 = __Y ** 2 + __X ** 2
 
@@ -91,7 +92,6 @@ class GaussianMorphology(ProfileMorphology):
 
         # faster circular 2D Gaussian: instead of N^2 evaluations, use outer product of 2 1D Gaussian evals
         if self.ellipticity is None:
-
             _Y = jnp.arange(self.bbox.shape[-2]) + self.bbox.origin[-2] - self.center[-2]
             _X = jnp.arange(self.bbox.shape[-1]) + self.bbox.origin[-1] - self.center[-1]
 

@@ -265,7 +265,7 @@ class AsinhAutomaticNorm(AsinhNorm):
             Makes images more vibrant but causes slight color shifts in the highlights.
         """
         if channel_map is None:
-            channel_map = channels_to_rgb(observation.C)
+            channel_map = channels_to_rgb(observation.frame.C)
 
         im3 = img_to_3channel(observation.data, channel_map=channel_map)
         # TODO: need to mask this
@@ -279,7 +279,7 @@ class AsinhAutomaticNorm(AsinhNorm):
         (M,) = np.percentile(I.flatten(), [upper_percentile])
         m = minimum
 
-        # find a good turnover point for arcshinh: ~noise level
+        # find a good turnover point for arcsinh: ~noise level
         rms = np.median(np.sqrt(V))
         beta = rms * noise_level
 
@@ -452,6 +452,10 @@ def cut_square_box(arr, center, size):
     Returns:
     numpy.ndarray: The square box extracted from the input array.
     """
+
+    # get the dimensions of the data 
+    obsDim = arr.ndim 
+
     row_center, col_center = center
     #col_center, row_center = center
     half_size = size // 2
@@ -464,23 +468,41 @@ def cut_square_box(arr, center, size):
 
     # Ensure the indices are within the array bounds
     start_row = max(0, start_row)
-    end_row = min(arr.shape[0], end_row)
     start_col = max(0, start_col)
-    end_col = min(arr.shape[1], end_col)
+    if obsDim==2:
+        end_row = min(arr.shape[0], end_row)
+        end_col = min(arr.shape[1], end_col)
+    else:
+        end_row = min(arr.shape[1], end_row)
+        end_col = min(arr.shape[2], end_col)
 
     # Cut out the square box
-    square_box = arr[start_row:end_row, start_col:end_col]
-    
+    if obsDim==2:
+        square_box = arr[start_row:end_row, start_col:end_col]
+    else:
+        square_box = arr[:, start_row:end_row, start_col:end_col]
+
     # pad array up if needed (ie box outside array bounds)
-    if square_box.shape[0] < size or square_box.shape[1] < size:
+    pad = False
+    if obsDim==2:
+        if square_box.shape[0] < size or square_box.shape[1] < size:
+            pad_low = size - square_box.shape[0]
+            pad_high = size - square_box.shape[1]
+            pad = True
+    else:
+        if square_box.shape[1] < size or square_box.shape[2] < size:
+            pad_low = size - square_box.shape[1]
+            pad_high = size - square_box.shape[2]
+            pad = True
+
+    # perform the padding
+    if pad == True:
         # If the square box is not the correct size, pad it with zeros
-        pad_low = size - square_box.shape[0]
-        pad_high = size - square_box.shape[1]
         if pad_low < 0:
             pad_low = 0
         if pad_high < 0:
             pad_high = 0
-        if len(arr.shape) <= 2:
+        if obsDim <= 2:
             square_box = np.pad(square_box, ((pad_low, 0), (pad_high, 0)), 
                             mode="constant", constant_values=0)
         else:
