@@ -287,7 +287,10 @@ class Scene(Module):
                 if not info["fixed"]:
                     l = update_of[k]
                     p = src.spectrum.data.at[channel_map].set(spectra[l])
-                    p = jnp.maximum(p, noise_bg)  # faint galaxy can have erratic solution, set them to noise_bg
+                    
+                    # faint galaxy can have erratic solution, set them to noise_bg
+                    p.at[channel_map].set(jnp.maximum(p[channel_map], noise_bg))
+                    
                     self.sources[i] = eqx.tree_at(lambda src: src.spectrum.data, src, p)
 
 def _constraint_replace(self, constraint_fn, inv=False):
