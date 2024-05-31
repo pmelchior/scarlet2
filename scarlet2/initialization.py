@@ -53,13 +53,12 @@ def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, 
     last_spectrum = peak_spectrum.copy()
     box2d = Box((min_size, min_size))
     center_pix = obs.frame.get_pixel(center)
-    if not obs.frame.bbox[-2:].contains(center_pix):
+    if not obs.frame.bbox.spatial.contains(center_pix):
         raise ValueError(f"Pixel coordinate expected, got {center_pix}")
     box2d.set_center(center_pix.astype(int))
 
     # increase box size until SNR is below threshold or spectrum changes significantly
-    while max(box2d.shape) < max(obs.data.shape[-2:]):
-        box2d = box2d & obs.frame.bbox[-2:]
+    while max(box2d.shape) < max(obs.frame.bbox.spatial.shape):
         edge_pixels = _get_edge_pixels(obs.data, box2d)
         edge_spectrum = jnp.mean(edge_pixels, axis=-1)
         edge_spectrum /= jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
@@ -76,14 +75,14 @@ def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, 
                     jnp.sqrt(jnp.dot(peak_spectrum, peak_spectrum)) / jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
 
         if spec_corr < min_corr or jnp.any(edge_spectrum > last_spectrum):
-            if box2d.shape[-1] > min_size:
+            if min(box2d.shape) > min_size:
                 box2d = box2d.shrink(delta_size)
             break
 
         box2d = box2d.grow(delta_size)
 
     box = obs.frame.bbox[0] @ box2d
-    return gaussian_morphology(obs, box)
+    return gaussian_morphology(obs, box, center=center_pix)
 
 
 def compact_morphology():
@@ -111,43 +110,66 @@ def compact_morphology():
 def gaussian_morphology(
         obs,
         bbox,
+        center=None,
+        min_value=1e-6,
 ):
     """Create image of a Gaussian from the 2nd moments of the observation in the region of the bounding box.
 
     Parameters
     ----------
     obs : `~scarlet2.Observation`
-    center_pix : tuple
-        central pixel of the sources
+    center : tuple
+        central pixel of the source
     bbox: `~scarlet2.BBox`
         box to cut out source from observation, in pixel coordinates
+    min_value: float
+        minimum pixel value (useful to set to > 0 for positivity constraints)
 
     Returns
     -------
     jnp.array morphology image, normalized to (0,1)
     """
-
     # cut out image from observation
-    cutout_obs = obs.data[bbox.slices]
-    # flatten image across channels
-    # TODO: use spectrum-based detection coadd instead
-    cutout_img = jnp.sum(cutout_obs, axis=0)
-    center = measure.centroid(cutout_img)
+    cutout_img = obs.data[bbox.slices]
+    if center is None:
+        # define reference center, flatten image across channels
+        # TODO: use spectrum-based detection coadd instead
+        center = measure.centroid(cutout_img.sum(axis=0))
+    else:
+        center -= jnp.array(bbox.spatial.origin)
+
+    try:
+        frame = Scenery.scene.frame
+    except AttributeError:
+        print("Adaptive morphology can only be created within the context of a Scene")
+        print("Use 'with Scene(frame) as scene: Source(...)'")
+        raise
+    if frame.psf is None:
+        raise AttributeError("Adaptive morphology can only be create with a PSF in the model frame")
 
     # getting moment measures
-    g = measure.moments(cutout_img, center=center, N=2)
+    g_ = measure.moments(cutout_img, center=center, N=2)
+    p = measure.moments(obs.frame.psf(), N=2)
+    p0 = measure.moments(frame.psf(), N=2)
+    dp = measure.deconvolve(p, p0)
+    g = measure.deconvolve(g_, dp)
+
+    spectrum = g[0, 0].copy()
+    for key in g.keys():
+        g[key] = jnp.median(g[key])  # average across channels
     T = measure.size(g)
     ellipticity = measure.ellipticity(g)
 
     # create image of Gaussian with these 2nd moments
     if jnp.isfinite(center).all() and jnp.isfinite(T) and jnp.isfinite(ellipticity).all():
-        center += jnp.array(bbox[-2:].origin)
+        center += jnp.array(bbox.spatial.origin)
         morph = GaussianMorphology(center, T, ellipticity, bbox=bbox)()
+        spectrum /= morph.sum()
+        morph = jnp.maximum(morph, min_value)
     else:
         raise ValueError(
             f"Gaussian morphology not possible with center={center}, size={T}, and ellipticity={ellipticity}!")
-
-    return morph
+    return spectrum, morph
 
 
 # initialise the spectrum
@@ -186,16 +208,30 @@ def pixel_spectrum(observations, pos, correct_psf=False):
     for obs in observations:
         pixel = obs.frame.get_pixel(pos).astype(int)
 
-        if not obs.frame.bbox[-2:].contains(pixel):
+        if not obs.frame.bbox.spatial.contains(pixel):
             raise ValueError(f"Pixel coordinate expected, got {pixel}")
 
         spectrum = obs.data[:, pixel[0], pixel[1]].copy()
 
         if correct_psf and obs.frame.psf is not None:
+
+            try:
+                frame = Scenery.scene.frame
+            except AttributeError:
+                print("Adaptive morphology can only be created within the context of a Scene")
+                print("Use 'with Scene(frame) as scene: Source(...)'")
+                raise
+            if frame.psf is None:
+                raise AttributeError("Adaptive morphology can only be create with a PSF in the model frame")
+
             # correct spectrum for PSF-induced change in peak pixel intensity
             psf_model = obs.frame.psf()
-            psf_peak = psf_model.max(axis=(1, 2))
-            spectrum /= psf_peak
+            psf_peak = psf_model.max(axis=(-2, -1))
+
+            psf0_model = frame.psf()
+            psf0_peak = psf0_model.max(axis=(-2, -1))
+
+            spectrum /= psf_peak / psf0_peak
 
         if jnp.any(spectrum <= 0):
             # If the flux in all channels is  <=0,
