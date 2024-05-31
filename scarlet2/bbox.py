@@ -112,6 +112,12 @@ class Box(eqx.Module):
         """
         return tuple([slice(o, o + s) for o, s in zip(self.origin, self.shape)])
 
+    @property
+    def spatial(self):
+        """Spatial component of higher-dimensional box"""
+        assert self.D >= 2
+        return self[-2:]
+
     def set_center(self, pos):
         """Center box at given position
         """
