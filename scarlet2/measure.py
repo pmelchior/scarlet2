@@ -1,7 +1,7 @@
 import numpy as jnp
 import numpy.ma as ma
 
-from .module import Module
+from .source import Component
 
 
 def max_pixel(component):
@@ -12,47 +12,54 @@ def max_pixel(component):
     component: `scarlet.Component` or array
         Component to analyze or its hyperspectral model
     """
-    if isinstance(component, Module):
+    if isinstance(component, Component):
         model = component()
-        origin = component.bbox.origin
+        origin = jnp.array(component.bbox.origin)
     else:
         model = component
         origin = 0
 
-    return tuple(jnp.array(jnp.unravel_index(jnp.argmax(model), model.shape)) + origin)
+    return jnp.array(jnp.unravel_index(jnp.argmax(model), model.shape)) + origin
 
 
 def flux(component):
-    """Determine flux in every channel
+    """Determine total flux in every channel
 
     Parameters
     ----------
     component: `scarlet.Component` or array
         Component to analyze or its hyperspectral model
     """
-    if isinstance(component, Module):
+    if isinstance(component, Component):
         model = component()
     else:
         model = component
 
-    return model.sum(axis=(1, 2))
+    return model.sum(axis=(-2, -1))
 
 
 def centroid(component):
-    """Determine centroid of model
+    """Determine spatial centroid of model
 
     Parameters
     ----------
     component: `scarlet2.Component` or array
         Component to analyze or its hyperspectral model
     """
-    if isinstance(component, Module):
+    if isinstance(component, Component):
         model = component()
+        origin = jnp.array(component.bbox.spatial.origin)
     else:
         model = component
-    indices = jnp.indices(model.shape)
-    centroid = jnp.array([jnp.sum(ind * model) for ind in indices]) / model.sum()
-    return centroid
+        origin = 0, 0
+
+    grid_y, grid_x = jnp.indices(model.shape[-2:])
+    if len(model.shape) == 3:
+        grid_y = grid_y[None, :, :]
+        grid_x = grid_x[None, :, :]
+    f = flux(model)
+    c = (grid_y * model).sum(axis=(-2, -1)) / f + origin[0], (grid_x * model).sum(axis=(-2, -1)) / f + origin[1]
+    return jnp.array(c)
 
 
 def snr(component, observations):
@@ -117,7 +124,7 @@ def moments(component, N=2, center=None, weight=None):
     weight: array
         weight function with same shape as `component`
     """
-    if isinstance(component, Module):
+    if isinstance(component, Component):
         model = component()
     else:
         model = component
@@ -127,23 +134,33 @@ def moments(component, N=2, center=None, weight=None):
     else:
         assert model.shape == weight.shape
 
-    if center is None:
-        center = centroid(model)
-
-    grid_x, grid_y = jnp.indices(model.shape[-2:], dtype=jnp.float64)
-    if len(model.shape) == 3:
+    grid_y, grid_x = jnp.indices(model.shape[-2:])
+    if model.ndim == 3:
         grid_y = grid_y[None, :, :]
         grid_x = grid_x[None, :, :]
-    grid_y -= center[0]
-    grid_x -= center[1]
 
     M = dict()
     for n in range(N + 1):
         for m in range(n + 1):
             # moments ordered by power in y, then x
-            M[m, n - m] = (grid_y ** m * grid_x ** (n - m) * model * weight).sum(
-                axis=(-2, -1)
-            )
+            M[m, n - m] = (grid_y ** m * grid_x ** (n - m) * model * weight).sum(axis=(-2, -1))
+
+        if n == 1:
+            # shift grid to produce centered moments
+            if center is None:
+                center = M[1, 0] / M[0, 0], M[0, 1] / M[0, 0]  # centroid
+                M[1, 0] = jnp.zeros_like(M[1, 0])
+                M[0, 1] = jnp.zeros_like(M[0, 1])
+            else:
+                center = jnp.asarray(center)
+                # centroid wrt given center
+                M[1, 0] -= center[0] * M[0, 0]
+                M[0, 1] -= center[1] * M[0, 0]
+            if model.ndim == 3 and center[0].ndim == 1:
+                center = center[0][:, None, None], center[1][:, None, None]
+            grid_y = grid_y - center[0]
+            grid_x = grid_x - center[1]
+
     return M
 
 
@@ -154,8 +171,8 @@ def size(moments):
     ----------
     moments: moment dictionary from moments()
     """
-    flux = moments[(0, 0)]
-    T = (moments[(0, 2)] / flux * moments[(2, 0)] / flux - (moments[(1, 1)] / flux) ** 2) ** (1 / 4)
+    flux = moments[0, 0]
+    T = (moments[0, 2] / flux * moments[2, 0] / flux - (moments[1, 1] / flux) ** 2) ** (1 / 4)
     return T
 
 
@@ -170,7 +187,7 @@ def ellipticity(moments):
     --------
     jnp.array
     """
-    ellipticity = (moments[(2, 0)] - moments[(0, 2)] + 2j * moments[(1, 1)]) / (moments[(2, 0)] + moments[(0, 2)])
+    ellipticity = (moments[0, 2] - moments[2, 0] + 2j * moments[1, 1]) / (moments[2, 0] + moments[0, 2])
     return jnp.array((ellipticity.real, ellipticity.imag))
 
 
@@ -187,24 +204,27 @@ def binomial(n, k):
     return result
 
 
+def order(moments):
+    return max(key[0] for key in moments.keys())
+
+
 # moments of the Gaussian
 def deconvolve(g, p):
     """Deconvolve moments of a Gaussian from moments of a general distribution"""
 
-    # Hard code as 2 for now
-    Nmin = 2  # min(p.shape[0], g.shape[0])
+    Nmin = min(order(p), order(g))
 
     # use explicit relations for up to 2nd moments
-    g[(0, 0)] /= p[(0, 0)]
+    g[0, 0] /= p[0, 0]
     if Nmin >= 1:
-        g[(0, 1)] -= g[(0, 0)] * p[(0, 1)]
-        g[(1, 0)] -= g[(0, 0)] * p[(1, 0)]
-        g[(0, 1)] /= p[(0, 0)]
-        g[(1, 0)] /= p[(0, 0)]
+        g[0, 1] -= g[0, 0] * p[0, 1]
+        g[1, 0] -= g[0, 0] * p[1, 0]
+        g[0, 1] /= p[0, 0]
+        g[1, 0] /= p[0, 0]
         if Nmin >= 2:
-            g[(0, 2)] -= g[(0, 0)] * p[(0, 2)] + 2 * g[(0, 1)] * p[(0, 1)]
-            g[(1, 1)] -= g[(0, 0)] * p[(1, 1)] + g[(0, 1)] * p[(1, 0)] + g[(1, 0)] * p[(0, 1)]
-            g[(2, 0)] -= g[(0, 0)] * p[(2, 0)] + 2 * g[(1, 0)] * p[(1, 0)]
+            g[0, 2] -= g[0, 0] * p[0, 2] + 2 * g[0, 1] * p[0, 1]
+            g[1, 1] -= g[0, 0] * p[1, 1] + g[0, 1] * p[1, 0] + g[1, 0] * p[0, 1]
+            g[2, 0] -= g[0, 0] * p[2, 0] + 2 * g[1, 0] * p[1, 0]
             if Nmin >= 3:
                 # use general formula
                 for n in range(3, Nmin + 1):
@@ -212,16 +232,16 @@ def deconvolve(g, p):
                         for j in range(n - i):
                             for k in range(i):
                                 for l in range(j):
-                                    g[(i, j)] -= (
-                                        binomial(i, k)
-                                        * binomial(j, l)
-                                        * g[k, l]
-                                        * p[i - k, j - l]
+                                    g[i, j] -= (
+                                            binomial(i, k)
+                                            * binomial(j, l)
+                                            * g[k, l]
+                                            * p[i - k, j - l]
                                     )
                             for k in range(i):
-                                g[(i, j)] -= binomial(i, k) * g[k, j] * p[i - k, 0]
+                                g[i, j] -= binomial(i, k) * g[k, j] * p[i - k, 0]
                             for l in range(j):
-                                g[(i, j)] -= binomial(j, l) * g[i, l] * p[0, j - l]
-                    g[(i, j)] /= p[(0, 0)]
+                                g[i, j] -= binomial(j, l) * g[i, l] * p[0, j - l]
+                    g[i, j] /= p[0, 0]
 
     return g
