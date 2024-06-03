@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from . import Scenery
 from .bbox import overlap_slices
 from .frame import Frame
-from .module import Module, rgetattr
+from .module import Module, Parameters
 from .renderer import ChannelRenderer
 from .spectrum import ArraySpectrum
 
@@ -17,7 +17,6 @@ class Scene(Module):
     def __init__(self, frame):
         self.frame = frame
         self.sources = list()
-        super().__post_init__()
 
     def __call__(self):
         model = jnp.zeros(self.frame.bbox.shape)
@@ -46,7 +45,7 @@ class Scene(Module):
     def __exit__(self, exc_type, exc_value, traceback):
         Scenery.scene = None
 
-    def sample(self, observations, num_warmup=50, num_samples=100, **kwargs):
+    def sample(self, observations, parameters, num_warmup=50, num_samples=100, **kwargs):
         # uses numpyro NUTS on all non-fixed parameters
         # requires that those have priors set
         try:
@@ -82,8 +81,7 @@ class Scene(Module):
                 return self.obs._log_likelihood(self.model, value)
 
         # find all non-fixed parameters and their priors
-        parameters = self.get_parameters(return_info=True)
-        priors = {name: info["prior"] for name, (p, info) in parameters.items()}
+        priors = {p.name: p.prior for p in parameters}
         has_none = any(prior is None for prior in priors.values())
         if has_none:
             from pprint import pformat
@@ -93,9 +91,8 @@ class Scene(Module):
         # define the pyro model, where every parameter becomes a sample,
         # and the observations sample from their likelihood given the rendered model
         def pyro_model(model, obs=None):
-            names = tuple(priors.keys())
-            samples = tuple(numpyro.sample(name, prior) for name, prior in priors.items())
-            model = model.replace(names, samples)
+            samples = tuple(numpyro.sample(p.name, p.prior) for p in parameters)
+            model = model.replace(parameters, samples)
             pred = model()  # create prediction once for all observations
             # dealing with multiple observations
             if not isinstance(observations, (list, tuple)):
@@ -111,7 +108,8 @@ class Scene(Module):
         mcmc.run(rng_key, self, obs=observations)
         return mcmc
 
-    def fit(self, observations, schedule=None, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None, **kwargs):
+    def fit(self, observations, parameters, schedule=None, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None,
+            **kwargs):
         # optax fit with adam optimizer
         # Transforms constrained parameters into unconstrained ones
         # and filters out fixed parameters
@@ -124,18 +122,14 @@ class Scene(Module):
         except ImportError:
             raise ImportError("scarlet2.Scene.fit() requires optax and numpyro.")
 
-        # dealing with multiple observations
+        # making sure we can iterate
         if not isinstance(observations, (list, tuple)):
             observations = (observations,)
-        else:
-            observations = observations
+        assert isinstance(parameters, Parameters)
 
-        # get step sizes for each parameter
-        parameters = self.get_parameters(return_info=True)
-        stepsizes = {name: info["stepsize"] for name, (p, info) in parameters.items()}
         # make a stepsize tree
-        where = lambda model: tuple(rgetattr(model, n) for n in stepsizes.keys())
-        replace = tuple(stepsizes.values())
+        where = lambda model: model.get(parameters)
+        replace = tuple(p.stepsize for p in parameters)
         steps = eqx.tree_at(where, self, replace=replace)
 
         def scale_by_stepsize() -> base.GradientTransformation:
@@ -159,17 +153,15 @@ class Scene(Module):
         # run adam, followed by stepsize adjustments
         optim = optax.chain(
             optax.scale_by_adam(**kwargs),
-            optax.scale_by_schedule(schedule if callable(schedule) else lambda x: 1 ),
+            optax.scale_by_schedule(schedule if callable(schedule) else lambda x: 1),
             scale_by_stepsize(),
         )
 
         # transform to unconstrained parameters
-        constraint_fn = {name: biject_to(info["constraint"]) for name, (value, info) in parameters.items() if
-                         info["constraint"] is not None}
-        scene = _constraint_replace(self, constraint_fn, inv=True)
+        scene = _constraint_replace(self, parameters, inv=True)
 
-        # get optimizer initialized with the filtered (=non-fixed) parameters
-        filter_spec = self.filter_spec
+        # get optimizer initialized with the optimization parameters
+        filter_spec = self.get_filter_spec(parameters)
         if filter_spec is None:
             opt_state = optim.init(scene)
         else:
@@ -178,17 +170,16 @@ class Scene(Module):
         with tqdm.trange(max_iter, disable=not progress_bar) as t:
             for step in t:
                 # optimizer step
-                scene, loss, opt_state, convergence = _make_step(scene, observations, optim, opt_state,
-                                                                 filter_spec=filter_spec,
-                                                                 constraint_fn=constraint_fn)
+                scene, loss, opt_state, convergence = _make_step(scene, observations, parameters, optim, opt_state,
+                                                                 filter_spec=filter_spec)
 
                 # compute max change across all non-fixed parameters for convergence test
                 max_change = jax.tree_util.tree_reduce(lambda a, b: max(a, b), convergence)
 
                 # report current iteration results to callback
                 if callback is not None:
-                    if constraint_fn is not None:
-                        scene_ = _constraint_replace(scene, constraint_fn)
+                    if constraint_fns is not None:
+                        scene_ = _constraint_replace(scene, parameters)
                     else:
                         scene_ = scene
                     callback(scene_, convergence, loss)
@@ -200,9 +191,9 @@ class Scene(Module):
                 if max_change < e_rel:
                     break
 
-        return _constraint_replace(scene, constraint_fn)  # transform back to constrained variables
+        return _constraint_replace(scene, parameters)  # transform back to constrained variables
 
-    def set_spectra_to_match(self, observations):
+    def set_spectra_to_match(self, observations, parameters):
         """Sets the spectra of every source in the scene to match the observations.
 
         Computes the best-fit amplitude of the rendered model of all components in every
@@ -215,41 +206,34 @@ class Scene(Module):
 
         if not hasattr(observations, "__iter__"):
             observations = (observations,)
-        model_frame = self.frame
 
-        # extract multi-channel model for every non-degenerate component
-        parameters = []
-        update_of = []
+        # extract multi-channel model for every source
+        spectrum_parameters = []
         models = []
         for i, src in enumerate(self.sources):
-            spectrum = src.spectrum
-            if isinstance(spectrum, ArraySpectrum):
-                params = spectrum.get_parameters(return_info=True)
-                p, info = params["data"]
-                parameters.append((i, src, info))
-                # update source to have flat spectrum
-                if not info["fixed"]:
-                    src = eqx.tree_at(lambda src: src.spectrum.data, src, jnp.ones_like(p))
+            if isinstance(src.spectrum, ArraySpectrum):
+                # search for spectrum.data in parameters
+                for p in parameters:
+                    if p.node is src.spectrum.data:
+                        spectrum_parameters.append(i)
+                        # update source to have flat spectrum
+                        src = eqx.tree_at(lambda src: src.spectrum.data, src, jnp.ones_like(p.node))
+                        break
 
             # evaluate the model for any source so that fit includes it even if its spectrum is not updated
             model = self._eval_src_in_frame(src)  # assumes all sources are single components
 
             # check for models with identical initializations, see scarlet repo issue #282
-            # if duplicate: remove morph[k] from linear fit, but keep track of parameters[k]
-            # to set spectrum later: update_of: component index -> updated spectrum index
-            K_ = len(models)
-            update_of.append(K_)
-            for l in range(K_):
+            # if duplicate: raise ValueError
+            for l in range(len(models)):
                 if jnp.allclose(model, models[l]):
-                    update_of[-1] = l
-                    message = f"Source {i} has a model identical to another source.\n"
-                    message += "This is likely not intended, and the source should be deleted. "
-                    message += "Spectra will be identical."
-                    print(message)
-            if update_of[-1] == K_:
-                models.append(model)
+                    message = f"Source {i} has a model identical to source {l}.\n"
+                    message += "This is likely not intended, and the second source should be deleted."
+                    raise ValueError(message)
+            models.append(model)
+
         models = jnp.array(models)
-        K_ = len(models)
+        K = len(models)
 
         for obs in observations:
             # independent channels, no mixing
@@ -260,11 +244,11 @@ class Scene(Module):
             images = obs.data
             weights = obs.weights
             morphs = jnp.stack([obs.render(model) for model in models], axis=0)
-            spectra = jnp.zeros((K_, C))
+            spectra = jnp.zeros((K, C))
             for c in range(C):
                 im = images[c].reshape(-1)
                 w = weights[c].reshape(-1)
-                m = morphs[:, c, :, :].reshape(K_, -1)
+                m = morphs[:, c, :, :].reshape(K, -1)
                 mw = m * w[None, :]
                 # check if all components have nonzero flux in c.
                 # because of convolutions, flux can be outside the box,
@@ -273,7 +257,7 @@ class Scene(Module):
                 # so we check if *most* of the flux is from pixels with non-zero weight
                 nonzero = jnp.sum(mw, axis=1) / jnp.sum(m, axis=1) / jnp.mean(w) > 0.1
                 nonzero = jnp.flatnonzero(nonzero)
-                if len(nonzero) == K_:
+                if len(nonzero) == K:
                     covar = jnp.linalg.inv(mw @ m.T)
                     spectra = spectra.at[:, c].set(covar @ m @ (im * w))
                 else:
@@ -283,48 +267,43 @@ class Scene(Module):
             # update the parameters with the best-fit spectrum solution
             channel_map = ChannelRenderer(self.frame, obs.frame).channel_map
             noise_bg = 1 / jnp.median(jnp.sqrt(obs.weights), axis=(-2, -1))
-            for k, (i, src, info) in enumerate(parameters):
-                if not info["fixed"]:
-                    l = update_of[k]
-                    p = src.spectrum.data.at[channel_map].set(spectra[l])
-                    p = jnp.maximum(p, noise_bg)  # faint galaxy can have erratic solution, set them to noise_bg
-                    self.sources[i] = eqx.tree_at(lambda src: src.spectrum.data, src, p)
+            for i in spectrum_parameters:
+                src_ = self.sources[i]
+                # faint galaxy can have erratic solution, bound from below by noise_bg
+                v = src_.spectrum.data.at[channel_map].set(jnp.maximum(spectra[i], noise_bg))
+                self.sources[i] = eqx.tree_at(lambda src: src.spectrum.data, src_, v)
 
-def _constraint_replace(self, constraint_fn, inv=False):
-    # replace any parameter with constraints into unconstrained ones by calling constraint_fn
+def _constraint_replace(self, parameters, inv=False):
+    # replace any parameter with constraint into unconstrained ones by calling its constraint bijector
     # return transformed pytree
-    parameters = self.get_parameters(return_info=True)
-    names = tuple(name
-                  for name, (value, info) in parameters.items()
-                  if info["constraint"] is not None
-                  )
-    transform = lambda value, fn: fn(value)
-    inv_transform = lambda value, fn: fn.inv(value)
-    transform = (transform, inv_transform)
-    values = tuple(transform[inv](value, constraint_fn[name])
-                   for name, (value, info) in parameters.items()
-                   if info["constraint"] is not None
-                   )
-    return self.replace(names, values)
+    where_in = lambda model: model.get(parameters)
+    param_values = where_in(self)
+    if not inv:
+        replace = tuple(
+            p.constraint_transform(v) if p.constraint is not None else v for p, v in zip(parameters, param_values))
+    else:
+        replace = tuple(
+            p.constraint_transform.inv(v) if p.constraint is not None else v for p, v in zip(parameters, param_values))
 
+    return eqx.tree_at(where_in, self, replace=replace)
 
 # update step for optax optimizer
 @eqx.filter_jit
-def _make_step(model, observations, optim, opt_state, filter_spec=None, constraint_fn=None):
-
+def _make_step(model, observations, parameters, optim, opt_state, filter_spec=None):
     def loss_fn(model):
-        if constraint_fn is not None:
+        if any(param.constraint is not None for param in parameters):
             # parameters now obey constraints
             # transformation happens in the grad path, so gradients are wrt to unconstrained variables
             # likelihood and prior grads transparently apply the Jacobians of these transformations
-            model = _constraint_replace(model, constraint_fn)
+            model = _constraint_replace(model, parameters)
 
         pred = model()
-        parameters = model.get_parameters(return_info=True)
         log_like = sum(obs.log_likelihood(pred) for obs in observations)
-        log_prior = sum(info["prior"].log_prob(p)
-                        for name, (p, info) in parameters.items()
-                        if info["prior"] is not None
+
+        param_values = model.get(parameters)
+        log_prior = sum(param.prior.log_prob(value)
+                        for param, value in zip(parameters, param_values)
+                        if param.prior is not None
                         )
         return -(log_like + log_prior)
 

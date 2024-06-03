@@ -28,7 +28,7 @@ class Frame(eqx.Module):
 
     @property
     def C(self):
-        return self.bbox.shape[0]
+        return len(self.channels)
 
     @property
     def pixel_size(self):

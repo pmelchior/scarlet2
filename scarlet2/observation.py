@@ -3,7 +3,7 @@ import jax.numpy as jnp
 
 from .bbox import Box
 from .frame import Frame
-from .module import Module, Parameter
+from .module import Module
 from .renderer import (
     Renderer,
     NoRenderer,
@@ -16,22 +16,25 @@ from .renderer import (
 
 
 class Observation(Module):
-    data: jnp.ndarray
-    weights: jnp.ndarray
+    data: jnp.ndarray = eqx.field(static=True)
+    weights: jnp.ndarray = eqx.field(static=True)
     frame: Frame = eqx.field(static=True)
     renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
         # TODO: replace by DataStore class, and make that static
-        self.data = Parameter(jnp.asarray(data), fixed=True)
-        self.weights = Parameter(jnp.asarray(weights), fixed=True)
+        self.data = data
+        self.weights = weights
         if channels is None:
             channels = range(data.shape[0])
         self.frame = Frame(Box(data.shape), psf, wcs, channels)
         if renderer is None:
             renderer = NoRenderer()
         self.renderer = renderer
-        super().__post_init__()
+
+    @property
+    def C(self):
+        return self.frame.C
 
     def render(self, model):
         # render the model in the frame of the observation

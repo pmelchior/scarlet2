@@ -13,9 +13,9 @@ def _get_edge_pixels(img, box):
     box_stop = box.stop
     edge = [
         img[:, box_slices[0], box_start[1]],
-        img[:, box_slices[0], box_stop[1]],
+        img[:, box_slices[0], box_stop[1] - 1],
         img[:, box_start[0], box_slices[1]],
-        img[:, box_stop[0], box_slices[1]],
+        img[:, box_stop[0] - 1, box_slices[1]],
     ]
     return jnp.concatenate(edge, axis=1)
 
@@ -59,6 +59,7 @@ def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, 
 
     # increase box size until SNR is below threshold or spectrum changes significantly
     while max(box2d.shape) < max(obs.data.shape[-2:]):
+        box2d = box2d & obs.frame.bbox[-2:]
         edge_pixels = _get_edge_pixels(obs.data, box2d)
         edge_spectrum = jnp.mean(edge_pixels, axis=-1)
         edge_spectrum /= jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))

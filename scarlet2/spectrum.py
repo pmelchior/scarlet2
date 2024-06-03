@@ -15,7 +15,6 @@ class ArraySpectrum(Spectrum):
 
     def __init__(self, data):
         self.data = data
-        super().__post_init__()
         self.bbox = Box(self.data.shape)
 
     def __call__(self):
@@ -36,7 +35,6 @@ class StaticArraySpectrum(Spectrum):
         self.data = data 
         self.channelindex = jnp.array([filters.index(c[0]) for c in frame.channels])
         self.bbox = Box([len(self.channelindex)])
-        super().__post_init__()
     
     def __call__(self):
         return self.data[self.channelindex]
@@ -52,10 +50,9 @@ class TransientArraySpectrum(Spectrum):
             print("Source can only be created within the context of a Scene")
             print("Use 'with Scene(frame) as scene: Source(...)'")
             raise 
-        self.data = data 
-        self._epochmultiplier = jnp.array([1.0 if c in epochs else 0.0 for c in frame.channels]) 
-        super().__post_init__()
-        self.bbox =  Box(self.data.shape)
+        self.data = data
+        self._epochmultiplier = jnp.array([1.0 if c in epochs else 0.0 for c in frame.channels])
+        self.bbox = Box(self.data.shape)
 
     def __call__(self): 
         return jnp.multiply(self.data,self._epochmultiplier)
