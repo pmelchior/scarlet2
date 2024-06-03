@@ -36,6 +36,10 @@ class Observation(Module):
     def C(self):
         return self.frame.C
 
+    def set_weights(self, weights):
+        object.__setattr__(self, "weights", weights)
+        return self
+    
     def render(self, model):
         # render the model in the frame of the observation
         return self.renderer(model)
@@ -105,3 +109,5 @@ class Observation(Module):
             ), "Renderer does not map model frame to observation frame"
         object.__setattr__(self, "renderer", renderer)
         return self
+
+    

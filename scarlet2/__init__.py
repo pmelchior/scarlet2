@@ -15,3 +15,4 @@ from .psf import PSF, ArrayPSF, GaussianPSF
 from .scene import Scene
 from .source import Component, DustComponent, Source, PointSource
 from .spectrum import Spectrum, ArraySpectrum, StaticArraySpectrum, TransientArraySpectrum
+from .wavelets import Starlet
