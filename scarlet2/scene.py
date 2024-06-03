@@ -193,7 +193,7 @@ class Scene(Module):
 
         return _constraint_replace(scene, parameters)  # transform back to constrained variables
 
-    def set_spectra_to_match(self, observations):
+    def set_spectra_to_match(self, observations, parameters):
         """Sets the spectra of every source in the scene to match the observations.
 
         Computes the best-fit amplitude of the rendered model of all components in every
@@ -206,41 +206,34 @@ class Scene(Module):
 
         if not hasattr(observations, "__iter__"):
             observations = (observations,)
-        model_frame = self.frame
 
-        # extract multi-channel model for every non-degenerate component
-        parameters = []
-        update_of = []
+        # extract multi-channel model for every source
+        spectrum_parameters = []
         models = []
         for i, src in enumerate(self.sources):
-            spectrum = src.spectrum
-            if isinstance(spectrum, ArraySpectrum):
-                params = spectrum.get_parameters(return_info=True)
-                p, info = params["data"]
-                parameters.append((i, src, info))
-                # update source to have flat spectrum
-                if not info["fixed"]:
-                    src = eqx.tree_at(lambda src: src.spectrum.data, src, jnp.ones_like(p))
+            if isinstance(src.spectrum, ArraySpectrum):
+                # search for spectrum.data in parameters
+                for p in parameters:
+                    if p.node is src.spectrum.data:
+                        spectrum_parameters.append(i)
+                        # update source to have flat spectrum
+                        src = eqx.tree_at(lambda src: src.spectrum.data, src, jnp.ones_like(p.node))
+                        break
 
             # evaluate the model for any source so that fit includes it even if its spectrum is not updated
             model = self._eval_src_in_frame(src)  # assumes all sources are single components
 
             # check for models with identical initializations, see scarlet repo issue #282
-            # if duplicate: remove morph[k] from linear fit, but keep track of parameters[k]
-            # to set spectrum later: update_of: component index -> updated spectrum index
-            K_ = len(models)
-            update_of.append(K_)
-            for l in range(K_):
+            # if duplicate: raise ValueError
+            for l in range(len(models)):
                 if jnp.allclose(model, models[l]):
-                    update_of[-1] = l
-                    message = f"Source {i} has a model identical to another source.\n"
-                    message += "This is likely not intended, and the source should be deleted. "
-                    message += "Spectra will be identical."
-                    print(message)
-            if update_of[-1] == K_:
-                models.append(model)
+                    message = f"Source {i} has a model identical to source {l}.\n"
+                    message += "This is likely not intended, and the second source should be deleted."
+                    raise ValueError(message)
+            models.append(model)
+
         models = jnp.array(models)
-        K_ = len(models)
+        K = len(models)
 
         for obs in observations:
             # independent channels, no mixing
@@ -251,11 +244,11 @@ class Scene(Module):
             images = obs.data
             weights = obs.weights
             morphs = jnp.stack([obs.render(model) for model in models], axis=0)
-            spectra = jnp.zeros((K_, C))
+            spectra = jnp.zeros((K, C))
             for c in range(C):
                 im = images[c].reshape(-1)
                 w = weights[c].reshape(-1)
-                m = morphs[:, c, :, :].reshape(K_, -1)
+                m = morphs[:, c, :, :].reshape(K, -1)
                 mw = m * w[None, :]
                 # check if all components have nonzero flux in c.
                 # because of convolutions, flux can be outside the box,
@@ -264,7 +257,7 @@ class Scene(Module):
                 # so we check if *most* of the flux is from pixels with non-zero weight
                 nonzero = jnp.sum(mw, axis=1) / jnp.sum(m, axis=1) / jnp.mean(w) > 0.1
                 nonzero = jnp.flatnonzero(nonzero)
-                if len(nonzero) == K_:
+                if len(nonzero) == K:
                     covar = jnp.linalg.inv(mw @ m.T)
                     spectra = spectra.at[:, c].set(covar @ m @ (im * w))
                 else:
@@ -274,22 +267,23 @@ class Scene(Module):
             # update the parameters with the best-fit spectrum solution
             channel_map = ChannelRenderer(self.frame, obs.frame).channel_map
             noise_bg = 1 / jnp.median(jnp.sqrt(obs.weights), axis=(-2, -1))
-            for k, (i, src, info) in enumerate(parameters):
-                if not info["fixed"]:
-                    l = update_of[k]
-                    p = src.spectrum.data.at[channel_map].set(spectra[l])
-                    p = jnp.maximum(p, noise_bg)  # faint galaxy can have erratic solution, set them to noise_bg
-                    self.sources[i] = eqx.tree_at(lambda src: src.spectrum.data, src, p)
+            for i in spectrum_parameters:
+                src_ = self.sources[i]
+                # faint galaxy can have erratic solution, bound from below by noise_bg
+                v = src_.spectrum.data.at[channel_map].set(jnp.maximum(spectra[i], noise_bg))
+                self.sources[i] = eqx.tree_at(lambda src: src.spectrum.data, src_, v)
 
 def _constraint_replace(self, parameters, inv=False):
-    # replace any parameter with constraints into unconstrained ones by calling constraint_fns
+    # replace any parameter with constraint into unconstrained ones by calling its constraint bijector
     # return transformed pytree
     where_in = lambda model: model.get(parameters)
     param_values = where_in(self)
     if not inv:
-        replace = tuple(p.constraint_transform(v) for p, v in zip(parameters, param_values))
+        replace = tuple(
+            p.constraint_transform(v) if p.constraint is not None else v for p, v in zip(parameters, param_values))
     else:
-        replace = tuple(p.constraint_transform.inv(v) for p, v in zip(parameters, param_values))
+        replace = tuple(
+            p.constraint_transform.inv(v) if p.constraint is not None else v for p, v in zip(parameters, param_values))
 
     return eqx.tree_at(where_in, self, replace=replace)
 

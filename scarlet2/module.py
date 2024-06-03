@@ -43,8 +43,8 @@ class Parameter:
             self.name = name
         self.node = node
 
+        self.constraint = constraint
         if constraint is not None:
-            self.constraint = constraint
             try:
                 from numpyro.distributions.transforms import biject_to
             except ImportError:
