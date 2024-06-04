@@ -45,7 +45,7 @@ class Scene(Module):
     def __exit__(self, exc_type, exc_value, traceback):
         Scenery.scene = None
 
-    def sample(self, observations, parameters, seed=0, num_warmup=100, num_samples=200, **kwargs):
+    def sample(self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs):
         # uses numpyro NUTS on all non-fixed parameters
         # requires that those have priors set
         try:
@@ -104,7 +104,7 @@ class Scene(Module):
 
         from numpyro.infer import MCMC, NUTS
         nuts_kernel = NUTS(pyro_model, **kwargs)
-        mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
+        mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, progress_bar=progress_bar)
         rng_key = jax.random.PRNGKey(seed)
         mcmc.run(rng_key, self, obs=observations)
         return mcmc

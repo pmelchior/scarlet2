@@ -37,9 +37,7 @@ def test_quickstart():
                 ArrayMorphology(morph)
             )
 
-    norm = plot.AsinhAutomaticNorm(obs)
-    plot.scene(scene, obs, norm=norm, show_model=True, show_rendered=True, show_observed=True, show_residual=True);
-
+    # fitting
     parameters = scene.make_parameters()
     for i in range(len(scene.sources)):
         parameters += Parameter(scene.sources[i].spectrum.data, name=f"spectrum:{i}", constraint=constraints.positive,
@@ -50,8 +48,21 @@ def test_quickstart():
     maxiter = 200
     scene.set_spectra_to_match(obs, parameters)
     scene_ = scene.fit(obs, parameters, max_iter=maxiter, progress_bar=False)
+
+    # plotting
+    norm = plot.AsinhAutomaticNorm(obs)
     plot.scene(scene_, obs, norm=norm, show_model=True, show_rendered=True, show_observed=True, show_residual=True);
 
+    # sampling
+    import numpyro.distributions as dist
+    from numpyro.infer.initialization import init_to_sample
+    parameters = scene_.make_parameters()
+    p = scene_.sources[0].spectrum.data
+    prior = dist.Normal(p, scale=1)
+    parameters += Parameter(p, name=f"spectrum:0", prior=prior)
+    mcmc = scene_.sample(obs, parameters, num_samples=200, dense_mass=True, init_strategy=init_to_sample,
+                         progress_bar=False)
+    mcmc.print_summary()
 
 if __name__ == "__main__":
     test_quickstart()
