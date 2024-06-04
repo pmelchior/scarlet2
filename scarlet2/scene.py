@@ -94,19 +94,19 @@ class Scene(Module):
 
         # define the pyro model, where every parameter becomes a sample,
         # and the observations sample from their likelihood given the rendered model
-        def pyro_model(model, obs=None):
+        def pyro_model(model):
             samples = tuple(numpyro.sample(p.name, p.prior) for p in parameters)
             model_ = model.replace(parameters, samples)
             pred = model_()  # create prediction once for all observations
             # dealing with multiple observations
-            for i, obs_ in enumerate(obs):
-                numpyro.sample(f'obs.{i}', ObsDistribution(obs_, pred), obs=obs_.data)
+            for i, obs_ in enumerate(observations):
+                numpyro.sample(f"obs.{i}", ObsDistribution(obs_, pred), obs=obs_.data)
 
         from numpyro.infer import MCMC, NUTS
         nuts_kernel = NUTS(pyro_model, **kwargs)
         mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, progress_bar=progress_bar)
         rng_key = jax.random.PRNGKey(seed)
-        mcmc.run(rng_key, self, obs=observations)
+        mcmc.run(rng_key, self)
         return mcmc
 
     def fit(self, observations, parameters, schedule=None, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None,
