@@ -2,7 +2,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax
 
-from .fft import convolve, deconvolve, _get_fast_shape, transform, good_fft_size, _trim
+from .fft import convolve, deconvolve, _get_fast_shape, transform, good_fft_size, _trim, _pad
 
 from .interpolation import resample_ops
 
@@ -122,7 +122,7 @@ class PreprocessMultiresRenderer(Renderer):
         psf_model = model_frame.psf()
         
         if len(psf_model.shape) == 2:  # only one image for all bands
-            psf_model = jnp.tile(psf_model, (model_frame.bbox.shape[0], 1, 1))
+            psf_model = jnp.tile(psf_model, (obs_frame.bbox.shape[0], 1, 1))
         
         object.__setattr__(self, "_psf_model", psf_model)
 
@@ -139,6 +139,7 @@ class PreprocessMultiresRenderer(Renderer):
         object.__setattr__(self, "fft_shape_obs_psf", fft_shape_obs_psf)
 
     def __call__(self, model, key=None):
+
         psf_model = self._psf_model
         psf_obs = self._psf_obs
 
@@ -168,12 +169,11 @@ class ResamplingMultiresRenderer(Renderer):
         object.__setattr__(self, "_padding", padding)
 
         fft_shape_model_im = good_fft_size(self._padding*max(model_frame.bbox.shape))
-        fft_shape_model_psf = good_fft_size(self._padding*max(model_frame.psf().shape))
         fft_shape_obs_psf = good_fft_size(self._padding*max(obs_frame.psf().shape))
 
         # getting the smallest grid to perform the interpolation
         # odd shape is required for k-wrapping later
-        fft_shape_target = min(fft_shape_model_im, fft_shape_model_psf, fft_shape_obs_psf) + 1
+        fft_shape_target = min(fft_shape_model_im, fft_shape_obs_psf) + 1
         object.__setattr__(self, "fft_shape_target", fft_shape_target)
 
         object.__setattr__(self, "res_in", model_frame.pixel_size)
@@ -203,19 +203,17 @@ class PostprocessMultiresRenderer(Renderer):
         object.__setattr__(self, "_padding", padding)
 
         fft_shape_model_im = good_fft_size(self._padding*max(model_frame.bbox.shape))
-        fft_shape_model_psf = good_fft_size(self._padding*max(model_frame.psf().shape))
         fft_shape_obs_psf = good_fft_size(self._padding*max(obs_frame.psf().shape))
         object.__setattr__(self, "real_shape_target", obs_frame.bbox.shape)
         
         # getting the smallest grid to perform the interpolation
         # odd shape is required for k-wrapping later
-        fft_shape_target = min(fft_shape_model_im, fft_shape_model_psf, fft_shape_obs_psf) + 1
+        fft_shape_target = min(fft_shape_model_im, fft_shape_obs_psf) + 1
         object.__setattr__(self, "fft_shape_target", fft_shape_target)
 
     def __call__(self, kimages, key=None):
 
         model_kim, model_kpsf, obs_kpsf = kimages
-
         kimage_final = model_kim / model_kpsf * obs_kpsf
         
         kimage_final_wrap = jax.vmap(wrap_hermitian_x, in_axes=(0, None, None, None, None, None, None))(

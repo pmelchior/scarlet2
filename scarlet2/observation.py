@@ -35,7 +35,7 @@ class Observation(Module):
     @property
     def C(self):
         return self.frame.C
-
+    
     def render(self, model):
         # render the model in the frame of the observation
         return self.renderer(model)
@@ -105,3 +105,5 @@ class Observation(Module):
             ), "Renderer does not map model frame to observation frame"
         object.__setattr__(self, "renderer", renderer)
         return self
+
+    
