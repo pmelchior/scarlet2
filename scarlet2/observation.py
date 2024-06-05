@@ -35,10 +35,6 @@ class Observation(Module):
     @property
     def C(self):
         return self.frame.C
-
-    def set_weights(self, weights):
-        object.__setattr__(self, "weights", weights)
-        return self
     
     def render(self, model):
         # render the model in the frame of the observation
