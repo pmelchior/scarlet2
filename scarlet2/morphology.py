@@ -133,22 +133,35 @@ class SersicMorphology(ProfileMorphology):
         return jnp.exp(-bn * (R2 ** (0.5 / n) - 1))
 
 
-class StarletMorphology(Morphology):
-    coeffs: jnp.array
+prox_plus = lambda x: jnp.maximum(x, 0)
+prox_soft = lambda x, thresh: jnp.sign(x) * prox_plus(jnp.abs(x) - thresh)
+prox_soft_plus = lambda x, thresh: prox_plus(prox_soft(x, thresh))
 
-    def __init__(self, coeffs, bbox=None):
+
+class StarletMorphology(Morphology):
+    coeffs: jnp.ndarray
+    l1_thresh: float = eqx.field(static=True)
+    positive: bool = eqx.field(static=True)
+
+    def __init__(self, coeffs, l1_thresh=1e-2, positive=True, bbox=None):
         if bbox is None:
             # wavelet coeffs: scales x n1 x n2
             bbox = Box(coeffs.shape[-2:])
         self.bbox = bbox
 
         self.coeffs = coeffs
+        self.l1_thresh = l1_thresh
+        self.positive = positive
 
     def __call__(self):
-        return starlet_reconstruction(self.coeffs)
+        if self.positive:
+            f = prox_soft_plus
+        else:
+            f = prox_soft
+        return self.normalize(starlet_reconstruction(f(self.coeffs, self.l1_thresh)))
 
     @staticmethod
-    def from_image(image):
+    def from_image(image, **kwargs):
         # Starlet transform of image (n1,n2) into coefficient with 3 dimensions: (scales+1,n1,n2)
         coeffs = starlet_transform(image)
-        return StarletMorphology(coeffs)
+        return StarletMorphology(coeffs, **kwargs)
