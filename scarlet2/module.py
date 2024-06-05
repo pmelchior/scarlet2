@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import varname
 
+
 class Module(eqx.Module):
 
     def __call__(self):
@@ -62,13 +63,14 @@ class Parameter:
 
     def __repr__(self):
         # equinox-like formatting
-        mess = f"{self.__class__.__name__}(\n"
+        chunks = []
         for name in ["name", "node", "constraint", "prior", "stepsize"]:
             field = getattr(self, name)
             if name == "node" and isinstance(field, jax.Array):
                 field = eqx._pretty_print._pformat_array(field, short_arrays=True)
-            mess += f"  {name}={field},\n"
-        mess += ")\n"
+            chunks.append(f"  {name}={field}")
+        inner = ",\n".join(chunks)
+        mess = f"{self.__class__.__name__}(\n{inner}\n)"
         return mess
 
 
@@ -84,12 +86,17 @@ class Parameters:
         mess = f"{self.__class__.__name__}(\n"
         mess += f"  base={self.base.__class__.__name__},\n"
         mess += f"  parameters=[\n"
+        chunks = []
         for p in self._params:
             mess_ = p.__repr__()
-            for line in mess_.splitlines():
-                mess += "    " + line + "\n"
-        mess += "  ]"
-        mess += ")\n"
+            chunk = ""
+            for line in mess_.splitlines(keepends=True):
+                chunk += "    " + line
+            chunks.append(chunk)
+
+        mess += ",\n".join(chunks)
+        mess += "\n  ]\n"
+        mess += ")"
         return mess
 
     def __iadd__(self, parameter):
