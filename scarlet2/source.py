@@ -17,7 +17,9 @@ class Component(Module):
     morphology: Morphology
 
     def __init__(self, center, spectrum, morphology):
+        assert isinstance(spectrum, Spectrum)
         self.spectrum = spectrum
+        assert isinstance(morphology, Morphology)
         self.morphology = morphology
         self.morphology.center_bbox(center)
 
@@ -110,5 +112,5 @@ class PointSource(Source):
 
         # use frame's PSF but with free center parameter
         morphology = copy.deepcopy(frame.psf.morphology)
-        morphology.set("center", center)
+        object.__setattr__(morphology, 'center', center)
         super().__init__(center, spectrum, morphology)

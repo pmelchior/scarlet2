@@ -45,7 +45,7 @@ class Scene(Module):
     def __exit__(self, exc_type, exc_value, traceback):
         Scenery.scene = None
 
-    def sample(self, observations, parameters, num_warmup=50, num_samples=100, **kwargs):
+    def sample(self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs):
         # uses numpyro NUTS on all non-fixed parameters
         # requires that those have priors set
         try:
@@ -55,6 +55,10 @@ class Scene(Module):
             from numpyro.infer import MCMC, NUTS
         except ImportError:
             raise ImportError("scarlet2.Scene.sample() requires numpyro.")
+
+        # making sure we can iterate
+        if not isinstance(observations, (list, tuple)):
+            observations = (observations,)
 
         # helper class to turn observation likelihood(s) into numpyro distribution
         class ObsDistribution(dist.Distribution):
@@ -90,22 +94,19 @@ class Scene(Module):
 
         # define the pyro model, where every parameter becomes a sample,
         # and the observations sample from their likelihood given the rendered model
-        def pyro_model(model, obs=None):
+        def pyro_model(model):
             samples = tuple(numpyro.sample(p.name, p.prior) for p in parameters)
-            model = model.replace(parameters, samples)
-            pred = model()  # create prediction once for all observations
+            model_ = model.replace(parameters, samples)
+            pred = model_()  # create prediction once for all observations
             # dealing with multiple observations
-            if not isinstance(observations, (list, tuple)):
-                numpyro.sample('obs', ObsDistribution(obs, pred), obs=obs.data)
-            else:
-                for i, obs_ in enumerate(obs):
-                    numpyro.sample(f'obs.{i}', ObsDistribution(obs_, pred), obs=obs_.data)
+            for i, obs_ in enumerate(observations):
+                numpyro.sample(f"obs.{i}", ObsDistribution(obs_, pred), obs=obs_.data)
 
         from numpyro.infer import MCMC, NUTS
-        nuts_kernel = NUTS(pyro_model, dense_mass=True)
-        mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
-        rng_key = jax.random.PRNGKey(0)
-        mcmc.run(rng_key, self, obs=observations)
+        nuts_kernel = NUTS(pyro_model, **kwargs)
+        mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, progress_bar=progress_bar)
+        rng_key = jax.random.PRNGKey(seed)
+        mcmc.run(rng_key, self)
         return mcmc
 
     def fit(self, observations, parameters, schedule=None, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None,
@@ -178,10 +179,7 @@ class Scene(Module):
 
                 # report current iteration results to callback
                 if callback is not None:
-                    if constraint_fns is not None:
-                        scene_ = _constraint_replace(scene, parameters)
-                    else:
-                        scene_ = scene
+                    scene_ = _constraint_replace(scene, parameters)
                     callback(scene_, convergence, loss)
 
                 # Log the loss and max_change in the tqdm progress bar

@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import jax.scipy
 
 from .bbox import Box
-from .module import Module, Parameter
+from .module import Module
 
 
 class Morphology(Module):
@@ -13,11 +13,7 @@ class Morphology(Module):
         return x / x.max()
 
     def center_bbox(self, center):
-        if isinstance(center, Parameter):
-            center_ = center.value
-        else:
-            center_ = center
-        self.bbox.set_center(center_.astype(int))
+        self.bbox.set_center(center.astype(int))
 
 
 class ArrayMorphology(Morphology):
