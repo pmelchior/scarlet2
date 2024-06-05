@@ -85,7 +85,7 @@ def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, 
     return gaussian_morphology(obs, box, center=center_pix)
 
 
-def compact_morphology():
+def compact_morphology(min_value=1e-6):
     """
     Create image of the PointSourceMorphology model, i.e. the most compact source possible.
 
@@ -104,6 +104,7 @@ def compact_morphology():
         raise AttributeError("Compact morphology can only be create with a PSF in the model frame")
 
     morph = frame.psf.morphology()
+    morph = jnp.maximum(morph, min_value)
     return morph
 
 
@@ -147,16 +148,27 @@ def gaussian_morphology(
     if frame.psf is None:
         raise AttributeError("Adaptive morphology can only be create with a PSF in the model frame")
 
-    # getting moment measures
+    # getting moment measures:
+    # 1) get convolved moments
     g_ = measure.moments(cutout_img, center=center, N=2)
-    p = measure.moments(obs.frame.psf(), N=2)
-    p0 = measure.moments(frame.psf(), N=2)
-    dp = measure.deconvolve(p, p0)
+    if hasattr(obs, "_dp"):
+        dp = obs._dp
+    else:
+        # compute the moments of the difference kernel between the model PSF and the observed PSF
+        # TODO: this needs a resampling operation if the two frames have different resolutions
+        # We need obs.frame.psf in the same pixels as model PSF
+        p = measure.moments(obs.frame.psf(), N=2)
+        p0 = measure.moments(frame.psf(), N=2)
+        dp = measure.deconvolve(p, p0)
+        # store in obs for repeated use
+        object.__setattr__(obs, "_dp", dp)
+    # 2) deconvolve in moment space
     g = measure.deconvolve(g_, dp)
-
+    # 3) average over channels
     spectrum = g[0, 0].copy()
     for key in g.keys():
-        g[key] = jnp.median(g[key])  # average across channels
+        g[key] = jnp.median(g[key])  # this is not SNR weighted, which might be better
+    # 4) compute size and ellipticity for a Gaussian
     T = measure.size(g)
     ellipticity = measure.ellipticity(g)
 
