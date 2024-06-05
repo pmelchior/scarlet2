@@ -1,7 +1,6 @@
 # from https://github.com/pmelchior/scarlet/blob/master/scarlet/wavelet.py
 
 import jax.numpy as jnp
-import numpy as np
 
 class Starlet:
     """ A class used to create the Wavelet transform of a cube of images from the 'a trou' algorithm.
@@ -78,7 +77,7 @@ def bspline_convolve(image, scale):
     """Convolve an image with a bpsline at a given scale.
 
     This uses the spline
-    `h1D = np.array([1.0 / 16, 1.0 / 4, 3.0 / 8, 1.0 / 4, 1.0 / 16])`
+    `h1D = jnp.array([1.0 / 16, 1.0 / 4, 3.0 / 8, 1.0 / 4, 1.0 / 16])`
     from Starck et al. 2011.
 
     Parameters
@@ -91,26 +90,27 @@ def bspline_convolve(image, scale):
 
     """
     # Filter for the scarlet transform. Here bspline
-    h1D = np.array([1.0 / 16, 1.0 / 4, 3.0 / 8, 1.0 / 4, 1.0 / 16])
+    h1D = jnp.array([1.0 / 16, 1.0 / 4, 3.0 / 8, 1.0 / 4, 1.0 / 16])
     j = scale
 
     slice0 = slice(None, -2**(j+1))
     slice1 = slice(None, -2**j)
     slice3 = slice(2**j, None)
     slice4 = slice(2**(j+1), None)
+
     # row
     col = image * h1D[2]
-    col[slice4] += image[slice0] * h1D[0]
-    col[slice3] += image[slice1] * h1D[1]
-    col[slice1] += image[slice3] * h1D[3]
-    col[slice0] += image[slice4] * h1D[4]
+    col = col.at[slice4].add(image[slice0] * h1D[0])
+    col = col.at[slice3].add(image[slice1] * h1D[1])
+    col = col.at[slice1].add(image[slice3] * h1D[3])
+    col = col.at[slice0].add(image[slice4] * h1D[4])
 
     # column
     result = col * h1D[2]
-    result[:, slice4] += col[:, slice0] * h1D[0]
-    result[:, slice3] += col[:, slice1] * h1D[1]
-    result[:, slice1] += col[:, slice3] * h1D[3]
-    result[:, slice0] += col[:, slice4] * h1D[4]
+    result = result.at[:, slice4].add(col[:, slice0] * h1D[0])
+    result = result.at[:, slice3].add(col[:, slice1] * h1D[1])
+    result = result.at[:, slice1].add(col[:, slice3] * h1D[3])
+    result = result.at[:, slice0].add(col[:, slice4] * h1D[4])
     return result
 
 def starlet_transform(image, scales=None, generation=2, convolve2D=None):
@@ -146,19 +146,19 @@ def starlet_transform(image, scales=None, generation=2, convolve2D=None):
         convolve2D = bspline_convolve
 
     ## wavelet set of coefficients.
-    starlet = np.zeros((scales + 1,) + image.shape)
+    starlet = jnp.zeros((scales + 1,) + image.shape)
     for j in range(scales):
         gen1 = convolve2D(c, j)
 
         if generation == 2:
             gen2 = convolve2D(gen1, j)
-            starlet[j] = c - gen2
+            starlet = starlet.at[j].set(c - gen2)
         else:
-            starlet[j] = c - gen1
+            starlet = starlet.at[j].set(c - gen1)
 
         c = gen1
 
-    starlet[-1] = c
+    starlet = starlet.at[-1].set(c)
     return starlet
 
 def get_scales(image_shape, scales=None):
