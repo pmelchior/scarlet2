@@ -4,6 +4,7 @@ import jax.scipy
 
 from .bbox import Box
 from .module import Module
+from .wavelets import starlet_transform, starlet_reconstruction
 
 
 class Morphology(Module):
@@ -130,3 +131,24 @@ class SersicMorphology(ProfileMorphology):
         # Graham & Driver 2005, eq. 1
         # we're given R^2, so we use R2^(0.5/n) instead of 1/n
         return jnp.exp(-bn * (R2 ** (0.5 / n) - 1))
+
+
+class StarletMorphology(Morphology):
+    coeffs: jnp.array
+
+    def __init__(self, coeffs, bbox=None):
+        if bbox is None:
+            # wavelet coeffs: scales x n1 x n2
+            bbox = Box(coeffs.shape[-2:])
+        self.bbox = bbox
+
+        self.coeffs = coeffs
+
+    def __call__(self):
+        return starlet_reconstruction(self.coeffs)
+
+    @staticmethod
+    def from_image(image):
+        # Starlet transform of image (n1,n2) into coefficient with 3 dimensions: (scales+1,n1,n2)
+        coeffs = starlet_transform(image)
+        return StarletMorphology(coeffs)

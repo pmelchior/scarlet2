@@ -113,6 +113,7 @@ def bspline_convolve(image, scale):
     result = result.at[:, slice0].add(col[:, slice4] * h1D[4])
     return result
 
+
 def starlet_transform(image, scales=None, generation=2, convolve2D=None):
     """Perform a scarlet transform, or 2nd gen starlet transform.
 
@@ -160,6 +161,37 @@ def starlet_transform(image, scales=None, generation=2, convolve2D=None):
 
     starlet = starlet.at[-1].set(c)
     return starlet
+
+
+def starlet_reconstruction(starlets, generation=2, convolve2D=None):
+    """Reconstruct an image from a dictionary of starlets
+
+    Parameters
+    ----------
+    starlets: array with dimension (scales+1, Ny, Nx)
+        The starlet dictionary used to reconstruct the image.
+    convolve2D: function
+        The filter function to use to convolve the image
+        with starlets in 2D.
+
+    Returns
+    -------
+    image: 2D array
+        The image reconstructed from the input `starlet`.
+    """
+    if generation == 1:
+        return jnp.sum(starlets, axis=0)
+    if convolve2D is None:
+        convolve2D = bspline_convolve
+    scales = len(starlets) - 1
+
+    c = starlets[-1]
+    for i in range(1, scales + 1):
+        j = scales - i
+        cj = convolve2D(c, j)
+        c = cj + starlets[j]
+    return c
+
 
 def get_scales(image_shape, scales=None):
     """Get the number of scales to use in the starlet transform.
