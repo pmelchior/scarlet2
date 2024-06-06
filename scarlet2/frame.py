@@ -3,9 +3,10 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+from astropy.coordinates import SkyCoord
+
 from .bbox import Box
 from .psf import PSF
-
 
 class Frame(eqx.Module):
     bbox: Box
@@ -38,75 +39,73 @@ class Frame(eqx.Module):
             return 1
 
     def get_pixel(self, sky_coord):
-        """Get the pixel coordinate from a world coordinate
+        """Get the sky coordinates from a world coordinate
 
         Parameters
         ----------
-        sky_coord: tuple, array
+        sky_coord: SkyCoord, or list of Skycoords
             Coordinates on the sky
+
+        Returns
+        ---------
+        pixel coordinates in the model frame
         """
-        sky = jnp.asarray(sky_coord, dtype=jnp.float32).reshape(-1, 2)
+        assert self.wcs is not None
+        wcs_ = self.wcs.celestial # only use celestial portion
 
-        if self.wcs is not None:
-            wcs_ = self.wcs.celestial  # only use celestial portion
-            pixel = jnp.array(wcs_.world_to_pixel_values(sky)).reshape(-1, 2)
-            # y/x instead of x/y:
-            pixel = jnp.flip(pixel, axis=-1)
+        if isinstance(sky_coord, list):
+            assert all(isinstance(coord, SkyCoord) for coord in sky_coord)
+            pixel = jnp.asarray([coord.to_pixel(wcs_) for coord in sky_coord],
+                                 dtype="float32")     
         else:
-            pixel = sky
-
-        if pixel.size == 2:  # only one coordinate pair
-            return pixel[0]
+            assert isinstance(sky_coord, SkyCoord)
+            pixel = jnp.asarray(sky_coord.to_pixel(wcs_), dtype="float32")
+        
         return pixel
-
-    def get_sky_coord(self, pixel):
+    
+    def get_sky_coord(self, pixels):
         """Get the sky coordinate from a pixel coordinate
 
         Parameters
         ----------
-        pixel: tuple, array
+        pixel: array of pixel coordinates 
             Coordinates in the pixel space
+
+        Returns
+        ----------
+        astropy.coordinates.SkyCoord
         """
-        pix = jnp.asarray(pixel, dtype=np.float64).reshape(-1, 2)
+        pixels = pixels.reshape(-1, 2)
 
-        if self.wcs is not None:
-            wcs = self.wcs.celestial  # only use celestial portion
-            # x/y instead of y/x:
-            pix = jnp.flip(pix, axis=-1)
-            sky = jnp.array(wcs.pixel_to_world_values(pix))
-        else:
-            sky = pix
+        assert self.wcs is not None
+        wcs = self.wcs.celestial # only use celestial portion
+        sky_coord = [SkyCoord.from_pixel(pixel[0], pixel[1], wcs) for pixel in pixels]
 
-        if sky.size == 2:
-            return sky[0]
-        return sky
-
+        return sky_coord
+    
     def convert_pixel_to(self, target, pixel=None):
         """Converts pixel coordinates from this frame to `target` Frame
 
-        Parameters
-        ----------
-        target: `~scarlet.Frame`
-            target frame
-        pixel: `tuple` or list ((y1,y2, ...), (x1, x2, ...))
-            pixel coordinates in this frame
-            If not set, convert all pixels in this frame
+            Parameters
+            ----------
+            target: `~scarlet2.Frame`
+                target frame
+            pixel: `array`, pixel coordinates in this frame
+                If not set, convert all pixels in this frame
 
-        Returns
-        -------
-        coord_target: `tuple`
-            coordinates at the location of `coord` in the target frame
+            Returns
+            -------
+            coord_target: `array`
+                coordinates at the location of `coord` in the target frame
         """
+
         if pixel is None:
-            y, x = np.indices(self.bbox.shape[-2:], dtype=np.float64)
-            pixel = np.stack((y.flatten(), x.flatten()), axis=1)
+            y, x = jnp.indices(self.bbox.shape[-2:], dtype="float32")
+            pixel = jnp.stack((y.flatten(), x.flatten()), axis=1)
 
         ra_dec = self.get_sky_coord(pixel)
-        pixel_ = target.get_pixel(ra_dec)
+        return target.get_pixel(ra_dec)
 
-        if pixel_.size == 2:  # only one coordinate pair
-            return pixel_[0]
-        return pixel_
 
     @staticmethod
     def from_observations(

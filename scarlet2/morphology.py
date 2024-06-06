@@ -4,7 +4,9 @@ import jax.scipy
 
 from .bbox import Box
 from .module import Module
+from . import Scenery
 
+from astropy.coordinates import SkyCoord
 
 class Morphology(Module):
     bbox: Box = eqx.field(static=True, init=False)
@@ -13,6 +15,15 @@ class Morphology(Module):
         return x / x.max()
 
     def center_bbox(self, center):
+
+        if isinstance(center, SkyCoord):
+            try:
+                center = Scenery.scene.frame.get_pixel(center)
+            except AttributeError:
+                print("`center` defined in sky coordinates can only be created within the context of a Scene")
+                print("Use 'with Scene(frame) as scene: (...)'")
+                raise
+
         self.bbox.set_center(center.astype(int))
 
 
