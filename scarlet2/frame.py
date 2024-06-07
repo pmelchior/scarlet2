@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from astropy.coordinates import SkyCoord
+import astropy.units as u
 
 from .bbox import Box
 from .psf import PSF
@@ -105,7 +106,26 @@ class Frame(eqx.Module):
 
         ra_dec = self.get_sky_coord(pixel)
         return target.get_pixel(ra_dec)
+    
+    def u_to_pixel(self, size):
+        """Converts a size un astropy.units.Quantity to pixel size according 
+           to this frame WCS
 
+            Parameters
+            ----------
+            size: `astropy.units.Quantity`, must be PhysicalType("angle")
+
+            Returns
+            -------
+            size in pixels
+        """
+        assert u.get_physical_type(size) == "angle"
+        # first computer the pixel size
+        pixel_size = get_pixel_size(
+            get_affine(self.wcs.celestial) # only use celestial portion
+        ) # in deg/pixel
+        print(pixel_size)
+        return size.to(u.deg).value / pixel_size
 
     @staticmethod
     def from_observations(
@@ -295,7 +315,7 @@ def get_affine(wcs):
 
 
 def get_pixel_size(model_affine):
-    """Extracts the pixel size from a wcs"""
+    """Extracts the pixel size from a wcs, and returns it in deg/pixel"""
     pix = np.sqrt(
         np.abs(model_affine[0, 0])
         * np.abs(model_affine[1, 1] - model_affine[0, 1] * model_affine[1, 0])
