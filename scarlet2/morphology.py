@@ -55,7 +55,7 @@ class ProfileMorphology(Morphology):
                 raise
 
         if isinstance(size, u.Quantity):
-            try
+            try:
                 size = Scenery.scene.frame.u_to_pixel(size)
             except AttributeError:
                 print("`size` defined in astropy units can only be used within the context of a Scene")
