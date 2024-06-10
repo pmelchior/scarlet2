@@ -124,7 +124,7 @@ class Frame(eqx.Module):
         pixel_size = get_pixel_size(
             get_affine(self.wcs.celestial) # only use celestial portion
         ) # in deg/pixel
-        print(pixel_size)
+        
         return size.to(u.deg).value / pixel_size
 
     @staticmethod

@@ -4,6 +4,8 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import varname
 
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 
 class Module(eqx.Module):
 
@@ -38,6 +40,7 @@ class Module(eqx.Module):
 class Parameter:
 
     def __init__(self, node, name=None, constraint=None, prior=None, stepsize=0):
+
         if name is None:
             self.name = varname.argname('node', vars_only=False)
         else:
@@ -45,21 +48,23 @@ class Parameter:
         self.node = node
 
         self.constraint = constraint
-        if constraint is not None:
+        
+        self.prior = prior
+        self.stepsize = stepsize
+    
+    def set_constraint(self):
+        if self.constraint is not None:
             try:
                 from numpyro.distributions.transforms import biject_to
             except ImportError:
                 raise ImportError("scarlet2.Parameter requires numpyro.")
             # transformation to unconstrained parameters
-            self.constraint_transform = biject_to(constraint)
+            self.constraint_transform = biject_to(self.constraint)
 
             # check if parameter is valid under transform
             unconstrained = self.constraint_transform.inv(self.node)
             if not jnp.isfinite(unconstrained).all():
                 raise ValueError(f"Parameter {self.name} has infeasible values for constraint {self.constraint}!")
-
-        self.prior = prior
-        self.stepsize = stepsize
 
     def __repr__(self):
         # equinox-like formatting
@@ -104,6 +109,8 @@ class Parameters:
         found = False
         for i, leaf in enumerate(self._base_leaves):
             if leaf is parameter.node:
+                parameter = self.to_pixels(parameter)
+                parameter.set_constraint()
                 self._params.append(parameter)
                 self._leave_idx.append(i)
                 found = True
@@ -132,6 +139,45 @@ class Parameters:
         assert jtu.tree_structure(root) == jtu.tree_structure(self.base)
         root_leaves = jtu.tree_leaves(root)
         return tuple(root_leaves[idx] for idx in self._leave_idx)
+    
+
+    def to_pixels(self, parameter):
+        frame = self.base.frame
+        used_sky_coords_prior = False
+
+        for fieldname in ['node', 'constraint', 'prior', 'stepsize']:
+            field = getattr(parameter, fieldname)
+            if isinstance(field, u.Quantity):
+                setattr(parameter, fieldname, frame.u_to_pixel(field))
+            if isinstance(field, SkyCoord):
+                    setattr(parameter, fieldname, frame.get_pixel(field))
+            for name in dir(field):
+                try:
+                    attrib = getattr(field, name)
+                    if isinstance(attrib, u.Quantity):
+                        setattr(field, name, frame.u_to_pixel(attrib))
+                    if isinstance(attrib, SkyCoord):
+                        setattr(field, name, frame.get_pixel(attrib))
+                        used_sky_coords_prior = (fieldname == 'prior')
+                except:
+                    pass
+
+            if used_sky_coords_prior:
+                try:
+                    import numpyro.distributions as dist
+                except ImportError:
+                    raise ImportError("scarlet2.Parameter requires numpyro.")
+                
+                # converting SkyCoord to Array in numpyro distributions requires
+                # to update batch and event shape 
+                batch_shape = max([getattr(field, name).shape 
+                                   for name in field.reparametrized_params])
+                setattr(field, '_batch_shape', batch_shape)
+                setattr(parameter, fieldname, dist.Independent(field, 1))
+                
+            used_sky_coords_prior = False
+
+        return parameter
 
 
 def relative_step(x, *args, factor=0.01, minimum=1e-6):
