@@ -53,15 +53,9 @@ class Frame(eqx.Module):
         """
         assert self.wcs is not None
         wcs_ = self.wcs.celestial # only use celestial portion
-
-        if isinstance(sky_coord, list):
-            assert all(isinstance(coord, SkyCoord) for coord in sky_coord)
-            pixel = jnp.asarray([coord.to_pixel(wcs_) for coord in sky_coord],
-                                 dtype="float32")     
-        else:
-            assert isinstance(sky_coord, SkyCoord)
-            pixel = jnp.asarray(sky_coord.to_pixel(wcs_), dtype="float32")
         
+        pixel = jnp.asarray(sky_coord.to_pixel(wcs_), dtype="float32").T
+
         return pixel
     
     def get_sky_coord(self, pixels):
@@ -80,7 +74,7 @@ class Frame(eqx.Module):
 
         assert self.wcs is not None
         wcs = self.wcs.celestial # only use celestial portion
-        sky_coord = [SkyCoord.from_pixel(pixel[0], pixel[1], wcs) for pixel in pixels]
+        sky_coord = SkyCoord.from_pixel(pixels[:,0], pixels[:,1], wcs)
 
         return sky_coord
     
@@ -120,12 +114,13 @@ class Frame(eqx.Module):
             size in pixels
         """
         assert u.get_physical_type(size) == "angle"
+
         # first computer the pixel size
         pixel_size = get_pixel_size(
             get_affine(self.wcs.celestial) # only use celestial portion
-        ) # in deg/pixel
+        ) * 60 * 60 # in arcsec/pixel
         
-        return size.to(u.deg).value / pixel_size
+        return size.to(u.arcsec).value / pixel_size
 
     @staticmethod
     def from_observations(
