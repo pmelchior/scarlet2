@@ -4,8 +4,12 @@ import jax.scipy
 
 from .bbox import Box
 from .module import Module
+from . import Scenery
 from .wavelets import starlet_transform, starlet_reconstruction
 
+
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 
 class Morphology(Module):
     bbox: Box = eqx.field(static=True, init=False)
@@ -14,6 +18,15 @@ class Morphology(Module):
         return x / x.max()
 
     def center_bbox(self, center):
+
+        if isinstance(center, SkyCoord):
+            try:
+                center = Scenery.scene.frame.get_pixel(center)
+            except AttributeError:
+                print("`center` defined in sky coordinates can only be created within the context of a Scene")
+                print("Use 'with Scene(frame) as scene: (...)'")
+                raise
+
         self.bbox.set_center(center.astype(int))
 
 
@@ -34,6 +47,22 @@ class ProfileMorphology(Morphology):
     ellipticity: (None, jnp.array)
 
     def __init__(self, center, size, ellipticity=None, bbox=None):
+
+        if isinstance(center, SkyCoord):
+            try:
+                center = Scenery.scene.frame.get_pixel(center)
+            except AttributeError:
+                print("`center` defined in sky coordinates can only be used within the context of a Scene")
+                print("Use 'with Scene(frame) as scene: (...)'")
+                raise
+
+        if isinstance(size, u.Quantity):
+            try:
+                size = Scenery.scene.frame.u_to_pixel(size)
+            except AttributeError:
+                print("`size` defined in astropy units can only be used within the context of a Scene")
+                print("Use 'with Scene(frame) as scene: (...)'")
+                raise
 
         # define radial profile function
         self.center = center
