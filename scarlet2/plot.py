@@ -542,17 +542,14 @@ def log_like(morph, spectrum, data, weights):
 # https://arxiv.org/pdf/2006.00719.pdf
 
 # for regular functions f
-#@jax.jit
 def hvp(f, primals, tangents):
     return jvp(grad(f), primals, tangents)[1]
 
 # for score functions
-#@jax.jit
 def hvp_grad(grad_f, primals, tangents):
     return jvp(grad_f, primals, tangents)[1]
 
 # diagonals of Hessian from HVPs
-#@jax.jit
 def hvp_rad(hvp, shape):
     max_iters = 100 # maximum number of iterations
     H = jnp.zeros(shape, dtype=jnp.float32)
@@ -569,7 +566,6 @@ def hvp_rad(hvp, shape):
     return H/(i+1) 
 
 #TODO: fix the jit compilation errors here
-#@jax.jit
 def hallucination_score(scene, obs, src_num):
     src = scene.sources[src_num]
     center = np.array(src.morphology.bbox.center)[::-1]
