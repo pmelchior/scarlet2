@@ -4,6 +4,7 @@ import operator
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from astropy.coordinates import SkyCoord
 
 from . import Scenery
 from .bbox import overlap_slices
@@ -112,5 +113,13 @@ class PointSource(Source):
 
         # use frame's PSF but with free center parameter
         morphology = copy.deepcopy(frame.psf.morphology)
+
+        if isinstance(center, SkyCoord):
+            try:
+                center = Scenery.scene.frame.get_pixel(center)
+            except AttributeError:
+                print("`center` defined in sky coordinates can only be created within the context of a Scene")
+                print("Use 'with Scene(frame) as scene: (...)'")
+                raise
         object.__setattr__(morphology, 'center', center)
         super().__init__(center, spectrum, morphology)
