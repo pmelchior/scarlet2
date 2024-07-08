@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from jax import jvp, grad, jit
 from matplotlib.patches import Rectangle, Polygon
-
+from .renderer import ChannelRenderer
 from .bbox import Box
 
 
@@ -851,8 +851,13 @@ def scene(
     model = scene()
     if show_model:
         extent = get_extent(observation.frame.bbox)
+        if channel_map is None:
+            c = ChannelRenderer(scene.frame, observation.frame).channel_map
+            model_ = model[c]
+        else:
+            model_ = model
         model_img = ax[panel].imshow(
-            img_to_rgb(model, norm=norm, channel_map=channel_map),
+            img_to_rgb(model_, norm=norm, channel_map=channel_map),
             extent=extent,
             origin="lower",
         )
