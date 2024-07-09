@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+from astropy.coordinates import SkyCoord
 
 from . import Scenery
 from . import measure
@@ -49,13 +50,15 @@ def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, 
     """
     assert obs.weights is not None, "Observation weights are required"
 
+    if isinstance(center, SkyCoord):
+        center = obs.frame.get_pixel(center)
+
     peak_spectrum = pixel_spectrum(obs, center, correct_psf=True)
     last_spectrum = peak_spectrum.copy()
     box2d = Box((min_size, min_size))
-    center_pix = obs.frame.get_pixel(center)
-    if not obs.frame.bbox.spatial.contains(center_pix):
-        raise ValueError(f"Pixel coordinate expected, got {center_pix}")
-    box2d.set_center(center_pix.astype(int))
+    if not obs.frame.bbox.spatial.contains(center):
+        raise ValueError(f"Pixel coordinate expected, got {center}")
+    box2d.set_center(center.astype(int))
 
     # increase box size until SNR is below threshold or spectrum changes significantly
     while max(box2d.shape) < max(obs.frame.bbox.spatial.shape):
@@ -82,7 +85,7 @@ def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, 
         box2d = box2d.grow(delta_size)
 
     box = obs.frame.bbox[0] @ box2d
-    return gaussian_morphology(obs, box, center=center_pix)
+    return gaussian_morphology(obs, box, center=center)
 
 
 def compact_morphology(min_value=1e-6):
@@ -174,8 +177,10 @@ def gaussian_morphology(
 
     # create image of Gaussian with these 2nd moments
     if jnp.isfinite(center).all() and jnp.isfinite(T) and jnp.isfinite(ellipticity).all():
-        center += jnp.array(bbox.spatial.origin)
-        morph = GaussianMorphology(center, T, ellipticity, bbox=bbox)()
+        morph = GaussianMorphology(T, ellipticity, shape=bbox.shape)
+        morph_box = Box(morph.shape)
+        delta_center = (morph_box.center[-2] - center[-2], morph_box.center[-1] - center[-1])
+        morph = morph(delta_center)
         spectrum /= morph.sum()
         morph = jnp.maximum(morph, min_value)
     else:
@@ -218,7 +223,11 @@ def pixel_spectrum(observations, pos, correct_psf=False):
 
     spectra = []
     for obs in observations:
-        pixel = obs.frame.get_pixel(pos).astype(int)
+        if isinstance(pos, SkyCoord):
+            pixel = obs.frame.get_pixel(pos)
+        else:
+            pixel = pos
+        pixel = pixel.astype(int)
 
         if not obs.frame.bbox.spatial.contains(pixel):
             raise ValueError(f"Pixel coordinate expected, got {pixel}")
