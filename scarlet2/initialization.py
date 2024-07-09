@@ -4,7 +4,8 @@ from astropy.coordinates import SkyCoord
 from . import Scenery
 from . import measure
 from .bbox import Box
-from .morphology import GaussianMorphology
+from .morphology import ArrayMorphology, GaussianMorphology
+from .spectrum import ArraySpectrum
 
 
 # function to calculate values of perimeter pixels
@@ -21,7 +22,7 @@ def _get_edge_pixels(img, box):
     return jnp.concatenate(edge, axis=1)
 
 
-def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, min_corr=0.99):
+def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, min_corr=0.99, return_array=False):
     """
     Create image of a Gaussian from the centered 2nd moments of the observation.
 
@@ -43,17 +44,19 @@ def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, 
         minimum SNR of edge pixels (aggregated over all observation channel) to allow increase of box size
     min_corr: float
         minimum correlation coefficient between center and edge color to allow increase of box size
+    return_array: bool
+        Whether to return arrays or ArraySpectrum and ArrayMorphology
 
     Returns
     -------
-    jnp.array morphology image, normalized to (0,1)
+    jnp.ndarrays (for spectrum and morphology) or ArraySpectrum, ArrayMorphology
     """
     assert obs.weights is not None, "Observation weights are required"
 
     if isinstance(center, SkyCoord):
         center = obs.frame.get_pixel(center)
 
-    peak_spectrum = pixel_spectrum(obs, center, correct_psf=True)
+    peak_spectrum = pixel_spectrum(obs, center, correct_psf=True, return_array=True)
     last_spectrum = peak_spectrum.copy()
     box2d = Box((min_size, min_size))
     if not obs.frame.bbox.spatial.contains(center):
@@ -85,16 +88,23 @@ def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, 
         box2d = box2d.grow(delta_size)
 
     box = obs.frame.bbox[0] @ box2d
-    return gaussian_morphology(obs, box, center=center)
+    return gaussian_morphology(obs, box, center=center, return_array=return_array)
 
 
-def compact_morphology(min_value=1e-6):
+def compact_morphology(min_value=1e-6, return_array=False):
     """
-    Create image of the PointSourceMorphology model, i.e. the most compact source possible.
+    Create image of the point source morphology model, i.e. the most compact source possible.
+
+    Parameters
+    ----------
+    min_value: float
+        Minimum pixel value (needed for positively constrained morphologies)
+    return_array: bool
+        Whether to return the array or an ArrayMorphology
 
     Returns
     -------
-    jnp.array morphology image, normalized to (0,1)
+    2D jnp.array (normalized to (0,1)) or ArrayMorphology
 
     """
     try:
@@ -108,7 +118,9 @@ def compact_morphology(min_value=1e-6):
 
     morph = frame.psf.morphology()
     morph = jnp.maximum(morph, min_value)
-    return morph
+    if return_array:
+        return morph
+    return ArrayMorphology(morph)
 
 
 def gaussian_morphology(
@@ -116,6 +128,7 @@ def gaussian_morphology(
         bbox,
         center=None,
         min_value=1e-6,
+        return_array=False
 ):
     """Create image of a Gaussian from the 2nd moments of the observation in the region of the bounding box.
 
@@ -128,10 +141,12 @@ def gaussian_morphology(
         box to cut out source from observation, in pixel coordinates
     min_value: float
         minimum pixel value (useful to set to > 0 for positivity constraints)
+    return_array: bool
+        Whether to return arrays or ArraySpectrum and ArrayMorphology
 
     Returns
     -------
-    jnp.array morphology image, normalized to (0,1)
+    jnp.ndarrays (for spectrum and morphology) or ArraySpectrum, ArrayMorphology
     """
     # cut out image from observation
     cutout_img = obs.data[bbox.slices]
@@ -186,11 +201,13 @@ def gaussian_morphology(
     else:
         raise ValueError(
             f"Gaussian morphology not possible with center={center}, size={T}, and ellipticity={ellipticity}!")
-    return spectrum, morph
+    if return_array:
+        return spectrum, morph
+    return ArraySpectrum(spectrum), ArrayMorphology(morph)
 
 
 # initialise the spectrum
-def pixel_spectrum(observations, pos, correct_psf=False):
+def pixel_spectrum(observations, pos, correct_psf=False, return_array=False):
     """Get the spectrum at a given position in the observation(s).
 
     Yields the spectrum of a single-pixel source with flux 1 in every channel,
@@ -205,15 +222,17 @@ def pixel_spectrum(observations, pos, correct_psf=False):
     Parameters
     ----------
     observations: instance or list of `~scarlet.Observation`
-        Observation to extract SED from.
+        Observation to extract SED from
     pos: tuple
         Position in the observation
     correct_psf: bool
-        If PSF shape variations in the observations should be corrected.
+        Whether PSF shape variations in the observations should be corrected
+    return_array: bool
+        Whether to return the array or an ArraySpectrum
 
     Returns
     -------
-    spectrum: `~jnp.array` or list thereof if given list of observations
+    spectrum: `~jnp.array`, ArraySpectrum, or list thereof if given list of observations
     """
     if not hasattr(observations, "__iter__"):
         single = True
@@ -267,5 +286,9 @@ def pixel_spectrum(observations, pos, correct_psf=False):
         spectra.append(spectrum)
 
     if single:
-        return spectra[0]
+        spectrum = spectra[0]
+        if return_array:
+            return spectrum
+        return ArraySpectrum(spectrum)
+
     return spectra
