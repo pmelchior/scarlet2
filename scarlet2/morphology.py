@@ -32,11 +32,6 @@ class ArrayMorphology(Morphology):
     def shape(self):
         return self.data.shape
 
-    @staticmethod
-    def from_morphology(morph):
-        image = morph()
-        return ArrayMorphology(image)
-
 
 class ProfileMorphology(Morphology):
     size: float
