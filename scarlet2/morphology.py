@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import jax.scipy
 
 from . import Scenery
+from . import measure
 from .module import Module
 from .wavelets import starlet_transform, starlet_reconstruction
 
@@ -30,6 +31,11 @@ class ArrayMorphology(Morphology):
     @property
     def shape(self):
         return self.data.shape
+
+    @staticmethod
+    def from_morphology(morph):
+        image = morph()
+        return ArrayMorphology(image)
 
 
 class ProfileMorphology(Morphology):
@@ -116,6 +122,23 @@ class GaussianMorphology(ProfileMorphology):
 
         else:
             return super().__call__(delta_center)
+
+    @staticmethod
+    def from_image(image):
+        assert image.ndim == 2
+        center = measure.centroid(image)
+        # compute moments and create Gaussian from it
+        g = measure.moments(image, center=center, N=2)
+        T = measure.size(g)
+        ellipticity = measure.ellipticity(g)
+
+        # create image of Gaussian with these 2nd moments
+        if jnp.isfinite(center).all() and jnp.isfinite(T) and jnp.isfinite(ellipticity).all():
+            morph = GaussianMorphology(T, ellipticity)
+        else:
+            raise ValueError(
+                f"Gaussian morphology not possible with center={center}, size={T}, and ellipticity={ellipticity}!")
+        return morph
 
 
 class SersicMorphology(ProfileMorphology):

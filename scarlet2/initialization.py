@@ -22,7 +22,7 @@ def _get_edge_pixels(img, box):
     return jnp.concatenate(edge, axis=1)
 
 
-def adaptive_gaussian_morph(obs, center, min_size=11, delta_size=3, min_snr=20, min_corr=0.99, return_array=False):
+def adaptive_morphology(obs, center, min_size=11, delta_size=3, min_snr=20, min_corr=0.99, return_array=False):
     """
     Create image of a Gaussian from the centered 2nd moments of the observation.
 
@@ -125,7 +125,7 @@ def compact_morphology(min_value=1e-6, return_array=False):
 
 def gaussian_morphology(
         obs,
-        bbox,
+        bbox=None,
         center=None,
         min_value=1e-6,
         return_array=False
@@ -149,6 +149,8 @@ def gaussian_morphology(
     jnp.ndarrays (for spectrum and morphology) or ArraySpectrum, ArrayMorphology
     """
     # cut out image from observation
+    if bbox is None:
+        bbox = Box(obs.data.shape)
     cutout_img = obs.data[bbox.slices]
     if center is None:
         # define reference center, flatten image across channels
