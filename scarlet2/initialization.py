@@ -5,6 +5,7 @@ from . import Scenery
 from . import measure
 from .bbox import Box
 from .morphology import ArrayMorphology, GaussianMorphology
+from .observation import Observation
 from .spectrum import ArraySpectrum
 
 
@@ -51,6 +52,7 @@ def adaptive_morphology(obs, center, min_size=11, delta_size=3, min_snr=20, min_
     -------
     jnp.ndarrays (for spectrum and morphology) or ArraySpectrum, ArrayMorphology
     """
+    assert isinstance(obs, Observation)
     assert obs.weights is not None, "Observation weights are required"
 
     if isinstance(center, SkyCoord):
@@ -149,6 +151,8 @@ def gaussian_morphology(
     jnp.ndarrays (for spectrum and morphology) or ArraySpectrum, ArrayMorphology
     """
     # cut out image from observation
+    assert isinstance(obs, Observation)
+
     if bbox is None:
         bbox = Box(obs.data.shape)
     cutout_img = obs.data[bbox.slices]
@@ -209,7 +213,7 @@ def gaussian_morphology(
 
 
 # initialise the spectrum
-def pixel_spectrum(observations, pos, correct_psf=False, return_array=False):
+def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
     """Get the spectrum at a given position in the observation(s).
 
     Yields the spectrum of a single-pixel source with flux 1 in every channel,
@@ -223,7 +227,7 @@ def pixel_spectrum(observations, pos, correct_psf=False, return_array=False):
 
     Parameters
     ----------
-    observations: instance or list of `~scarlet.Observation`
+    obs: `~scarlet2.Observation`
         Observation to extract SED from
     pos: tuple
         Position in the observation
@@ -236,61 +240,49 @@ def pixel_spectrum(observations, pos, correct_psf=False, return_array=False):
     -------
     spectrum: `~jnp.array`, ArraySpectrum, or list thereof if given list of observations
     """
-    if not hasattr(observations, "__iter__"):
-        single = True
-        observations = (observations,)
+    assert isinstance(obs, Observation)
+
+    if isinstance(pos, SkyCoord):
+        pixel = obs.frame.get_pixel(pos)
     else:
-        single = False
+        pixel = pos
+    pixel = pixel.astype(int)
 
-    spectra = []
-    for obs in observations:
-        if isinstance(pos, SkyCoord):
-            pixel = obs.frame.get_pixel(pos)
-        else:
-            pixel = pos
-        pixel = pixel.astype(int)
+    if not obs.frame.bbox.spatial.contains(pixel):
+        raise ValueError(f"Pixel coordinate expected, got {pixel}")
 
-        if not obs.frame.bbox.spatial.contains(pixel):
-            raise ValueError(f"Pixel coordinate expected, got {pixel}")
+    spectrum = obs.data[:, pixel[0], pixel[1]].copy()
 
-        spectrum = obs.data[:, pixel[0], pixel[1]].copy()
+    if correct_psf and obs.frame.psf is not None:
 
-        if correct_psf and obs.frame.psf is not None:
+        try:
+            frame = Scenery.scene.frame
+        except AttributeError:
+            print("Adaptive morphology can only be created within the context of a Scene")
+            print("Use 'with Scene(frame) as scene: Source(...)'")
+            raise
+        if frame.psf is None:
+            raise AttributeError("Adaptive morphology can only be create with a PSF in the model frame")
 
-            try:
-                frame = Scenery.scene.frame
-            except AttributeError:
-                print("Adaptive morphology can only be created within the context of a Scene")
-                print("Use 'with Scene(frame) as scene: Source(...)'")
-                raise
-            if frame.psf is None:
-                raise AttributeError("Adaptive morphology can only be create with a PSF in the model frame")
+        # correct spectrum for PSF-induced change in peak pixel intensity
+        psf_model = obs.frame.psf()
+        psf_peak = psf_model.max(axis=(-2, -1))
 
-            # correct spectrum for PSF-induced change in peak pixel intensity
-            psf_model = obs.frame.psf()
-            psf_peak = psf_model.max(axis=(-2, -1))
+        psf0_model = frame.psf()
+        psf0_peak = psf0_model.max(axis=(-2, -1))
 
-            psf0_model = frame.psf()
-            psf0_peak = psf0_model.max(axis=(-2, -1))
+        spectrum /= psf_peak / psf0_peak
 
-            spectrum /= psf_peak / psf0_peak
+    if jnp.any(spectrum <= 0):
+        # If the flux in all channels is  <=0,
+        # the new sed will be filled with NaN values,
+        # which will cause the code to crash later
+        msg = f"Zero or negative spectrum {spectrum} at {pos}"
+        if jnp.all(spectrum <= 0):
+            print("Zero or negative spectrum in all channels: Setting spectrum to 1")
+            spectrum = jnp.ones_like(spectrum)
+        print(msg)
 
-        if jnp.any(spectrum <= 0):
-            # If the flux in all channels is  <=0,
-            # the new sed will be filled with NaN values,
-            # which will cause the code to crash later
-            msg = f"Zero or negative spectrum {spectrum} at {pos}"
-            if jnp.all(spectrum <= 0):
-                print("Zero or negative spectrum in all channels: Setting spectrum to 1")
-                spectrum = jnp.ones_like(spectrum)
-            print(msg)
-
-        spectra.append(spectrum)
-
-    if single:
-        spectrum = spectra[0]
-        if return_array:
-            return spectrum
-        return ArraySpectrum(spectrum)
-
-    return spectra
+    if return_array:
+        return spectrum
+    return ArraySpectrum(spectrum)
