@@ -1,3 +1,6 @@
+import operator
+from functools import reduce
+
 import jax.numpy as jnp
 from astropy.coordinates import SkyCoord
 
@@ -240,6 +243,37 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
     -------
     spectrum: `~jnp.array`, ArraySpectrum, or list thereof if given list of observations
     """
+
+    # for multiple observations, get spectrum from each observation and then combine channels in order of model frame
+    if isinstance(obs, (list, tuple)):
+
+        # flat lists of spectra and channels in order of observations
+        spectra = jnp.concatenate(
+            [pixel_spectrum(obs_, pos, correct_psf=correct_psf, return_array=True) for obs_ in obs])
+        channels = reduce(operator.add, [obs_.frame.channels for obs_ in obs])
+
+        try:
+            frame = Scenery.scene.frame
+        except AttributeError:
+            print("Multi-observation initialization can only be created within the context of a Scene")
+            print("Use 'with Scene(frame) as scene: ...")
+            raise
+
+        spectrum = []
+        for channel in frame.channels:
+            try:
+                idx = channels.index(channel)
+                spectrum.append(spectra[idx])
+            except ValueError:
+                msg = f"Channel '{channel}' not found in observations. Setting amplitude to 0."
+                print(msg)
+                spectrum.append(0)
+        spectrum = jnp.array(spectrum)
+
+        if return_array:
+            return spectrum
+        return ArraySpectrum(spectrum)
+
     assert isinstance(obs, Observation)
 
     if isinstance(pos, SkyCoord):
