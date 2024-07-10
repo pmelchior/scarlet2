@@ -28,14 +28,13 @@ def test_quickstart():
 
         for center in centers:
             center = jnp.array(center)
-            spectrum = init.pixel_spectrum(obs, center)
-            morph = init.adaptive_gaussian_morph(obs, center, min_corr=0.99) + 1e-6
+            try:
+                spectrum, morph = init.adaptive_morphology(obs, center, min_corr=0.99)
+            except ValueError:
+                spectrum = init.pixel_spectrum(obs, center)
+                morph = init.compact_morphology()
 
-            Source(
-                center,
-                ArraySpectrum(spectrum),
-                ArrayMorphology(morph)
-            )
+            Source(center, spectrum, morph)
 
     # fitting
     parameters = scene.make_parameters()
@@ -62,7 +61,6 @@ def test_quickstart():
     parameters += Parameter(p, name=f"spectrum:0", prior=prior)
     mcmc = scene_.sample(obs, parameters, num_samples=200, dense_mass=True, init_strategy=init_to_sample,
                          progress_bar=False)
-    mcmc.print_summary()
 
 if __name__ == "__main__":
     test_quickstart()

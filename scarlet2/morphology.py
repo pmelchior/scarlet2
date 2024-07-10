@@ -1,33 +1,22 @@
+import astropy.units as u
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy
 
-from .bbox import Box
-from .module import Module
 from . import Scenery
+from . import measure
+from .module import Module
 from .wavelets import starlet_transform, starlet_reconstruction
 
 
-from astropy.coordinates import SkyCoord
-import astropy.units as u
-
 class Morphology(Module):
-    bbox: Box = eqx.field(static=True, init=False)
+
+    @property
+    def shape(self):
+        raise NotImplementedError
 
     def normalize(self, x):
         return x / x.max()
-
-    def center_bbox(self, center):
-
-        if isinstance(center, SkyCoord):
-            try:
-                center = Scenery.scene.frame.get_pixel(center)
-            except AttributeError:
-                print("`center` defined in sky coordinates can only be created within the context of a Scene")
-                print("Use 'with Scene(frame) as scene: (...)'")
-                raise
-
-        self.bbox.set_center(center.astype(int))
 
 
 class ArrayMorphology(Morphology):
@@ -35,26 +24,21 @@ class ArrayMorphology(Morphology):
 
     def __init__(self, data):
         self.data = data
-        self.bbox = Box(self.data.shape)
 
-    def __call__(self):
+    def __call__(self, **kwargs):
         return self.normalize(self.data)
+
+    @property
+    def shape(self):
+        return self.data.shape
 
 
 class ProfileMorphology(Morphology):
-    center: jnp.array
     size: float
     ellipticity: (None, jnp.array)
+    _shape: tuple = eqx.field(static=True, init=False, repr=False)
 
-    def __init__(self, center, size, ellipticity=None, bbox=None):
-
-        if isinstance(center, SkyCoord):
-            try:
-                center = Scenery.scene.frame.get_pixel(center)
-            except AttributeError:
-                print("`center` defined in sky coordinates can only be used within the context of a Scene")
-                print("Use 'with Scene(frame) as scene: (...)'")
-                raise
+    def __init__(self, size, ellipticity=None, shape=None):
 
         if isinstance(size, u.Quantity):
             try:
@@ -64,30 +48,30 @@ class ProfileMorphology(Morphology):
                 print("Use 'with Scene(frame) as scene: (...)'")
                 raise
 
-        # define radial profile function
-        self.center = center
         self.size = size
         self.ellipticity = ellipticity
 
-        if bbox is None:
-            max_size = jnp.max(self.size)
+        # default shape: square 10x size
+        if shape is None:
             # explicit call to int() to avoid bbox sizes being jax-traced
-            size = 10 * int(jnp.ceil(max_size))
+            size = 10 * int(jnp.ceil(self.size))
+            # odd shapes for unique center pixel
             if size % 2 == 0:
                 size += 1
-            center_int = jnp.floor(self.center)
             shape = (size, size)
-            origin = (int(center_int[0]) - size // 2, int(center_int[1]) - size // 2)
-            bbox = Box(shape, origin=origin)
-        self.bbox = bbox
+        self._shape = shape
+
+    @property
+    def shape(self):
+        return self._shape
 
     def f(self, R2):
         raise NotImplementedError
 
-    def __call__(self):
+    def __call__(self, delta_center=jnp.zeros(2)):
 
-        _Y = jnp.arange(self.bbox.shape[-2], dtype=float) + self.bbox.origin[-2] - self.center[-2]
-        _X = jnp.arange(self.bbox.shape[-1], dtype=float) + self.bbox.origin[-1] - self.center[-1]
+        _Y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) + delta_center[-2]
+        _X = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) + delta_center[-1]
 
         if self.ellipticity is None:
             R2 = _Y[:, None] ** 2 + _X[None, :] ** 2
@@ -114,12 +98,12 @@ class GaussianMorphology(ProfileMorphology):
     def f(self, R2):
         return jnp.exp(-R2 / 2)
 
-    def __call__(self):
+    def __call__(self, delta_center=jnp.zeros(2)):
 
         # faster circular 2D Gaussian: instead of N^2 evaluations, use outer product of 2 1D Gaussian evals
         if self.ellipticity is None:
-            _Y = jnp.arange(self.bbox.shape[-2]) + self.bbox.origin[-2] - self.center[-2]
-            _X = jnp.arange(self.bbox.shape[-1]) + self.bbox.origin[-1] - self.center[-1]
+            _Y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) + delta_center[-2]
+            _X = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) + delta_center[-1]
 
             # with pixel integration
             f = lambda x, s: 0.5 * (
@@ -132,15 +116,32 @@ class GaussianMorphology(ProfileMorphology):
             return self.normalize(jnp.outer(f(_Y, self.size), f(_X, self.size)))
 
         else:
-            return super().__call__()
+            return super().__call__(delta_center)
+
+    @staticmethod
+    def from_image(image):
+        assert image.ndim == 2
+        center = measure.centroid(image)
+        # compute moments and create Gaussian from it
+        g = measure.moments(image, center=center, N=2)
+        T = measure.size(g)
+        ellipticity = measure.ellipticity(g)
+
+        # create image of Gaussian with these 2nd moments
+        if jnp.isfinite(center).all() and jnp.isfinite(T) and jnp.isfinite(ellipticity).all():
+            morph = GaussianMorphology(T, ellipticity)
+        else:
+            raise ValueError(
+                f"Gaussian morphology not possible with center={center}, size={T}, and ellipticity={ellipticity}!")
+        return morph
 
 
 class SersicMorphology(ProfileMorphology):
     n: float
 
-    def __init__(self, n, center, size, ellipticity=None, bbox=None):
+    def __init__(self, n, size, ellipticity=None):
         self.n = n
-        super().__init__(center, size, ellipticity=ellipticity, bbox=bbox)
+        super().__init__(size, ellipticity=ellipticity)
 
     def f(self, R2):
         n = self.n
@@ -169,25 +170,19 @@ prox_soft_plus = lambda x, thresh: prox_plus(prox_soft(x, thresh))
 
 class StarletMorphology(Morphology):
     coeffs: jnp.ndarray
-    l1_thresh: float = eqx.field(static=True)
-    positive: bool = eqx.field(static=True)
+    l1_thresh: float = eqx.field(default=1e-2, static=True)
+    positive: bool = eqx.field(default=True, static=True)
 
-    def __init__(self, coeffs, l1_thresh=1e-2, positive=True, bbox=None):
-        if bbox is None:
-            # wavelet coeffs: scales x n1 x n2
-            bbox = Box(coeffs.shape[-2:])
-        self.bbox = bbox
-
-        self.coeffs = coeffs
-        self.l1_thresh = l1_thresh
-        self.positive = positive
-
-    def __call__(self):
+    def __call__(self, **kwargs):
         if self.positive:
             f = prox_soft_plus
         else:
             f = prox_soft
         return self.normalize(starlet_reconstruction(f(self.coeffs, self.l1_thresh)))
+
+    @property
+    def shape(self):
+        return self.coeffs.shape[-2:]  # wavelet coeffs: scales x n1 x n2
 
     @staticmethod
     def from_image(image, **kwargs):

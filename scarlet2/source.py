@@ -1,4 +1,3 @@
-import copy
 import operator
 
 import equinox as eqx
@@ -7,30 +6,42 @@ import jax.numpy as jnp
 from astropy.coordinates import SkyCoord
 
 from . import Scenery
-from .bbox import overlap_slices
+from .bbox import Box, overlap_slices
 from .module import Module
 from .morphology import Morphology
 from .spectrum import Spectrum
 
 
 class Component(Module):
+    center: jnp.ndarray
     spectrum: Spectrum
     morphology: Morphology
+    bbox: Box = eqx.field(static=True, init=False)
 
     def __init__(self, center, spectrum, morphology):
         assert isinstance(spectrum, Spectrum)
         self.spectrum = spectrum
         assert isinstance(morphology, Morphology)
         self.morphology = morphology
-        self.morphology.center_bbox(center)
+
+        if isinstance(center, SkyCoord):
+            try:
+                center = Scenery.scene.frame.get_pixel(center)
+            except AttributeError:
+                print("`center` defined in sky coordinates can only be created within the context of a Scene")
+                print("Use 'with Scene(frame) as scene: (...)'")
+                raise
+        self.center = center
+
+        box = Box(spectrum.shape)
+        box2d = Box(morphology.shape)
+        box2d.set_center(center.astype(int))
+        self.bbox = box @ box2d
 
     def __call__(self):
-        # Boxed model
-        return self.spectrum()[:, None, None] * self.morphology()[None, :, :]
-
-    @property
-    def bbox(self):
-        return self.spectrum.bbox @ self.morphology.bbox
+        # Boxed and centered model
+        delta_center = (self.bbox.center[-2] - self.center[-2], self.bbox.center[-1] - self.center[-1])
+        return self.spectrum()[:, None, None] * self.morphology(delta_center=delta_center)[None, :, :]
 
 
 class DustComponent(Component):
@@ -110,16 +121,6 @@ class PointSource(Source):
             raise
         if frame.psf is None:
             raise AttributeError("PointSource can only be create with a PSF in the model frame")
+        morphology = frame.psf.morphology
 
-        # use frame's PSF but with free center parameter
-        morphology = copy.deepcopy(frame.psf.morphology)
-
-        if isinstance(center, SkyCoord):
-            try:
-                center = Scenery.scene.frame.get_pixel(center)
-            except AttributeError:
-                print("`center` defined in sky coordinates can only be created within the context of a Scene")
-                print("Use 'with Scene(frame) as scene: (...)'")
-                raise
-        object.__setattr__(morphology, 'center', center)
         super().__init__(center, spectrum, morphology)

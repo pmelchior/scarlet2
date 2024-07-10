@@ -9,8 +9,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from jax import jvp, grad, jit
 from matplotlib.patches import Rectangle, Polygon
-from .renderer import ChannelRenderer
+
 from .bbox import Box
+from .renderer import ChannelRenderer
 
 
 def channels_to_rgb(channels):
@@ -899,12 +900,7 @@ def scene(
 
     for k, src in enumerate(scene.sources):
         
-        if hasattr(src.morphology.bbox, "center") and src.morphology.bbox.center is not None:
-            center = np.array(src.morphology.bbox.center)[::-1]
-        else:
-            center = None
-        
-        start, stop = src.morphology.bbox.start[-2:][::-1], src.morphology.bbox.stop[-2:][::-1]
+        start, stop = src.bbox.start[-2:][::-1], src.bbox.stop[-2:][::-1]
         points = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
         box_coords = [
             p for p in points
@@ -927,7 +923,8 @@ def scene(
                     poly = Polygon(box_coords, closed=True, **box_kwargs)
                     ax[panel].add_artist(poly)
 
-        if add_labels and hasattr(src.morphology.bbox, "center") and center is not None:
+        if add_labels:
+            center = np.array(src.center)[::-1]
             panel = 0
             if show_model:
                 ax[panel].text(*center, k, **label_kwargs)
