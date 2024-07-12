@@ -243,11 +243,13 @@ class Moments(dict):
                         g[i, j] /= p[0, 0]
 
     def resize(self, c):
+        # Teague (1980), eq. 34
         raise NotImplementedError
 
     def rotate(self, phi):
+        # Teague (1980), eq. 36
         raise NotImplementedError
-        assert isinstance(phi, Quantity)
+        assert isinstance(phi, Quantity)  # check that it's an angle with a suitable unit
 
     def transfer(self, wcs_in, wcs_out):
         pass
