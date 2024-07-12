@@ -2,7 +2,6 @@ import operator
 from functools import reduce
 
 import jax.numpy as jnp
-from astropy.coordinates import SkyCoord
 
 from . import Scenery
 from . import measure
@@ -26,9 +25,9 @@ def _get_edge_pixels(img, box):
     return jnp.concatenate(edge, axis=1)
 
 
-def adaptive_morphology(obs, center, min_size=11, delta_size=3, min_snr=20, min_corr=0.99, return_array=False):
+def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0.99):
     """
-    Create image of a Gaussian from the centered 2nd moments of the observation.
+    Make a bounding box for source at center.
 
     This method finds small box around the center so that the edge flux has a minimum SNR,
     the color of the edge pixels remains highly correlated to the center pixel color,
@@ -38,8 +37,8 @@ def adaptive_morphology(obs, center, min_size=11, delta_size=3, min_snr=20, min_
     Parameters
     ----------
     obs: `~scarlet2.Observation`
-    center: tuple
-        source enter, in pixel or sky coordinates
+    center_pix: tuple
+        source enter, in pixel coordinates
     min_size: int
         smallest box size
     delta_size: int
@@ -48,25 +47,20 @@ def adaptive_morphology(obs, center, min_size=11, delta_size=3, min_snr=20, min_
         minimum SNR of edge pixels (aggregated over all observation channel) to allow increase of box size
     min_corr: float
         minimum correlation coefficient between center and edge color to allow increase of box size
-    return_array: bool
-        Whether to return arrays or ArraySpectrum and ArrayMorphology
 
     Returns
     -------
-    jnp.ndarrays (for spectrum and morphology) or ArraySpectrum, ArrayMorphology
+    ~scarlet2.Box
     """
     assert isinstance(obs, Observation)
     assert obs.weights is not None, "Observation weights are required"
 
-    if isinstance(center, SkyCoord):
-        center = obs.frame.get_pixel(center)
-
-    peak_spectrum = pixel_spectrum(obs, center, correct_psf=True, return_array=True)
+    peak_spectrum = pixel_spectrum(obs, center_pix, correct_psf=True, return_array=True)
     last_spectrum = peak_spectrum.copy()
     box2d = Box((min_size, min_size))
-    if not obs.frame.bbox.spatial.contains(center):
-        raise ValueError(f"Pixel coordinate expected, got {center}")
-    box2d.set_center(center.astype(int))
+    if not obs.frame.bbox.spatial.contains(center_pix):
+        raise ValueError(f"Pixel coordinate expected, got {center_pix}")
+    box2d.set_center(center_pix.astype(int))
 
     # increase box size until SNR is below threshold or spectrum changes significantly
     while max(box2d.shape) < max(obs.frame.bbox.spatial.shape):
@@ -93,7 +87,7 @@ def adaptive_morphology(obs, center, min_size=11, delta_size=3, min_snr=20, min_
         box2d = box2d.grow(delta_size)
 
     box = obs.frame.bbox[0] @ box2d
-    return gaussian_morphology(obs, box, center=center, return_array=return_array)
+    return box
 
 
 def compact_morphology(min_value=1e-6, return_array=False):
@@ -128,12 +122,11 @@ def compact_morphology(min_value=1e-6, return_array=False):
     return ArrayMorphology(morph)
 
 
-def gaussian_morphology(
+def standardized_moments(
         obs,
+        center,
+        footprint=None,
         bbox=None,
-        center=None,
-        min_value=1e-6,
-        return_array=False
 ):
     """Create image of a Gaussian from the 2nd moments of the observation in the region of the bounding box.
 
@@ -153,18 +146,21 @@ def gaussian_morphology(
     -------
     jnp.ndarrays (for spectrum and morphology) or ArraySpectrum, ArrayMorphology
     """
-    # cut out image from observation
     assert isinstance(obs, Observation)
-
+    # construct box from footprint
     if bbox is None:
-        bbox = Box(obs.data.shape)
+        assert footprint is not None
+        bbox = Box.from_data(footprint)
+    # construct footprint as step function inside bbox
+    if footprint is None:
+        assert bbox is not None
+        footprint = jnp.zeros(obs.frame.bbox.spatial.shape)
+        footprint = footprint.at[bbox.spatial.slices].set(1)
+
+    # cutout image and footprint
     cutout_img = obs.data[bbox.slices]
-    if center is None:
-        # define reference center, flatten image across channels
-        # TODO: use spectrum-based detection coadd instead
-        center = measure.centroid(cutout_img.sum(axis=0))
-    else:
-        center -= jnp.array(bbox.spatial.origin)
+    cutout_fp = footprint[bbox.spatial.slices]
+    center -= jnp.array(bbox.spatial.origin)
 
     try:
         frame = Scenery.scene.frame
@@ -173,43 +169,61 @@ def gaussian_morphology(
         print("Use 'with Scene(frame) as scene: Source(...)'")
         raise
     if frame.psf is None:
-        raise AttributeError("Adaptive morphology can only be create with a PSF in the model frame")
+        raise AttributeError("Adaptive morphology can only be created with a PSF in the model frame")
 
     # getting moment measures:
     # 1) get convolved moments
-    g_ = measure.moments(cutout_img, center=center, N=2)
+    g = measure.moments(cutout_img, center=center, weight=cutout_fp[None, :, :], N=2)
+    # 2) adjust moments for model frame
+    g.transfer(obs.frame.wcs, frame.wcs)
+    # 3) deconvolve from PSF (actually: difference kernel between obs PSF and model frame PSF)
     if hasattr(obs, "_dp"):
-        dp = obs._dp
+        p = obs._dp
     else:
-        # compute the moments of the difference kernel between the model PSF and the observed PSF
-        # TODO: this needs a resampling operation if the two frames have different resolutions
-        # We need obs.frame.psf in the same pixels as model PSF
+        # moments of difference kernel between the model PSF and the observed PSF
         p = measure.moments(obs.frame.psf(), N=2)
+        p.transfer(obs.frame.wcs, frame.wcs)
         p0 = measure.moments(frame.psf(), N=2)
-        dp = measure.deconvolve(p, p0)
+        p.deconvolve(p0)
         # store in obs for repeated use
-        object.__setattr__(obs, "_dp", dp)
-    # 2) deconvolve in moment space
-    g = measure.deconvolve(g_, dp)
-    # 3) average over channels
-    spectrum = g[0, 0].copy()
-    for key in g.keys():
-        g[key] = jnp.median(g[key])  # this is not SNR weighted, which might be better
-    # 4) compute size and ellipticity for a Gaussian
-    T = measure.size(g)
-    ellipticity = measure.ellipticity(g)
+        object.__setattr__(obs, "_dp", p)
+    # 3) deconvolve from difference kernel
+    g.deconvolve(p)
+    return g
 
-    # create image of Gaussian with these 2nd moments
-    if jnp.isfinite(center).all() and jnp.isfinite(T) and jnp.isfinite(ellipticity).all():
-        morph = GaussianMorphology(T, ellipticity, shape=bbox.shape)
-        morph_box = Box(morph.shape)
-        delta_center = (morph_box.center[-2] - center[-2], morph_box.center[-1] - center[-1])
-        morph = morph(delta_center)
-        spectrum /= morph.sum()
-        morph = jnp.maximum(morph, min_value)
+
+def from_gaussian_moments(obs, center, min_size=11, delta_size=3, min_snr=20, min_corr=0.99, min_value=1e-6,
+                          return_array=False):
+    # TODO: implement with source footprints given for each observation
+
+    # get moments from all channels in all observations
+    if not isinstance(obs, (list, tuple)):
+        observations = (obs,)
     else:
-        raise ValueError(
-            f"Gaussian morphology not possible with center={center}, size={T}, and ellipticity={ellipticity}!")
+        observations = obs
+    centers = [obs_.frame.get_pixel(center) for obs_ in observations]
+    boxes = [make_bbox(obs_, center_, min_size=min_size, delta_size=delta_size, min_snr=min_snr, min_corr=min_corr) for
+             obs_, center_ in zip(observations, centers)]
+    moments = [standardized_moments(obs_, center_, bbox=bbox_) for obs_, center_, bbox_ in
+               zip(observations, centers, boxes)]
+
+    # flat lists of spectra, sorted as model frame channels
+    spectra = jnp.concatenate([g[0, 0] for g in moments])
+    channels = reduce(operator.add, [obs_.frame.channels for obs_ in observations])
+    spectrum = sort_spectra(spectra, channels)
+
+    # average over all channels
+    g = moments[0]
+    for key in g.keys():
+        g[key] = jnp.concatenate([g[key] for g in moments])  # combine all observations
+        g[key] = jnp.median(g[key])  # this is not SNR weighted nor consistent aross different moments, but works(?)
+
+    # create morphology and evaluate at center
+    morph = GaussianMorphology.from_moments(g)
+    morph = morph()
+    spectrum /= morph.sum()
+    morph = jnp.maximum(morph, min_value)
+
     if return_array:
         return spectrum, morph
     return ArraySpectrum(spectrum), ArrayMorphology(morph)
@@ -230,10 +244,11 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
 
     Parameters
     ----------
-    obs: `~scarlet2.Observation`
-        Observation to extract SED from
+    obs: `~scarlet2.Observation` or lists of observations
+        Observation(s) to extract pixel SED from
     pos: tuple
-        Position in the observation
+        Position in the observation. Needs to be in sky coordinates if multiple observations have different locations
+        or pixel scales.
     correct_psf: bool
         Whether PSF shape variations in the observations should be corrected
     return_array: bool
@@ -251,24 +266,7 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
         spectra = jnp.concatenate(
             [pixel_spectrum(obs_, pos, correct_psf=correct_psf, return_array=True) for obs_ in obs])
         channels = reduce(operator.add, [obs_.frame.channels for obs_ in obs])
-
-        try:
-            frame = Scenery.scene.frame
-        except AttributeError:
-            print("Multi-observation initialization can only be created within the context of a Scene")
-            print("Use 'with Scene(frame) as scene: ...")
-            raise
-
-        spectrum = []
-        for channel in frame.channels:
-            try:
-                idx = channels.index(channel)
-                spectrum.append(spectra[idx])
-            except ValueError:
-                msg = f"Channel '{channel}' not found in observations. Setting amplitude to 0."
-                print(msg)
-                spectrum.append(0)
-        spectrum = jnp.array(spectrum)
+        spectrum = sort_spectra(spectra, channels)
 
         if return_array:
             return spectrum
@@ -276,11 +274,7 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
 
     assert isinstance(obs, Observation)
 
-    if isinstance(pos, SkyCoord):
-        pixel = obs.frame.get_pixel(pos)
-    else:
-        pixel = pos
-    pixel = pixel.astype(int)
+    pixel = obs.frame.get_pixel(pos).astype(int)
 
     if not obs.frame.bbox.spatial.contains(pixel):
         raise ValueError(f"Pixel coordinate expected, got {pixel}")
@@ -320,3 +314,24 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
     if return_array:
         return spectrum
     return ArraySpectrum(spectrum)
+
+
+def sort_spectra(spectra, channels):
+    try:
+        frame = Scenery.scene.frame
+    except AttributeError:
+        print("Multi-observation initialization can only be created within the context of a Scene")
+        print("Use 'with Scene(frame) as scene: ...")
+        raise
+
+    spectrum = []
+    for channel in frame.channels:
+        try:
+            idx = channels.index(channel)
+            spectrum.append(spectra[idx])
+        except ValueError:
+            msg = f"Channel '{channel}' not found in observations. Setting amplitude to 0."
+            print(msg)
+            spectrum.append(0)
+    spectrum = jnp.array(spectrum)
+    return spectrum
