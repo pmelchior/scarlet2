@@ -1,6 +1,5 @@
 import numpy as jnp
 import numpy.ma as ma
-import numpy as np
 import math
 import astropy.units as u
 
@@ -271,10 +270,17 @@ class Moments(dict):
                         g[i, j] /= p[0, 0]
 
     def resize(self, c):
+        """
+        Resize moments given a scaling factor c
+        """
         # Teague (1980), eq. 34
-        raise NotImplementedError
+        for e in self:
+            self[e] = self[e] * c**(2+e[0]+e[1])
 
     def rotate(self, phi):
+        """
+        Rotate moments given a rotation angle phi (in astropy units)
+        """
         # Teague (1980), eq. 36
 
         assert u.get_physical_type(phi) == "angle" # check that it's an angle with a suitable unit

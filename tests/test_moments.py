@@ -41,8 +41,25 @@ def test_rotate_moments():
     # and measure its moments
     g2 = scarlet2.measure.moments(jnp.rot90(morph()))
 
-    # rotate moments of the original image
+    # rotate moments computed on the original image
     g.rotate(a)
     g.ellipticity
 
     assert_allclose(g.ellipticity, g2.ellipticity, rtol=1e-6)
+
+def test_resize_moments():
+    c = 0.5
+
+    # resize the image
+    morph2 = GaussianMorphology(size=T0*c, 
+                            ellipticity=ellipticity,
+                            shape=morph().shape)
+    g2 = scarlet2.measure.moments(morph2(),2)
+
+    # resize moments computed on the original image
+    g = scarlet2.measure.moments(component=morph(), N=2)
+    g.resize(0.5)
+
+    assert_allclose(g.size, g2.size, rtol=1e-3)
+
+
