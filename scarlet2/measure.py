@@ -272,10 +272,17 @@ class Moments(dict):
     def resize(self, c):
         """
         Resize moments given a scaling factor c
+        scaling can be different along x and y (c is therefore a list [c1, c2])
         """
         # Teague (1980), eq. 34
-        for e in self:
-            self[e] = self[e] * c**(2+e[0]+e[1])
+        if jnp.isscalar(c):
+            for e in self:
+                self[e] = self[e] * c**(2+e[0]+e[1])
+        elif len(c)==2:
+            for e in self:
+                self[e] = self[e] * c[0]**(e[0]+1) * c[1]**(e[1]+1)
+        else:
+            raise AttributeError("c must be a scalar of a list or array of two components")
 
     def rotate(self, phi):
         """
@@ -304,11 +311,30 @@ class Moments(dict):
         
         for e in self:
             self[e] = mu_p[e]
-
+        
     def transfer(self, wcs_in, wcs_out):
-        pass
-        # compute rescaling and rotation from WCSs and apply to moments
-        # raise NotImplementedError
+        """
+        Compute rescaling and rotation from WCSs and apply to moments
+        wcs_in: astropy.wcs.Wcsprm
+        wcs_out: astropy.wcs.Wcsprm
+        """
+            
+        # Rescale moments (amplitude rescaling)
+        scale_in = get_scale(wcs_in) * 60**2 # arcsec
+        scale_out = get_scale(wcs_out) * 60**2 # arcsec
+        c = jnp.array(scale_in) / jnp.array(scale_out)
+        self.resize(c)
+
+        # Rotate moments
+        phi_in = get_angle(wcs_in)
+        phi_out = get_angle(wcs_out)
+        phi = (phi_out - phi_in)/jnp.pi*180
+        self.rotate(phi*u.deg)
+
+        # Flip moments if WCSs don't share the same convention
+        sign_in = get_sign(wcs_in)
+        sign_out = get_sign(wcs_out)
+        self.resize(sign_in*sign_out)
 
 
 # adapted from  https://github.com/pmelchior/shapelens/blob/src/DEIMOS.cc
@@ -322,3 +348,26 @@ def binomial(n, k):
         result *= n - i + 1
         result //= i
     return result
+
+def get_scale(wcs):
+    c1 = (wcs.pc[0,:2]**2).sum()**0.5
+    c2 = (wcs.pc[1,:2]**2).sum()**0.5
+    return jnp.array([c1, c2])
+    
+def get_angle(wcs):
+    c = jnp.array(get_scale(wcs))
+    c = c.reshape([c.shape[-1],1])
+    R = wcs.pc[:2, :2] / c # removing the scaling factors from the pc
+    return jnp.arcsin(jnp.abs(R[0,1])) # R[0,1]=sin(phi) should be positive
+
+def get_sign(wcs):
+    c = jnp.array(get_scale(wcs))
+    c = c.reshape([c.shape[-1],1])
+    R = wcs.pc[:2, :2] / c # removing the absolute scaling factors from the pc
+
+    phi = jnp.arcsin(jnp.abs(R[0,1])) # R[0,1]=sin(phi) should be positive
+    R_inv = jnp.array([[jnp.cos(phi), -jnp.sin(phi)],
+                    [jnp.sin(phi), jnp.cos(phi)]])
+    
+    R = R_inv @ R
+    return jnp.diag(R)
