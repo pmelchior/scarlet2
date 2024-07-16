@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+from jax import vmap
 import scarlet2
 from scarlet2 import *
 from numpy.testing import assert_allclose
@@ -146,3 +147,43 @@ def test_wcs_transfer_w_flip_moments():
     # Check that size and ellipticity are conserved
     assert_allclose(g1.size, g0.size, rtol=1e-3)
     assert_allclose(g1.ellipticity, g0.ellipticity, rtol=1e-2)
+
+def test_wcs_transfer_moments_multichannels():
+
+    # Load the HSC image WCS
+    obs_hdu = fits.open(os.path.join(data_path, "test_resampling", "Cut_HSC1.fits"))
+    wcs_hsc = WCS(obs_hdu[0].header)
+
+    # Load the HST image WCS
+    hst_hdu = fits.open(os.path.join(data_path, "test_resampling", "Cut_HST1.fits"))
+    wcs_hst = WCS(hst_hdu[0].header)
+
+    # Mock a rotation of 90 deg counter-clockwise of the HST WCS 
+    phi = 90 / 180 * jnp.pi # in rad
+    R = jnp.array([[jnp.cos(phi), jnp.sin(phi)],
+                   [-jnp.sin(phi), jnp.cos(phi)]])
+
+    wcs_hst.wcs.pc = R @ wcs_hst.wcs.pc
+
+    nc = 5
+    im_hst = jnp.repeat(morph()[None,:,:], repeats=nc, axis=0)
+    im_hst = vmap(jnp.rot90)(im_hst)
+
+    # Generate the same image seen from HSC
+    h = (get_scale(wcs_hst.wcs) / get_scale(wcs_hsc.wcs)).mean()
+    T1 = T0 * h 
+    ellipticity1 = jnp.array((0.3,0.5))
+    morph1 = GaussianMorphology(size=T1, ellipticity=ellipticity1, shape=im_hst.shape)
+    im_hsc = morph1()
+
+    # Measure moments of the HST image
+    g0 = scarlet2.measure.moments(im_hst)
+
+    # Measure moments of the HSC image
+    g1 = scarlet2.measure.moments(im_hsc)
+
+    # Transfer moments from HST to HSC frame
+    g0.transfer(wcs_hst.wcs, wcs_hsc.wcs)
+    # Check that size and ellipticity are conserved
+    assert_allclose(jnp.repeat(g1.size, nc), g0.size, rtol=1e-3)
+    assert_allclose(jnp.repeat(g1.ellipticity[:,None], nc, 1), g0.ellipticity, rtol=1e-2)
