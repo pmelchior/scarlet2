@@ -355,13 +355,13 @@ def get_scale(wcs):
     return jnp.array([c1, c2])
     
 def get_angle(wcs):
-    c = jnp.array(get_scale(wcs))
+    c = get_scale(wcs)
     c = c.reshape([c.shape[-1],1])
     R = wcs.pc[:2, :2] / c # removing the scaling factors from the pc
     return jnp.arcsin(jnp.abs(R[0,1])) # R[0,1]=sin(phi) should be positive
 
 def get_sign(wcs):
-    c = jnp.array(get_scale(wcs))
+    c = get_scale(wcs)
     c = c.reshape([c.shape[-1],1])
     R = wcs.pc[:2, :2] / c # removing the absolute scaling factors from the pc
 
