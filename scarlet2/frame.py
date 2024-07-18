@@ -1,13 +1,13 @@
+import astropy.units as u
 import astropy.wcs.wcs
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-
 from astropy.coordinates import SkyCoord
-import astropy.units as u
 
 from .bbox import Box
 from .psf import PSF
+
 
 class Frame(eqx.Module):
     bbox: Box
@@ -39,44 +39,43 @@ class Frame(eqx.Module):
         else:
             return 1
 
-    def get_pixel(self, sky_coord):
+    def get_pixel(self, pos):
         """Get the sky coordinates from a world coordinate
 
         Parameters
         ----------
-        sky_coord: SkyCoord, or list of Skycoords
+        pos: jnp.ndarray or SkyCoord
             Coordinates on the sky
 
         Returns
         ---------
         pixel coordinates in the model frame
         """
-        assert self.wcs is not None
-        wcs_ = self.wcs.celestial # only use celestial portion
-        
-        pixel = jnp.asarray(sky_coord.to_pixel(wcs_), dtype="float32").T
+        if isinstance(pos, SkyCoord):
+            assert self.wcs is not None, "SkyCoord can only be converted with valid WCS"
+            wcs_ = self.wcs.celestial  # only use celestial portion
+            pixel = jnp.asarray(pos.to_pixel(wcs_), dtype="float32").T
+            return pixel
+        return pos
 
-        return pixel
-    
-    def get_sky_coord(self, pixels):
+    def get_sky_coord(self, pos):
         """Get the sky coordinate from a pixel coordinate
 
         Parameters
         ----------
-        pixel: array of pixel coordinates 
+        pos: jnp.ndarray
             Coordinates in the pixel space
 
         Returns
         ----------
-        astropy.coordinates.SkyCoord
+        astropy.coordinates.SkyCoord if WCS is set, otherwise pos
         """
-        pixels = pixels.reshape(-1, 2)
-
-        assert self.wcs is not None
-        wcs = self.wcs.celestial # only use celestial portion
-        sky_coord = SkyCoord.from_pixel(pixels[:,0], pixels[:,1], wcs)
-
-        return sky_coord
+        if self.wcs is not None:
+            pixels = pos.reshape(-1, 2)
+            wcs = self.wcs.celestial  # only use celestial portion
+            sky_coord = SkyCoord.from_pixel(pixels[:, 0], pixels[:, 1], wcs)
+            return sky_coord
+        return pos
     
     def convert_pixel_to(self, target, pixel=None):
         """Converts pixel coordinates from this frame to `target` Frame

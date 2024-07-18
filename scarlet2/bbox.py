@@ -1,5 +1,5 @@
 import equinox as eqx
-
+import jax.numpy as jnp
 
 class Box(eqx.Module):
     """Bounding Box for an object
@@ -35,12 +35,38 @@ class Box(eqx.Module):
 
         Returns
         -------
-        bbox: :class:`scarlet.bbox.Box`
+        bbox: :class:`scarlet2.bbox.Box`
             A new box bounded by the input bounds.
         """
         shape = tuple(max(0, cmax - cmin) for cmin, cmax in bounds)
         origin = (cmin for cmin, cmax in bounds)
         return Box(shape, origin=origin)
+
+    @staticmethod
+    def from_data(X, min_value=0):
+        """Define box where `X` is above `min_value`
+
+        Parameters
+        ----------
+        X: jnp.ndarray
+            Data to threshold
+        min_value: float
+            Minimum value of the result.
+
+        Returns
+        -------
+        bbox: :class:`scarlet2.bbox.Box`
+            Bounding box for the thresholded `X`
+        """
+        sel = X > min_value
+        if sel.any():
+            nonzero = jnp.where(sel)
+            bounds = []
+            for dim in range(len(X.shape)):
+                bounds.append((nonzero[dim].min(), nonzero[dim].max() + 1))
+        else:
+            bounds = [[0, 0]] * len(X.shape)
+        return Box.from_bounds(*bounds)
 
     def contains(self, p):
         """Whether the box contains a given coordinate `p`
