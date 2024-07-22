@@ -358,16 +358,27 @@ def get_angle(wcs):
     c = get_scale(wcs)
     c = c.reshape([c.shape[-1],1])
     R = wcs.pc[:2, :2] / c # removing the scaling factors from the pc
-    return jnp.arcsin(jnp.abs(R[0,1])) # R[0,1]=sin(phi) should be positive
+
+    if R[0,0]==0.:
+        return jnp.arcsin(R[0,1])
+    else:
+        return jnp.arctan(R[0,1]/R[0,0])
 
 def get_sign(wcs):
     c = get_scale(wcs)
     c = c.reshape([c.shape[-1],1])
     R = wcs.pc[:2, :2] / c # removing the absolute scaling factors from the pc
 
-    phi = jnp.arcsin(jnp.abs(R[0,1])) # R[0,1]=sin(phi) should be positive
+    if R[0,0]==0.:
+        phi = jnp.arcsin(R[0,1])
+    else:
+        phi = jnp.arctan(R[0,1]/R[0,0])
+    
     R_inv = jnp.array([[jnp.cos(phi), -jnp.sin(phi)],
                     [jnp.sin(phi), jnp.cos(phi)]])
     
     R = R_inv @ R
     return jnp.diag(R)
+
+
+
