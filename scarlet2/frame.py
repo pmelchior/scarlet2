@@ -7,6 +7,7 @@ from astropy.coordinates import SkyCoord
 
 from .bbox import Box
 from .psf import PSF
+from .measure import get_scale
 
 
 class Frame(eqx.Module):
@@ -35,7 +36,8 @@ class Frame(eqx.Module):
     @property
     def pixel_size(self):
         if self.wcs is not None:
-            return get_pixel_size(get_affine(self.wcs)) * 60 * 60  # in arcsec
+            # return get_pixel_size(get_affine(self.wcs)) * 60 * 60  # in arcsec
+            return get_scale(self.wcs.wcs).mean() * 60 * 60 # in arcsec
         else:
             return 1
 

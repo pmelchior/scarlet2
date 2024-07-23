@@ -8,6 +8,8 @@ from .interpolation import resample_ops
 
 from .fft import wrap_hermitian_x
 
+from .measure import get_angle
+
 class Renderer(eqx.Module):
     def __call__(
         self, model, key=None
@@ -179,15 +181,22 @@ class ResamplingMultiresRenderer(Renderer):
         object.__setattr__(self, "res_in", model_frame.pixel_size)
         object.__setattr__(self, "res_out", obs_frame.pixel_size)
 
+        # Extract rotation angle between WCSs using jacobian matricies
+        angle_in = get_angle(model_frame.wcs.wcs)
+        angle_out = get_angle(obs_frame.wcs.wcs)
+        object.__setattr__(self, "rotation_angle", angle_out - angle_in )
+
     def __call__(self, kimages, key=None):
 
         model_kim, model_kpsf, obs_kpsf = kimages
 
         model_kim_interp = resample_ops(model_kim, model_kim.shape[-2], 
-                                        self.fft_shape_target, self.res_in, self.res_out)
+                                        self.fft_shape_target, self.res_in, self.res_out,
+                                        phi=self.rotation_angle)
 
         model_kpsf_interp = resample_ops(model_kpsf, model_kpsf.shape[-2], 
-                                        self.fft_shape_target, self.res_in, self.res_out)
+                                        self.fft_shape_target, self.res_in, self.res_out,
+                                        phi=self.rotation_angle)
         
         obs_kpsf_interp = resample_ops(obs_kpsf, obs_kpsf.shape[-2], 
                                         self.fft_shape_target, self.res_out, self.res_out)

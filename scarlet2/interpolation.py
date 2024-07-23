@@ -266,17 +266,34 @@ def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):
 
     return res.reshape(warp[..., 0].shape)
 
-def resample_ops(kimage, shape_in, shape_out, res_in, res_out, interpolant=Quintic()):
+def resample_ops(kimage, shape_in, shape_out, res_in, res_out, phi=None, interpolant=Quintic()):
     """
     Resampling operation used in the Multiresolution Renderers
     This is assuming that the signal is Hermitian and starting at 0 on axis=2,
     i.e. f(-x, -y) = conjugate(f(x, y))
     """
+    
+    # Apply rescaling to the frequencies
+    # [0, Fe/2+1]
+    # [-Fe/2+1, Fe/2]
     kcoords_out = jnp.stack(jnp.meshgrid(
-        jnp.linspace(0, shape_in/2 / res_out*res_in, shape_out//2+1),
-        jnp.linspace(-shape_in/2/res_out*res_in, shape_in/2/res_out*res_in, shape_out)
-        ),
-        -1)
+        jnp.linspace(0, 
+                     shape_in / 2 / res_out * res_in, 
+                     shape_out // 2 + 1),
+        jnp.linspace(-shape_in / 2 / res_out * res_in, 
+                     shape_in / 2 / res_out * res_in, 
+                     shape_out)
+        ), -1)
+    
+    # Apply rotation to the frequencies
+    if phi is not None:
+        R = jnp.array([[jnp.cos(phi), jnp.sin(phi)],
+                       [-jnp.sin(phi), jnp.cos(phi)]])
+        
+        b_shape = kcoords_out.shape
+        kcoords_out = (R @ kcoords_out.reshape((-1, 2)).T).T.reshape((b_shape))
+
+    # TODO: Apply flip on rotation if any
     
     k_resampled = jax.vmap(resample_hermitian, in_axes=(0,None,None,None,None))(
         kimage,
