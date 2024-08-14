@@ -8,7 +8,7 @@ from .interpolation import resample_ops
 
 from .fft import wrap_hermitian_x
 
-from .measure import get_angle
+from .measure import get_angle, get_sign
 
 class Renderer(eqx.Module):
     def __call__(
@@ -181,10 +181,15 @@ class ResamplingMultiresRenderer(Renderer):
         object.__setattr__(self, "res_in", model_frame.pixel_size)
         object.__setattr__(self, "res_out", obs_frame.pixel_size)
 
-        # Extract rotation angle between WCSs using jacobian matricies
+        # Extract rotation angle between WCSs using jacobian matrices
         angle_in = get_angle(model_frame.wcs.wcs)
         angle_out = get_angle(obs_frame.wcs.wcs)
         object.__setattr__(self, "rotation_angle", angle_out - angle_in )
+
+        # Get flip sign between WCSs using jacobian matrices
+        sign_in = get_sign(model_frame.wcs.wcs)
+        sign_out = get_sign(obs_frame.wcs.wcs)
+        object.__setattr__(self, "flip_sign", sign_in*sign_out)
 
     def __call__(self, kimages, key=None):
 
@@ -192,11 +197,13 @@ class ResamplingMultiresRenderer(Renderer):
 
         model_kim_interp = resample_ops(model_kim, model_kim.shape[-2], 
                                         self.fft_shape_target, self.res_in, self.res_out,
-                                        phi=self.rotation_angle)
+                                        phi=self.rotation_angle,
+                                        flip_sign=self.flip_sign)
 
         model_kpsf_interp = resample_ops(model_kpsf, model_kpsf.shape[-2], 
                                         self.fft_shape_target, self.res_in, self.res_out,
-                                        phi=self.rotation_angle)
+                                        phi=self.rotation_angle,
+                                        flip_sign=self.flip_sign)
         
         obs_kpsf_interp = resample_ops(obs_kpsf, obs_kpsf.shape[-2], 
                                         self.fft_shape_target, self.res_out, self.res_out)
