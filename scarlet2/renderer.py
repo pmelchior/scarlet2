@@ -184,8 +184,11 @@ class ResamplingMultiresRenderer(Renderer):
         # Extract rotation angle between WCSs using jacobian matrices
         angle_in = get_angle(model_frame.wcs.wcs)
         angle_out = get_angle(obs_frame.wcs.wcs)
-        object.__setattr__(self, "rotation_angle", angle_out - angle_in )
-
+        if angle_out - angle_in == 0:
+            object.__setattr__(self, "rotation_angle", None)
+        else:
+            object.__setattr__(self, "rotation_angle", angle_out - angle_in)
+        
         # Get flip sign between WCSs using jacobian matrices
         sign_in = get_sign(model_frame.wcs.wcs)
         sign_out = get_sign(obs_frame.wcs.wcs)
