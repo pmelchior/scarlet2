@@ -154,9 +154,7 @@ class Moments(dict):
 
         if weight is None:
             weight = 1
-        self.weight = weight
 
-        self.model = model
         grid_y, grid_x = jnp.indices(model.shape[-2:])
 
         if model.ndim == 3:
@@ -184,28 +182,6 @@ class Moments(dict):
                     center = center[0][:, None, None], center[1][:, None, None]
                 grid_y = grid_y - center[0]
                 grid_x = grid_x - center[1]
-    
-    def higher_order_moments(self):
-        """
-        Compte higher order moments up to N and add them to the moments dictionary
-        """
-
-        grid_y, grid_x = jnp.indices(self.model.shape[-2:])
-        
-        if self.model.ndim == 3:
-            grid_y = grid_y[None, :, :]
-            grid_x = grid_x[None, :, :]
-        
-        g_update = {}
-        for e in self:
-            g_update[e] = self[e]
-
-        for n in range(self.N+1, 2*self.N + 1):
-            for m in range(n + 1):
-                # moments ordered by power in y, then x
-                g_update[m, n - m] = (grid_y ** m * grid_x ** (n - m) * self.model * self.weight).sum(axis=(-2, -1))
-
-        return g_update
 
     @property
     def order(self):
@@ -294,8 +270,6 @@ class Moments(dict):
         phi = phi.to(u.deg).value
         phi = phi * math.pi / 180 # radian
 
-        g_update = self.higher_order_moments()
-
         mu_p = {}
         for n in range(self.N+1):
             for m in range(n+1):
@@ -306,7 +280,7 @@ class Moments(dict):
                     for s in range(k+1):
                         value += (-1)**(k-s) * binomial(j, r)*binomial(k, s) *\
                               jnp.cos(phi)**(j-r+s) * jnp.sin(phi)**(k+r-s) *\
-                                  g_update[j+k-r-s, r+s]
+                                  self[j+k-r-s, r+s]
                 mu_p[m, n-m] = value
         
         for e in self:
