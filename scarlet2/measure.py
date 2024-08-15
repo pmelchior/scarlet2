@@ -318,23 +318,25 @@ class Moments(dict):
         wcs_in: astropy.wcs.Wcsprm
         wcs_out: astropy.wcs.Wcsprm
         """
-            
-        # Rescale moments (amplitude rescaling)
-        scale_in = get_scale(wcs_in) * 60**2 # arcsec
-        scale_out = get_scale(wcs_out) * 60**2 # arcsec
-        c = jnp.array(scale_in) / jnp.array(scale_out)
-        self.resize(c)
 
-        # Rotate moments
-        phi_in = get_angle(wcs_in)
-        phi_out = get_angle(wcs_out)
-        phi = (phi_out - phi_in)/jnp.pi*180
-        self.rotate(phi*u.deg)
+        if (wcs_in is not None) and (wcs_out is not None):
 
-        # Flip moments if WCSs don't share the same convention
-        sign_in = get_sign(wcs_in)
-        sign_out = get_sign(wcs_out)
-        self.resize(sign_in*sign_out)
+            # Rescale moments (amplitude rescaling)
+            scale_in = get_scale(wcs_in) * 60**2 # arcsec
+            scale_out = get_scale(wcs_out) * 60**2 # arcsec
+            c = jnp.array(scale_in) / jnp.array(scale_out)
+            self.resize(c)
+
+            # Rotate moments
+            phi_in = get_angle(wcs_in)
+            phi_out = get_angle(wcs_out)
+            phi = (phi_out - phi_in)/jnp.pi*180
+            self.rotate(phi*u.deg)
+
+            # Flip moments if WCSs don't share the same convention
+            sign_in = get_sign(wcs_in)
+            sign_out = get_sign(wcs_out)
+            self.resize(sign_in*sign_out)
 
 
 # adapted from  https://github.com/pmelchior/shapelens/blob/src/DEIMOS.cc
