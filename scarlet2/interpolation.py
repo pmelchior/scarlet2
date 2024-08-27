@@ -294,10 +294,6 @@ def resample_ops(kimage, shape_in, shape_out, res_in, res_out, phi=None, flip_si
         b_shape = kcoords_out.shape
         kcoords_out = (R @ kcoords_out.reshape((-1, 2)).T).T.reshape((b_shape))
 
-    # TODO: Apply flip on rotation if any
-    # if flip_sign is not None:
-    #     kcoords_out = kcoords_out*flip_sign.reshape((2,1,1))
-
     k_resampled = jax.vmap(resample_hermitian, in_axes=(0,None,None,None,None))(
         kimage,
         kcoords_out,
@@ -306,9 +302,6 @@ def resample_ops(kimage, shape_in, shape_out, res_in, res_out, phi=None, flip_si
         interpolant
         )
     
-    # TODO: Apply flip on rotation if any
-    # k_resampled *= flip_sign.prod()
-
     kx = jnp.linspace(0, jnp.pi, shape_out//2 + 1) * res_in/res_out
     ky = jnp.linspace(-jnp.pi, jnp.pi, shape_out)
     coords = jnp.stack(jnp.meshgrid(kx, ky),-1) / 2 / jnp.pi

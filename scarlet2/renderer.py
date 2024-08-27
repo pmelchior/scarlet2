@@ -192,6 +192,9 @@ class ResamplingMultiresRenderer(Renderer):
         # Get flip sign between WCSs using jacobian matrices
         sign_in = get_sign(model_frame.wcs)
         sign_out = get_sign(obs_frame.wcs)
+        if (sign_in != sign_out).any():
+            raise ValueError("model and observation WCSs have different sign conventions, which is not yet handled by scarlet2")
+
         object.__setattr__(self, "flip_sign", sign_in*sign_out)
 
     def __call__(self, kimages, key=None):
