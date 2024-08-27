@@ -54,7 +54,7 @@ class ProfileMorphology(Morphology):
         # default shape: square 10x size
         if shape is None:
             # explicit call to int() to avoid bbox sizes being jax-traced
-            size = 10 * int(jnp.ceil(self.size))
+            size = int(jnp.ceil(10 * self.size))
             # odd shapes for unique center pixel
             if size % 2 == 0:
                 size += 1
@@ -124,15 +124,19 @@ class GaussianMorphology(ProfileMorphology):
         center = measure.centroid(image)
         # compute moments and create Gaussian from it
         g = measure.moments(image, center=center, N=2)
-        T = measure.size(g)
-        ellipticity = measure.ellipticity(g)
+        return GaussianMorphology.from_moments(g)
+
+    @staticmethod
+    def from_moments(g):
+        T = g.size
+        ellipticity = g.ellipticity
 
         # create image of Gaussian with these 2nd moments
-        if jnp.isfinite(center).all() and jnp.isfinite(T) and jnp.isfinite(ellipticity).all():
+        if jnp.isfinite(T) and jnp.isfinite(ellipticity).all():
             morph = GaussianMorphology(T, ellipticity)
         else:
             raise ValueError(
-                f"Gaussian morphology not possible with center={center}, size={T}, and ellipticity={ellipticity}!")
+                f"Gaussian morphology not possible with size={T}, and ellipticity={ellipticity}!")
         return morph
 
 

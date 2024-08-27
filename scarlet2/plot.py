@@ -303,7 +303,8 @@ def img_to_3channel(img, channel_map=None, fill_value=0):
     RGB: numpy array with dtype float
     """
     # expand single img into cube
-    assert len(img.shape) in [2, 3]
+
+    assert img.ndim in [2, 3]
     if len(img.shape) == 2:
         ny, nx = img.shape
         img_ = img.reshape(1, ny, nx)
@@ -760,7 +761,7 @@ def sources(
 
 
 def scene(
-    scene,
+        scene,
         observation=None,
         norm=None,
         channel_map=None,
@@ -852,9 +853,9 @@ def scene(
     model = scene()
     if show_model:
         extent = get_extent(observation.frame.bbox)
-        if channel_map is None:
-            c = ChannelRenderer(scene.frame, observation.frame).channel_map
-            model_ = model[c]
+        if observation is not None:
+            c = ChannelRenderer(scene.frame, observation.frame)
+            model_ = c(model)
         else:
             model_ = model
         model_img = ax[panel].imshow(

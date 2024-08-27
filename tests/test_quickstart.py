@@ -29,7 +29,7 @@ def test_quickstart():
         for center in centers:
             center = jnp.array(center)
             try:
-                spectrum, morph = init.adaptive_morphology(obs, center, min_corr=0.99)
+                spectrum, morph = init.from_gaussian_moments(obs, center, min_corr=0.99)
             except ValueError:
                 spectrum = init.pixel_spectrum(obs, center)
                 morph = init.compact_morphology()
