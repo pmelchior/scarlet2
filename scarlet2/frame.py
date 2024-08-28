@@ -8,7 +8,6 @@ from astropy.coordinates import SkyCoord
 from .bbox import Box
 from .psf import PSF
 
-
 class Frame(eqx.Module):
     bbox: Box
     psf: PSF = None
@@ -35,7 +34,8 @@ class Frame(eqx.Module):
     @property
     def pixel_size(self):
         if self.wcs is not None:
-            return get_pixel_size(get_affine(self.wcs)) * 60 * 60  # in arcsec
+            # return get_pixel_size(get_affine(self.wcs)) * 60 * 60  # in arcsec
+            return get_scale(self.wcs).mean() * 60 * 60 # in arcsec
         else:
             return 1
 
@@ -315,3 +315,46 @@ def get_pixel_size(model_affine):
         * np.abs(model_affine[1, 1] - model_affine[0, 1] * model_affine[1, 0])
     )
     return pix
+
+def get_scale(wcs):
+    """
+    Return WCS axis scales in deg/pixel
+    """
+    model_affine = get_affine(wcs)
+    c1 = (model_affine[0,:2]**2).sum()**0.5
+    c2 = (model_affine[1,:2]**2).sum()**0.5
+    return jnp.array([c1, c2])
+    
+def get_angle(wcs):
+    """
+    Return WCS rotation angle in rad
+    """
+    model_affine = get_affine(wcs)
+    c = get_scale(wcs)
+    c = c.reshape([c.shape[-1],1])
+    R = model_affine[:2, :2] / c # removing the scaling factors from the pc
+
+    if R[0,0]==0.:
+        return jnp.arcsin(R[0,1])
+    else:
+        return jnp.arctan(R[0,1]/R[0,0])
+
+def get_sign(wcs):
+    """
+    Return WCS flip signs
+    """
+    model_affine = get_affine(wcs)
+    c = get_scale(wcs)
+    c = c.reshape([c.shape[-1],1])
+    R = model_affine[:2, :2] / c # removing the absolute scaling factors from the pc
+
+    if R[0,0]==0.:
+        phi = jnp.arcsin(R[0,1])
+    else:
+        phi = jnp.arctan(R[0,1]/R[0,0])
+    
+    R_inv = jnp.array([[jnp.cos(phi), -jnp.sin(phi)],
+                    [jnp.sin(phi), jnp.cos(phi)]])
+    
+    R = R_inv @ R
+    return jnp.diag(R)

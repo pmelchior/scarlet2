@@ -4,7 +4,7 @@ import math
 import astropy.units as u
 
 from .source import Component
-
+from .frame import get_scale, get_angle, get_sign
 
 def max_pixel(component):
     """Determine pixel with maximum value
@@ -325,25 +325,5 @@ def binomial(n, k):
         result //= i
     return result
 
-def get_scale(wcs):
-    c1 = (wcs.pc[0,:2]**2).sum()**0.5
-    c2 = (wcs.pc[1,:2]**2).sum()**0.5
-    return jnp.array([c1, c2])
-    
-def get_angle(wcs):
-    c = get_scale(wcs)
-    c = c.reshape([c.shape[-1],1])
-    R = wcs.pc[:2, :2] / c # removing the scaling factors from the pc
-    return jnp.arcsin(jnp.abs(R[0,1])) # R[0,1]=sin(phi) should be positive
 
-def get_sign(wcs):
-    c = get_scale(wcs)
-    c = c.reshape([c.shape[-1],1])
-    R = wcs.pc[:2, :2] / c # removing the absolute scaling factors from the pc
 
-    phi = jnp.arcsin(jnp.abs(R[0,1])) # R[0,1]=sin(phi) should be positive
-    R_inv = jnp.array([[jnp.cos(phi), -jnp.sin(phi)],
-                    [jnp.sin(phi), jnp.cos(phi)]])
-    
-    R = R_inv @ R
-    return jnp.diag(R)

@@ -87,7 +87,7 @@ def test_wcs_transfer_moments():
     im_hst = jnp.rot90(morph())
 
     # Generate the same image seen from HSC
-    h = (get_scale(wcs_hst.wcs) / get_scale(wcs_hsc.wcs)).mean()
+    h = (get_scale(wcs_hst) / get_scale(wcs_hsc)).mean()
     T1 = T0 * h 
     ellipticity1 = jnp.array((0.3,0.5))
     morph1 = GaussianMorphology(size=T1, ellipticity=ellipticity1, shape=im_hst.shape)
@@ -100,7 +100,7 @@ def test_wcs_transfer_moments():
     g1 = scarlet2.measure.moments(im_hsc)
 
     # Transfer moments from HST to HSC frame
-    g0.transfer(wcs_hst.wcs, wcs_hsc.wcs)
+    g0.transfer(wcs_hst, wcs_hsc)
 
     # Check that size and ellipticity are conserved
     assert_allclose(g1.size, g0.size, rtol=1e-3)
@@ -129,7 +129,7 @@ def test_wcs_transfer_w_flip_moments():
     im_hst = jnp.rot90(morph())[:,::-1]
 
     # Generate the same image seen from HSC
-    h = (get_scale(wcs_hst.wcs) / get_scale(wcs_hsc.wcs)).mean()
+    h = (get_scale(wcs_hst) / get_scale(wcs_hsc)).mean()
     T1 = T0 * h 
     ellipticity1 = jnp.array((0.3,0.5))
     morph1 = GaussianMorphology(size=T1, ellipticity=ellipticity1, shape=im_hst.shape)
@@ -142,7 +142,7 @@ def test_wcs_transfer_w_flip_moments():
     g1 = scarlet2.measure.moments(im_hsc)
 
     # Transfer moments from HST to HSC frame
-    g0.transfer(wcs_hst.wcs, wcs_hsc.wcs)
+    g0.transfer(wcs_hst, wcs_hsc)
 
     # Check that size and ellipticity are conserved
     assert_allclose(g1.size, g0.size, rtol=1e-3)
@@ -170,7 +170,7 @@ def test_wcs_transfer_moments_multichannels():
     im_hst = vmap(jnp.rot90)(im_hst)
 
     # Generate the same image seen from HSC
-    h = (get_scale(wcs_hst.wcs) / get_scale(wcs_hsc.wcs)).mean()
+    h = (get_scale(wcs_hst) / get_scale(wcs_hsc)).mean()
     T1 = T0 * h 
     ellipticity1 = jnp.array((0.3,0.5))
     morph1 = GaussianMorphology(size=T1, ellipticity=ellipticity1, shape=im_hst.shape)
@@ -183,7 +183,7 @@ def test_wcs_transfer_moments_multichannels():
     g1 = scarlet2.measure.moments(im_hsc)
 
     # Transfer moments from HST to HSC frame
-    g0.transfer(wcs_hst.wcs, wcs_hsc.wcs)
+    g0.transfer(wcs_hst, wcs_hsc)
     # Check that size and ellipticity are conserved
     assert_allclose(jnp.repeat(g1.size, nc), g0.size, rtol=1e-3)
     assert_allclose(jnp.repeat(g1.ellipticity[:,None], nc, 1), g0.ellipticity, rtol=1e-2)

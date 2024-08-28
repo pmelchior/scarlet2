@@ -12,6 +12,7 @@ from scarlet_test_data import data_path, tests_path
 import astropy.io.fits as fits
 from astropy.wcs import WCS
 
+import jax
 import jax.numpy as jnp
 
 # Load the HSC image data
@@ -39,9 +40,9 @@ channels_hst = ['F814W']
 psf_hst = fits.open(os.path.join(data_path, "test_resampling", "PSF_HST.fits"))[0].data
 psf_hst = jnp.array(psf_hst[None, :, :], jnp.float32)
 psf_hst = jnp.pad(psf_hst, ((0, 0), (1, 0), (1, 0)))
-psf_hst = jnp.repeat(psf_hst, 5, 0)
+psf_hst_ = jnp.repeat(psf_hst, 5, 0)
 
-psf_hst = scarlet2.ArrayPSF(psf_hst)
+psf_hst = scarlet2.ArrayPSF(psf_hst_)
 
 # Scale the HST data
 n1, n2 = jnp.shape(data_hst)
@@ -85,5 +86,42 @@ def test_hst_to_hsc_against_galsim():
 
     assert_allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
 
+def test_hst_to_hsc_against_galsim_rotated_wcs():
+    # Remember images coordinates are [y, x]
+    # Update CRPIX for the 90-degree clockwise rotation
+    crpix1_new = n1 - wcs_hst.wcs.crpix[1]
+    crpix2_new = wcs_hst.wcs.crpix[0]
+    wcs_hst.wcs.crpix = [crpix1_new, crpix2_new]
+
+    # # Mock a rotation of 90 deg clockwise of the HST WCS 
+    phi = -90 / 180 * jnp.pi # in rad
+    R = jnp.array([[jnp.cos(phi), jnp.sin(phi)],
+                    [-jnp.sin(phi), jnp.cos(phi)]])
+
+    data_hst_ = jax.vmap(jnp.rot90)(data_hst)
+    psf_hst = jax.vmap(jnp.rot90)(psf_hst_)
+    psf_hst = scarlet2.ArrayPSF(psf_hst)
+
+    wcs_hst.wcs.pc = R @ wcs_hst.wcs.pc    
+
+    hst_frame = scarlet2.Frame(
+                bbox=scarlet2.Box(shape=data_hst_.shape),
+                channels=['channel'],
+                psf=psf_hst,
+                wcs=wcs_hst
+    )
+
+    # Automatically find the difference between observation and model WCSs
+    obs_hsc.match(hst_frame)
+    
+    # Deconvolution, Resampling and Reconvolution
+    hst_resampled = obs_hsc.render(data_hst_)
+
+    # Perform the same operations with galsim 
+    out_galsim = jnp.load(os.path.join(tests_path, "galsim_hst_to_hsc_resolution.npy"))
+
+    assert_allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
+
 if __name__=="__main__":
     test_hst_to_hsc_against_galsim()
+    test_hst_to_hsc_against_galsim_rotated_wcs()
