@@ -356,4 +356,4 @@ def get_sign(wcs):
                     [jnp.sin(phi), jnp.cos(phi)]])
     
     R = R_inv @ R
-    return jnp.diag(R)
+    return jnp.round(jnp.diag(R))
