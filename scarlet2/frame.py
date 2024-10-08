@@ -2,7 +2,6 @@ import astropy.units as u
 import astropy.wcs.wcs
 import equinox as eqx
 import jax.numpy as jnp
-import numpy as np
 from astropy.coordinates import SkyCoord
 
 from .bbox import Box
@@ -184,7 +183,8 @@ class Frame(eqx.Module):
 
         # Find a reference observation. Either provided by obs_id or as the observation with the smallest pixel
         if obs_id is None:
-            obs_ref = observations[np.where(pix_tab == np.min(pix_tab))[0][0]]
+            p = jnp.array(pix_tab)
+            obs_ref = observations[jnp.where(p == p.min())[0][0]]
         else:
             # Frame defined from obs_id
             obs_ref = observations[obs_id]
@@ -222,10 +222,10 @@ class Frame(eqx.Module):
                 this_box = obs_ref.frame.bbox[-2:]
             else:
                 obs_coord = obs.frame.convert_pixel_to(model_frame)
-                y_min = np.floor(np.min(obs_coord[:, 0])).astype("int")
-                x_min = np.floor(np.min(obs_coord[:, 1])).astype("int")
-                y_max = np.ceil(np.max(obs_coord[:, 0])).astype("int")
-                x_max = np.ceil(np.max(obs_coord[:, 1])).astype("int")
+                y_min = jnp.floor(jnp.min(obs_coord[:, 0])).astype("int")
+                x_min = jnp.floor(jnp.min(obs_coord[:, 1])).astype("int")
+                y_max = jnp.ceil(jnp.max(obs_coord[:, 0])).astype("int")
+                x_max = jnp.ceil(jnp.max(obs_coord[:, 1])).astype("int")
                 this_box = Box.from_bounds((y_min, y_max + 1), (x_min, x_max + 1))
 
             if c == 0:
@@ -239,10 +239,10 @@ class Frame(eqx.Module):
         # pad by the size of the widest psf to prevent leakage across the frame edge
         ny, nx = model_box.shape
         pad_size = fat_psf_size / h / 2
-        offset = (np.round(pad_size).astype("int"), np.round(pad_size).astype("int"))
+        offset = (jnp.round(pad_size).astype("int"), jnp.round(pad_size).astype("int"))
         model_box -= offset
 
-        model_box_shape = tuple(s + 2 * o for s, o in zip(model_box.shape, offset))
+        model_box_shape = tuple(int(s + 2 * o) for s, o in zip(model_box.shape, offset))
 
         # move the reference pixel of the model wcs to the 0/0 pixel of the new shape
         model_wcs = model_wcs.deepcopy()
@@ -251,7 +251,7 @@ class Frame(eqx.Module):
 
         # recreate the model frame with the correct shape
         # frame_shape = (len(channels), model_box_shape)
-        frame_shape = np.concatenate([[len(channels)], np.array(model_box_shape)])
+        frame_shape = (len(channels),) + model_box_shape
 
         model_frame = Frame(
             Box(frame_shape), channels=channels, psf=model_psf, wcs=model_wcs
@@ -280,20 +280,19 @@ def get_psf_size(psf):
             radius of the area inside 3 sigma around the center in pixels
     """
     # Normalisation by maximum
-    psf_frame = psf / np.max(psf)
+    psf_frame = psf / jnp.max(psf)
 
     # Pixels in the FWHM set to one, others to 0:
-    psf_frame[psf_frame > 0.5] = 1
-    psf_frame[psf_frame <= 0.5] = 0
+    psf_frame = jnp.where(psf_frame > 0.5, 1., 0.)
 
     # Area in the FWHM:
-    area = np.sum(psf_frame)
+    area = jnp.sum(psf_frame)
 
     # Diameter of this area
-    d = 2 * (area / np.pi) ** 0.5
+    d = 2 * (area / jnp.pi) ** 0.5
 
     # 3-sigma:
-    sigma3 = 3 * d / (2 * (2 * np.log(2)) ** 0.5)
+    sigma3 = 3 * d / (2 * (2 * jnp.log(2)) ** 0.5)
 
     return sigma3
 
@@ -310,9 +309,9 @@ def get_affine(wcs):
 
 def get_pixel_size(model_affine):
     """Extracts the pixel size from a wcs, and returns it in deg/pixel"""
-    pix = np.sqrt(
-        np.abs(model_affine[0, 0])
-        * np.abs(model_affine[1, 1] - model_affine[0, 1] * model_affine[1, 0])
+    pix = jnp.sqrt(
+        jnp.abs(model_affine[0, 0])
+        * jnp.abs(model_affine[1, 1] - model_affine[0, 1] * model_affine[1, 0])
     )
     return pix
 
@@ -357,4 +356,4 @@ def get_sign(wcs):
                     [jnp.sin(phi), jnp.cos(phi)]])
     
     R = R_inv @ R
-    return jnp.diag(R)
+    return jnp.round(jnp.diag(R))

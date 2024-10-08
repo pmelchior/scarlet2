@@ -67,7 +67,7 @@ class Observation(Module):
                 renderers.append(ChannelRenderer(frame, self.frame))
 
             if self.frame.psf != frame.psf:
-                if frame.pixel_size != self.frame.pixel_size:
+                if frame.wcs != self.frame.wcs:
                     # 2) Pad model, model psf and obs psf and Fourier transform
                     renderers.append(PreprocessMultiresRenderer(frame, self.frame))
 
