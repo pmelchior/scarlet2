@@ -65,11 +65,14 @@ def test_save_output():
     fig = plt.figure(figsize=(12, 6))
     hf = h5py.File(filename, 'r')
     i=0
-    n = len(hf.keys())
-    print(f"Saved sources: {list(hf.keys())}")
-    for key in hf.keys(): 
+    print(f"Dataframe storing: {list(hf.keys())}")
+    group = hf.get(f"scene_id_{ID}")
+    print(f"Scene {ID} has {len(group.keys())} components")
+    print(f"src data includes: {list(group.keys())}")
+    n = len(group.keys())
+    for key in group.keys(): 
         i+=1
-        data = hf.get(key)
+        data = group.get(key)
         morph = np.array(data.get('morph'))
         plt.subplot(1, n, i)
         plt.imshow(morph, cmap='gray')
