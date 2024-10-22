@@ -16,4 +16,4 @@ from .scene import Scene
 from .source import Component, DustComponent, Source, PointSource
 from .spectrum import Spectrum, ArraySpectrum, StaticArraySpectrum, TransientArraySpectrum
 from .wavelets import Starlet
-from .io import save_h5py
+from .io import model_to_h5, model_from_h5

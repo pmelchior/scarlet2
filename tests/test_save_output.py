@@ -15,7 +15,7 @@ from scarlet_test_data import data_path
 def test_save_output():
     file = jnp.load(os.path.join(data_path, "hsc_cosmos_35.npz"))
     data = jnp.asarray(file["images"])
-    centers = [(src['y'], src['x']) for src in file["catalog"]]  # Note: y/x convention!
+    centers = [(src["y"], src["x"]) for src in file["catalog"]]  # Note: y/x convention!
     weights = jnp.asarray(1 / file["variance"])
     psf = jnp.asarray(file["psfs"])
 
@@ -24,6 +24,7 @@ def test_save_output():
     obs = Observation(data, weights, psf=ArrayPSF(jnp.asarray(psf))).match(model_frame)
 
     from functools import partial
+
     spec_step = partial(relative_step, factor=0.05)
 
     with Scene(model_frame) as scene:
@@ -41,10 +42,18 @@ def test_save_output():
     # fitting
     parameters = scene.make_parameters()
     for i in range(len(scene.sources)):
-        parameters += Parameter(scene.sources[i].spectrum.data, name=f"spectrum:{i}", constraint=constraints.positive,
-                                stepsize=spec_step)
-        parameters += Parameter(scene.sources[i].morphology.data, name=f"morph:{i}", constraint=constraints.positive,
-                                stepsize=0.1)
+        parameters += Parameter(
+            scene.sources[i].spectrum.data,
+            name=f"spectrum:{i}",
+            constraint=constraints.positive,
+            stepsize=spec_step,
+        )
+        parameters += Parameter(
+            scene.sources[i].morphology.data,
+            name=f"morph:{i}",
+            constraint=constraints.positive,
+            stepsize=0.1,
+        )
 
     maxiter = 200
     scene.set_spectra_to_match(obs, parameters)
@@ -52,33 +61,40 @@ def test_save_output():
 
     # plotting
     norm = plot.AsinhAutomaticNorm(obs)
-    plot.scene(scene_, obs, norm=norm, show_model=True, show_rendered=True, show_observed=True, show_residual=True);
-    
-    # save the output 
+    plot.scene(
+        scene_,
+        obs,
+        norm=norm,
+        show_model=True,
+        show_rendered=True,
+        show_observed=True,
+        show_residual=True,
+    )
+
+    # save the output
     ID = 1
-    filename = "demo_io.h5"
-    save_h5py(filename, scene_, ID, overwrite=True)
+    filename = "demo_io"
+    path = "stored_models"
+    model_to_h5(filename, scene_, ID, path=path, overwrite=True)
 
     # print the output
-    print(f"Output saved to {filename}")
-    # load the output and plot the sources 
-    fig = plt.figure(figsize=(12, 6))
-    hf = h5py.File(filename, 'r')
-    i=0
-    print(f"Dataframe storing: {list(hf.keys())}")
-    group = hf.get(f"scene_id_{ID}")
-    print(f"Scene {ID} has {len(group.keys())} components")
-    print(f"src data includes: {list(group.keys())}")
-    n = len(group.keys())
-    for key in group.keys(): 
-        i+=1
-        data = group.get(key)
-        morph = np.array(data.get('morph'))
-        plt.subplot(1, n, i)
-        plt.imshow(morph, cmap='gray')
-        plt.title(f"{key}")
+    print(f"Output saved to {path}/{filename}.h5")
+    # load the output and plot the sources
+    scene_loaded = model_from_h5(filename, ID, path=path)
+    print("Output loaded from h5 file")
+    # plotting
+    norm = plot.AsinhAutomaticNorm(obs)
+    plot.scene(
+        scene_loaded,
+        obs,
+        norm=norm,
+        show_model=True,
+        show_rendered=True,
+        show_observed=True,
+        show_residual=True,
+    )
     plt.show()
-        
+
 
 if __name__ == "__main__":
     test_save_output()
