@@ -77,8 +77,21 @@ def test_save_output():
     path = "stored_models"
     model_to_h5(filename, scene_, ID, path=path, overwrite=True)
 
+
+    # demo that it works to add models to a single file
+    ID = 2
+    filename = "demo_io"
+    path = "stored_models"
+    model_to_h5(filename, scene_, ID, path=path, overwrite=True)
+
+    # load files and show keys 
+    with h5py.File(f"{path}/{filename}.h5", "r") as f:
+        print(f.keys())
+
     # print the output
     print(f"Output saved to {path}/{filename}.h5")
+    # print the storage size 
+    print(f"Storage size: {os.path.getsize(f'{path}/{filename}.h5')/1e6:.4f} MB")
     # load the output and plot the sources
     scene_loaded = model_from_h5(filename, ID, path=path)
     print("Output loaded from h5 file")
