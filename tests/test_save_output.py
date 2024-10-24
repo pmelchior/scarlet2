@@ -1,6 +1,7 @@
 import os
 import h5py
 import numpy as np
+import jax
 import jax.numpy as jnp
 from numpyro.distributions import constraints
 import matplotlib.pyplot as plt
@@ -60,24 +61,11 @@ def test_save_output():
     scene.set_spectra_to_match(obs, parameters)
     scene_ = scene.fit(obs, parameters, max_iter=maxiter, progress_bar=False)
 
-    # plotting
-    norm = plot.AsinhAutomaticNorm(obs)
-    plot.scene(
-        scene_,
-        obs,
-        norm=norm,
-        show_model=True,
-        show_rendered=True,
-        show_observed=True,
-        show_residual=True,
-    )
-
     # save the output
     ID = 1
     filename = "demo_io"
     path = "stored_models"
     model_to_h5(filename, scene_, ID, path=path, overwrite=True)
-
 
     # demo that it works to add models to a single file
     ID = 2
@@ -96,19 +84,11 @@ def test_save_output():
     # load the output and plot the sources
     scene_loaded = model_from_h5(filename, ID, path=path)
     print("Output loaded from h5 file")
-    # plotting
-    norm = plot.AsinhAutomaticNorm(obs)
-    plot.scene(
-        scene_loaded,
-        obs,
-        norm=norm,
-        show_model=True,
-        show_rendered=True,
-        show_observed=True,
-        show_residual=True,
-    )
-    plt.show()
 
+    # compare scenes 
+    saved = jax.tree_util.tree_structure(scene_)
+    loaded = jax.tree_util.tree_structure(scene_loaded)
+    print(f"saved == loaded: {saved == loaded}")
 
 if __name__ == "__main__":
     test_save_output()
