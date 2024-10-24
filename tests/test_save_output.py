@@ -10,6 +10,7 @@ from utils import import_scarlet_test_data
 
 import_scarlet_test_data()
 from scarlet_test_data import data_path
+from scarlet2.io import model_to_h5, model_from_h5
 
 
 def test_save_output():

@@ -5,7 +5,6 @@ import jax.numpy as jnp
 from scarlet2 import *
 import pickle
 import jax
-from scarlet2.io import model_to_h5, model_from_h5
 
 
 def model_to_h5(filename, scene, ID, path="", overwrite=False):
