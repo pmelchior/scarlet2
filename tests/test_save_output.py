@@ -94,6 +94,7 @@ def test_save_output():
             status = False
         
     print(f"saved == loaded: {status}")
+    assert status == True, "Loaded leaves not identical to original"
 
 if __name__ == "__main__":
     test_save_output()
