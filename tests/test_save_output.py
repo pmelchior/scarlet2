@@ -86,9 +86,14 @@ def test_save_output():
     print("Output loaded from h5 file")
 
     # compare scenes 
-    saved = jax.tree_util.tree_structure(scene_)
-    loaded = jax.tree_util.tree_structure(scene_loaded)
-    print(f"saved == loaded: {saved == loaded}")
+    saved = jax.tree_util.tree_leaves(scene_)
+    loaded = jax.tree_util.tree_leaves(scene_loaded)
+    status = True
+    for leaf_saved, leaf_loaded in zip(saved, loaded):
+        if (leaf_saved != leaf_loaded).all():
+            status = False
+        
+    print(f"saved == loaded: {status}")
 
 if __name__ == "__main__":
     test_save_output()
