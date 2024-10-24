@@ -5,13 +5,14 @@ import jax.numpy as jnp
 from scarlet2 import *
 import pickle
 import jax
+from scarlet2.io import model_to_h5, model_from_h5
 
 
-def model_to_h5(filename, scene, ID, path="", overwrite=True):
+def model_to_h5(filename, scene, ID, path="", overwrite=False):
     """
     Save the model output to a single HDF5 file.
     NOTE: This is not a pure function hence cannot be
-    utalised within a JAX JIT compilation.
+    utalized within a JAX JIT compilation.
 
     Inputs
     ------
@@ -29,10 +30,8 @@ def model_to_h5(filename, scene, ID, path="", overwrite=True):
         os.makedirs(path)
 
     # first serialize the model into a pytree
-    model_group = "scene_id_" + str(ID)
-    save_path = os.path.join(path, model_group)
+    model_group = str(ID)
     save_h5_path = os.path.join(path, filename)
-    print(f"Saving model to {save_path}")
 
     f = h5py.File(f"{save_h5_path}.h5", "a")
     # create a group for the scene
@@ -51,9 +50,6 @@ def model_to_h5(filename, scene, ID, path="", overwrite=True):
     f.close()
 
 
-    return None
-
-
 def model_from_h5(filename, ID, path=""):
     """
     Load the model output from a single HDF5 file.
@@ -70,9 +66,9 @@ def model_from_h5(filename, ID, path=""):
 
     filename = os.path.join(path, filename)
     f = h5py.File(f"{filename}.h5", "r")
-    model_group = "scene_id_" + str(ID)
+    model_group = str(ID)
     if model_group not in f.keys():
-        raise ValueError("ID not found in the file.")
+        raise ValueError(f"ID {ID} not found in the file.")
 
     group = f.get(model_group)
     out = group.attrs["model"]
