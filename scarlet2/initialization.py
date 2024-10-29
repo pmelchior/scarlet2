@@ -269,8 +269,8 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
         spectrum = sort_spectra(spectra, channels)
 
         if return_array:
-            return spectrum
-        return ArraySpectrum(spectrum)
+            return jnp.array(spectrum)
+        return ArraySpectrum(jnp.array(spectrum))
 
     assert isinstance(obs, Observation)
 
@@ -312,8 +312,8 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
         print(msg)
 
     if return_array:
-        return spectrum
-    return ArraySpectrum(spectrum)
+        return jnp.array(spectrum)
+    return ArraySpectrum(jnp.array(spectrum))
 
 
 def sort_spectra(spectra, channels):
