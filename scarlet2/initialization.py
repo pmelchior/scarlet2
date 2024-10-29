@@ -127,6 +127,7 @@ def standardized_moments(
         center,
         footprint=None,
         bbox=None,
+        deconvolution=True,
 ):
     """Create image of a Gaussian from the 2nd moments of the observation in the region of the bounding box.
 
@@ -176,24 +177,27 @@ def standardized_moments(
     g = measure.moments(cutout_img, center=center, weight=cutout_fp[None, :, :], N=2)
     # 2) adjust moments for model frame
     g.transfer(obs.frame.wcs, frame.wcs)
-    # 3) deconvolve from PSF (actually: difference kernel between obs PSF and model frame PSF)
-    if hasattr(obs, "_dp"):
-        p = obs._dp
-    else:
-        # moments of difference kernel between the model PSF and the observed PSF
-        p = measure.moments(obs.frame.psf(), N=2)
-        p.transfer(obs.frame.wcs, frame.wcs)
-        p0 = measure.moments(frame.psf(), N=2)
-        p.deconvolve(p0)
-        # store in obs for repeated use
-        object.__setattr__(obs, "_dp", p)
-    # 3) deconvolve from difference kernel
-    g.deconvolve(p)
+    
+    if deconvolution:
+        # 3) deconvolve from PSF (actually: difference kernel between obs PSF and model frame PSF)
+        if hasattr(obs, "_dp"):
+            p = obs._dp
+        else:
+            # moments of difference kernel between the model PSF and the observed PSF
+            p = measure.moments(obs.frame.psf(), N=2)
+            p.transfer(obs.frame.wcs, frame.wcs)
+            p0 = measure.moments(frame.psf(), N=2)
+            p.deconvolve(p0)
+            # store in obs for repeated use
+            object.__setattr__(obs, "_dp", p)
+        # 3) deconvolve from difference kernel
+        g.deconvolve(p)
+
     return g
 
 
 def from_gaussian_moments(obs, center, min_size=11, delta_size=3, min_snr=20, min_corr=0.99, min_value=1e-6,
-                          return_array=False):
+                          return_array=False, deconvolution=True):
     # TODO: implement with source footprints given for each observation
 
     # get moments from all channels in all observations
@@ -204,7 +208,7 @@ def from_gaussian_moments(obs, center, min_size=11, delta_size=3, min_snr=20, mi
     centers = [obs_.frame.get_pixel(center) for obs_ in observations]
     boxes = [make_bbox(obs_, center_, min_size=min_size, delta_size=delta_size, min_snr=min_snr, min_corr=min_corr) for
              obs_, center_ in zip(observations, centers)]
-    moments = [standardized_moments(obs_, center_, bbox=bbox_) for obs_, center_, bbox_ in
+    moments = [standardized_moments(obs_, center_, bbox=bbox_, deconvolution=deconvolution) for obs_, center_, bbox_ in
                zip(observations, centers, boxes)]
 
     # flat lists of spectra, sorted as model frame channels
