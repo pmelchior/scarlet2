@@ -43,7 +43,6 @@ class Component(Module):
         delta_center = (self.bbox.center[-2] - self.center[-2], self.bbox.center[-1] - self.center[-1])
         return self.spectrum()[:, None, None] * self.morphology(delta_center=delta_center)[None, :, :]
 
-
 class DustComponent(Component):
     def __call__(self):
         return jnp.exp(-super().__call__())
@@ -95,7 +94,7 @@ class Source(Component):
     def __imul__(self, component):
         return self.add_component(component, operator.mul)
 
-    def __call__(self):
+    def __call__(self, frame=None):
         base = super()
         model = base.__call__()
         for component, op in zip(self.components, self.component_ops):
@@ -108,7 +107,13 @@ class Source(Component):
             sub_model = op(sub_model, sub_model_)
             # add model_ back in full model
             model = jax.lax.dynamic_update_slice(model, sub_model, bbox.start)
-        return model
+        
+        if frame is None:
+            return model
+        
+        else:
+            model = self.bbox.insert_into(jnp.zeros(frame.bbox.shape), model)
+            return model
 
 
 class PointSource(Source):

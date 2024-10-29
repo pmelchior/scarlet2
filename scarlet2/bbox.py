@@ -98,7 +98,7 @@ class Box(eqx.Module):
         imbox = Box(image.shape)
 
         im_slices, sub_slices = overlap_slices(imbox, self)
-        image[im_slices] = sub[sub_slices]
+        image = image.at[im_slices].set(sub[sub_slices])
         return image
 
 
