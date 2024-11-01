@@ -35,8 +35,11 @@ class Component(Module):
 
         box = Box(spectrum.shape)
         box2d = Box(morphology.shape)
-        box2d.set_center(center.astype(int))
-        self.bbox = box @ box2d
+        
+        box2d.set_center(jnp.array(center[-2:]).astype(int))
+
+        box_ind = Box((1,), origin=(center[0],))
+        self.bbox = (box @ box_ind) @ box2d
 
     def __call__(self):
         # Boxed and centered model
@@ -99,6 +102,7 @@ class Source(Component):
         model = base.__call__()
         for component, op in zip(self.components, self.component_ops):
             model_ = component()
+            # print('in model()', model().shape)
             # cut out regions from model and model_
             bbox, bbox_ = overlap_slices(base.bbox, component.bbox, return_boxes=True)
             sub_model = jax.lax.dynamic_slice(model, bbox.start, bbox.shape)

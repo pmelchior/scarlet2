@@ -147,7 +147,9 @@ class Box(eqx.Module):
     def set_center(self, pos):
         """Center box at given position
         """
+        
         pos_ = tuple(_.item() for _ in pos)
+        
         origin = tuple(o + p - c for o, p, c in zip(self.origin, pos_, self.center))
         object.__setattr__(self, 'origin', origin)
 
@@ -239,13 +241,16 @@ class Box(eqx.Module):
         return Box(self.shape, origin=origin)
 
     def __matmul__(self, bbox):
+        # if len(self.bounds) == 1:
         bounds = self.bounds + bbox.bounds
+        
         return Box.from_bounds(*bounds)
 
     def __copy__(self):
         return Box(self.shape, origin=self.origin)
 
     def __eq__(self, other):
+        
         return self.shape == other.shape and self.origin == other.origin
 
     def __hash__(self):
@@ -267,6 +272,13 @@ def overlap_slices(bbox1, bbox2, return_boxes=False):
         the slice of an array bounded by `bbox2` in the
         overlapping region.
     """
+
+    if len(bbox1.shape) > 3:
+        bbox1 = bbox1[0] @ bbox1[slice(2,4)]
+
+    if len(bbox2.shape) > 3:
+        bbox2 = bbox2[0] @ bbox2[slice(2,4)]
+
     overlap = bbox1 & bbox2
     _bbox1 = overlap - bbox1.origin
     _bbox2 = overlap - bbox2.origin

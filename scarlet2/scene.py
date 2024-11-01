@@ -26,13 +26,18 @@ class Scene(Module):
 
     def _eval_src_in_frame(self, source):
         model_ = source()
-        # cut out region from model, add single source model
+        
         bbox, bbox_ = overlap_slices(self.frame.bbox, source.bbox, return_boxes=True)
+        
         sub_model_ = jax.lax.dynamic_slice(model_, bbox_.start, bbox_.shape)
-
-        # add model_ back in full model
+        sub_model_ = sub_model_[:,None,...]
+        
         model = jnp.zeros(self.frame.bbox.shape)
-        model = jax.lax.dynamic_update_slice(model, sub_model_, bbox.start)
+
+        start = (bbox.start[0], source.bbox.origin[1])+bbox.start[slice(1,3)]
+        
+        model = jax.lax.dynamic_update_slice(model, sub_model_, start)
+        
         return model
 
     def __enter__(self):
@@ -299,10 +304,13 @@ def _make_step(model, observations, parameters, optim, opt_state, filter_spec=No
         log_like = sum(obs.log_likelihood(pred) for obs in observations)
 
         param_values = model.get(parameters)
+        
+        
         log_prior = sum(param.prior.log_prob(value)
                         for param, value in zip(parameters, param_values)
                         if param.prior is not None
                         )
+        
         return -(log_like + log_prior)
 
     if filter_spec is None:
