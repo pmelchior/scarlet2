@@ -8,7 +8,7 @@ from .frame import Frame
 from .module import Module, Parameters
 from .renderer import ChannelRenderer
 from .spectrum import ArraySpectrum
-
+from .nn import pad_fwd
 
 class Scene(Module):
     frame: Frame = eqx.field(static=True)
@@ -305,12 +305,20 @@ def _make_step(model, observations, parameters, optim, opt_state, filter_spec=No
 
         param_values = model.get(parameters)
         
+        for param, value in zip(parameters, param_values):
+            if param.prior is not None:
+                log_prior_fn = param.prior.log_prob
+
+        # log_prior = sum(param.prior.log_prob(value)
+        #                 for param, value in zip(parameters, param_values)
+        #                 if param.prior is not None
+        #                 )
         
-        log_prior = sum(param.prior.log_prob(value)
-                        for param, value in zip(parameters, param_values)
-                        if param.prior is not None
-                        )
+        values = jnp.stack([pad_fwd(value, param.prior.model.shape)[0] for param, value in zip(parameters, param_values)
+                        if param.prior is not None])
         
+        log_prior = jax.vmap(log_prior_fn)(values).sum()
+
         return -(log_like + log_prior)
 
     if filter_spec is None:
