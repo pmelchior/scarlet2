@@ -179,6 +179,9 @@ def _get_fast_shape(im_or_shape1, im_or_shape2, axes=None, padding=3, max_shape=
     else:
         shape2 = im_or_shape2
 
+    # print(shape1, shape2)
+    if len(shape2)==3 and len(shape1)==4:
+        shape2 = (shape2[0], 1) + shape2[-2:]
     # Make sure the shapes are the same size
     if len(shape1) != len(shape2):
         msg = (
