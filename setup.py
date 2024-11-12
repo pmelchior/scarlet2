@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='scarlet2',
-    version='0.1.0',    
+    version='0.2.0',    
     description='Scarlet, all new and shiny',
     url='https://github.com/pmelchior/scarlet2',
     author='Peter Melchior',
