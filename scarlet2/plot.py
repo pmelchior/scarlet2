@@ -269,7 +269,8 @@ class AsinhAutomaticNorm(AsinhNorm):
             channel_map = channels_to_rgb(observation.frame.C)
 
         im3 = img_to_3channel(observation.data, channel_map=channel_map)
-        # TODO: need to mask this
+        var3 = 1 / observation.weights
+        var3 = np.where(np.isfinite(var3), var3, 0)
         var3 = img_to_3channel(1 / observation.weights, channel_map=channel_map)
 
         # total intensity and variance images
@@ -288,7 +289,7 @@ class AsinhAutomaticNorm(AsinhNorm):
         super().set_rgb_max(im3, vibrance=vibrance)
 
 
-def img_to_3channel(img, channel_map=None, fill_value=0):
+def img_to_3channel(img, channel_map=None):
     """Convert multi-band image cube into 3 RGB channels
     Parameters
     ----------
@@ -296,8 +297,6 @@ def img_to_3channel(img, channel_map=None, fill_value=0):
         This should be an array with dimensions (channels, height, width).
     channel_map: array_like
         Linear mapping with dimensions (3, channels)
-    fill_value: float, default=`0`
-        Value to use for any masked pixels.
     Returns
     -------
     RGB: numpy array with dtype float
@@ -322,8 +321,7 @@ def img_to_3channel(img, channel_map=None, fill_value=0):
     _, ny, nx = img_.shape
     rgb = jnp.dot(channel_map, img_.reshape(C, -1)).reshape(3, ny, nx)
 
-    if hasattr(rgb, "mask"):
-        rgb = rgb.filled(fill_value)
+    rgb = jnp.where(np.isfinite(rgb), rgb, 0)
 
     return rgb
 
