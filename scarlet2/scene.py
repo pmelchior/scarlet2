@@ -143,10 +143,13 @@ class Scene(Module):
                 if params is None:
                     raise ValueError(base.NO_PARAMS_MSG)
                 updates = jax.tree_util.tree_map(
-                    # lambda u, step, param: -step * u if not callable(step) else -step(param,niter) * u,
-                    lambda u, s, p: -s * u if not callable(s) else -s(p) * u,
                     # minus because we want gradient descent
-                    updates, steps, params)
+                    lambda u, s, p: None if u is None else -s * u if not callable(s) else -s(p) * u,
+                    updates,
+                    steps,
+                    params,
+                    is_leaf=lambda x: x is None,
+                )
                 return updates, state
 
             return base.GradientTransformation(init_fn, update_fn)
