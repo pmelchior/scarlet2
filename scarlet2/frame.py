@@ -52,9 +52,9 @@ class Frame(eqx.Module):
         """
         if isinstance(pos, SkyCoord):
             assert self.wcs is not None, "SkyCoord can only be converted with valid WCS"
-            wcs_ = self.wcs.celestial  # only use celestial portion
-            pixel = jnp.asarray(pos.to_pixel(wcs_), dtype="float32").T
-            return pixel
+            wcs_ = self.wcs.celestial  # only use celestial portion 
+            pixel = jnp.asarray(pos.to_pixel(wcs_), dtype="float32")
+            return pixel[::-1]
         return pos
 
     def get_sky_coord(self, pos):
@@ -72,7 +72,7 @@ class Frame(eqx.Module):
         if self.wcs is not None:
             pixels = pos.reshape(-1, 2)
             wcs = self.wcs.celestial  # only use celestial portion
-            sky_coord = SkyCoord.from_pixel(pixels[:, 0], pixels[:, 1], wcs)
+            sky_coord = SkyCoord.from_pixel(pixels[:, 1], pixels[:, 0], wcs)
             return sky_coord
         return pos
     
