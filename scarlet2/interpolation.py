@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import equinox as eqx
+from functools import partial
 
 """
 Some of the code to perform interpolation in Fourier space as been adapted from
@@ -294,7 +295,127 @@ def resample_ops(kimage, shape_in, shape_out, res_in, res_out, phi=None, flip_si
         b_shape = kcoords_out.shape
         kcoords_out = (R @ kcoords_out.reshape((-1, 2)).T).T.reshape((b_shape))
 
+    print("kimage.shape", kimage.shape)
     k_resampled = jax.vmap(resample_hermitian, in_axes=(0,None,None,None,None))(
+        kimage,
+        kcoords_out,
+        -shape_in/2,
+        -shape_in/2,
+        interpolant
+        )
+    
+    kx = jnp.linspace(0, jnp.pi, shape_out//2 + 1) * res_in/res_out
+    ky = jnp.linspace(-jnp.pi, jnp.pi, shape_out)
+    coords = jnp.stack(jnp.meshgrid(kx, ky),-1) / 2 / jnp.pi
+
+    xint_val = interpolant.uval(coords[...,0]) * interpolant.uval(coords[...,1])
+    
+    return k_resampled * jnp.expand_dims(xint_val, 0)
+
+
+
+"""
+Rewritting the hermitian sampling operation without any for loops
+"""
+
+@partial(jax.vmap, in_axes=(0, None, None, None, None, None))
+@partial(jax.jit, static_argnames=("interpolant",))
+def _interp_weight_1d_kval(ioff, kxi, kxp, kx, nkx, interpolant):
+
+    kxind = (kxi + ioff) % nkx
+    _kx = kx - (kxp + ioff)
+    wkx = interpolant.kernel(_kx)
+
+    return wkx, kxind.astype(jnp.int32)
+
+def resample_hermitian_vmap(signal, warp, x_min, y_min, interpolant=Quintic()):
+    
+    orig_shape = warp[...,0].shape
+
+    x = warp[..., 0].flatten()
+    y = warp[..., 1].flatten()
+    
+    xi = jnp.floor(x-x_min).astype(jnp.int32)
+    yi = jnp.floor(y-y_min).astype(jnp.int32)
+
+    xp = xi + x_min
+    yp = yi + y_min
+
+    nkx_2 = signal.shape[1] - 1
+    nkx = nkx_2 * 2
+    
+    nky = signal.shape[0]
+    
+    irange = interpolant.extent
+    iinds = jnp.arange(-irange, irange + 1)
+
+    wkx, kxind = _interp_weight_1d_kval(
+        iinds,
+        xi,
+        xp,
+        x,
+        nkx,
+        interpolant,
+    )
+
+    wky, kyind = _interp_weight_1d_kval(
+        iinds,
+        yi,
+        yp,
+        y,
+        nky,
+        interpolant,
+    )
+
+    wkx = wkx[None, :, :]
+    kxind = kxind[None, :, :]
+    wky = wky[:, None, :]
+    kyind = kyind[:, None, :]
+
+    val = jnp.where(
+        kxind < nkx_2,
+        signal[(nky - kyind) % nky, nkx - kxind - nkx_2].conjugate(),
+        signal[kyind, kxind - nkx_2],
+    )
+    z = jnp.sum(
+        val * wkx * wky,
+        axis=(0, 1),
+    )
+
+    return z.reshape(orig_shape)
+
+
+def resample_ops_new(kimage, shape_in, shape_out, res_in, res_out, phi=None, flip_sign=None, interpolant=Quintic()):
+    """
+    Resampling operation used in the Multiresolution Renderers
+    This is assuming that the signal is Hermitian and starting at 0 on axis=2,
+    i.e. f(-x, -y) = conjugate(f(x, y))
+    """
+    
+    print("I am using the new stuff")
+
+    # Apply rescaling to the frequencies
+    # [0, Fe/2+1]
+    # [-Fe/2+1, Fe/2]
+    kcoords_out = jnp.stack(jnp.meshgrid(
+        jnp.linspace(0, 
+                     shape_in / 2 / res_out * res_in, 
+                     shape_out // 2 + 1),
+        jnp.linspace(-shape_in / 2 / res_out * res_in, 
+                     shape_in / 2 / res_out * res_in, 
+                     shape_out)
+        ), -1)
+
+    
+    # Apply rotation to the frequencies
+    if phi is not None:
+        R = jnp.array([[jnp.cos(phi), jnp.sin(phi)],
+                       [-jnp.sin(phi), jnp.cos(phi)]])
+        
+        b_shape = kcoords_out.shape
+        kcoords_out = (R @ kcoords_out.reshape((-1, 2)).T).T.reshape((b_shape))
+
+    k_resampled = jax.vmap(resample_hermitian_vmap, in_axes=(0,None,None,None,None))(
         kimage,
         kcoords_out,
         -shape_in/2,
