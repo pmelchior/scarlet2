@@ -1,11 +1,11 @@
+import astropy.units as u
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import varname
-
 from astropy.coordinates import SkyCoord
-import astropy.units as u
+
 
 class Module(eqx.Module):
 
@@ -47,8 +47,10 @@ class Parameter:
             self.name = name
         self.node = node
 
+        if prior is not None and constraint is not None:
+            raise AttributeError(f"Cannot set prior and constraint on the same parameter {self.name}!")
+
         self.constraint = constraint
-        
         self.prior = prior
         self.stepsize = stepsize
     
