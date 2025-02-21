@@ -604,8 +604,8 @@ def confidence(scene, observation):
 
 
 def sources(
-    scene,
-    observation=None,
+        scene,
+        observation=None,
         norm=None,
         channel_map=None,
         show_model=True,
@@ -634,24 +634,17 @@ def sources(
 
     skipped = 0
     for k, src in enumerate(sources):
-        
-        if hasattr(src.morphology.bbox, "center") and src.morphology.bbox.center is not None:
-            center = np.array(src.morphology.bbox.center)[::-1]
-        else:
-            center = None
-        
-        start, stop = src.morphology.bbox.start[-2:][::-1], src.morphology.bbox.stop[-2:][::-1]
-        points = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
-        box_coords = [
-            p for p in points
-        ]
-    
+
+        center = np.array(src.center)[::-1]
+        start, stop = src.bbox.start[-2:][::-1], src.bbox.stop[-2:][::-1]
+        box_coords = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
+
         # model in its bbox
         panel = 0
         model = src()
         if show_model:
             # Show the unrendered model in it's bbox
-            extent = get_extent(src.morphology.bbox)
+            extent = get_extent(src.bbox)
             ax[k - skipped][panel].imshow(
                 img_to_rgb(model, norm=norm, channel_map=channel_map, mask=model_mask),
                 extent=extent,
@@ -661,17 +654,21 @@ def sources(
             if center is not None and add_markers:
                 ax[k - skipped][panel].plot(*center, **marker_kwargs)
             panel += 1
-            
+
         if show_hallucination:
+            # FIXME: outdated code
+            # Cannot be done here because priors are attached to parameters, which are not passed to this function
+            # Better to create separate plot.hallucination() only on sources with priors
+
             # must use a prior to get a hallucination score
             _, info = src.get_parameters(return_info=True)['morphology.data']
             assert (info["prior"] is not None), "Must use a prior to get a hallucination score"
-            
+
             # Show the unrendered model in it's bbox
             hallucination, metric = hallucination_score(scene, observation, k)
-            extent = get_extent(src.morphology.bbox)
+            extent = get_extent(src.bbox)
             true_max = np.max(np.abs(hallucination))
-            im = ax[k-skipped][panel].imshow(hallucination,
+            im = ax[k - skipped][panel].imshow(hallucination,
                 norm=colors.SymLogNorm(linthresh=1, linscale=1,
                         vmin=-true_max, vmax=true_max, base=10),
                 cmap="RdBu",
@@ -685,42 +682,22 @@ def sources(
             panel += 1
 
         # model in observation frame
+        extent = get_extent(observation.frame.bbox)
         if show_rendered:
+            model = scene._eval_src_in_frame(src)
             model_ = observation.render(model)
-            extent = get_extent(observation.frame.bbox)
-            # no frame2box routine in scarlet2 so lts do this explicitly here
-            scene_frame = np.zeros(observation.frame.bbox.shape) 
-            scene_frame = img_to_rgb(scene_frame, norm=norm, channel_map=channel_map)
-            small_image = img_to_rgb(model_, norm=norm, channel_map=channel_map)
-            
-            # Calculate the extent for the rendered model 
-            extent_render = [center[0] - model_.shape[1] / 2,
-                    center[0] + model_.shape[1] / 2,
-                    center[1] - model_.shape[2] / 2,
-                    center[1] + model_.shape[2] / 2]
 
-            # Display the larger empty scene frame then add the rendered model
-            ax[k-skipped][panel].imshow(scene_frame,
-                                        extent=extent,
-                                        origin="lower",)
-            ax[k-skipped][panel].imshow(small_image, 
-                                        extent=extent_render,
-                                        origin="lower")
-            
-            # Set new x and y limits
-            new_xlim = (extent[0], extent[1])
-            new_ylim = (extent[2], extent[3])
-            ax[k-skipped][panel].set_xlim(new_xlim)
-            ax[k - skipped][panel].set_ylim(new_ylim)
+            ax[k - skipped][panel].imshow(
+                img_to_rgb(model_, norm=norm, channel_map=channel_map, mask=model_mask),
+                extent=extent,
+                origin="lower",
+            )
             ax[k - skipped][panel].set_title("Model Source {} Rendered".format(k), **title_kwargs)
-
-            # fixing the sizes
-            if center is not None and add_markers:
-                center_ = center
-                ax[k - skipped][panel].plot(*center_, **marker_kwargs)
+            if add_markers:
+                ax[k - skipped][panel].plot(*center, **marker_kwargs)
             if add_boxes:
                 poly = Polygon(box_coords, closed=True, **box_kwargs)
-                ax[k-skipped][panel].add_artist(poly)
+                ax[k - skipped][panel].add_artist(poly)
             panel += 1
 
         if show_observed:
@@ -732,12 +709,11 @@ def sources(
                 origin="lower",
             )
             ax[k - skipped][panel].set_title("Observation".format(k), **title_kwargs)
-            if center is not None and add_markers:
-                center_ = center
-                ax[k - skipped][panel].plot(*center_, **marker_kwargs)
+            if add_markers:
+                ax[k - skipped][panel].plot(*center, **marker_kwargs)
             if add_boxes:
                 poly = Polygon(box_coords, closed=True, **box_kwargs)
-                ax[k-skipped][panel].add_artist(poly)
+                ax[k - skipped][panel].add_artist(poly)
             panel += 1
 
         if show_spectrum:
