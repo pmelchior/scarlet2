@@ -620,7 +620,7 @@ def sources(
         title_kwargs=dict(),
         marker_kwargs={"color": "w", "marker": "x", "mew": 1, "ms": 10},
         box_kwargs={"facecolor": "none", "edgecolor": "w", "lw": 0.5},
-):
+):  
 
     sources = scene.sources
     n_sources = len(sources)
