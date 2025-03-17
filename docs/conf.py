@@ -4,7 +4,6 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
 # -- Path setup --------------------------------------------------------------
-import scarlet2
 
 # -- Project information -----------------------------------------------------
 
@@ -59,7 +58,8 @@ html_baseurl = "https://scarlet2.readthedocs.io/en/latest/"
 
 autoclass_content = 'class'
 autosummary_generate = True
-autosummary_imported_members = True
+autosummary_imported_members = False
+autosummary_ignore_module_all = False
 
 autodoc_type_aliases = {
     "eqx.Module": "equinox.Module",
