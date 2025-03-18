@@ -8,25 +8,66 @@ from astropy.coordinates import SkyCoord
 
 
 class Module(eqx.Module):
+    """Scarlet2 base module
 
+    Derives directly from :py:class:`equinox.Module`, i.e. from python dataclasses, and adds extra functionality to deal
+    with optimizable parameters.
+    """
     def __call__(self):
         raise NotImplementedError
 
     def make_parameters(self):
+        """Construct :py:class:`Parameters` for this module
+        """
         return Parameters(self)
 
     def get(self, parameters):
+        """Get parameter arrays from this module
+
+        Parameters
+        ----------
+        parameters: :py:class:`Parameters`
+            List of parameters to search
+
+        Returns
+        -------
+        list
+            requested data arrays for `parameters`
+        """
         assert isinstance(parameters, Parameters)
         return parameters.extract_from(self)
 
     def replace(self, parameters, values):
-        """Replace attribute with given name by other value
+        """Replace parameter arrays by another value
+
+        Parameters
+        ----------
+        parameters: :py:class:`Parameters`
+            List of parameters to search
+        values: list
+            List of values to replace the current parameter arrays with
+            Needs to be in the same shape and order as the current parameter values
+
+        Returns
+        -------
+        scarlet2.Module
+            Modified module. All other module components are unchanged.
         """
         where = lambda model: model.get(parameters)
         return eqx.tree_at(where, self, replace=values)
 
     def get_filter_spec(self, parameters):
         """Get equinox filter_spec for all fields named in parameters
+
+        Parameters
+        ----------
+        parameters: :py:class:`Parameters`
+            List of parameters to search
+
+        Returns
+        -------
+        list
+            requested data arrays for `parameters`
         """
         filtered = jax.tree_util.tree_map(lambda _: False, self)
         where = lambda model: model.get(parameters)
@@ -38,9 +79,28 @@ class Module(eqx.Module):
 
 
 class Parameter:
+    """Definition of optimizable parameters"""
 
     def __init__(self, node, name=None, constraint=None, prior=None, stepsize=0):
+        """Initialize parameter definition
 
+        Parameters
+        ----------
+        node: jnp.array
+            Data portion of a member of :py:class:`~scarlet2.Module`
+        name: str, optional
+            Name to assign to this parameter
+            If not set, uses :py:mod:`varname` to determine the name `node` has within its module.
+        constraint: :py:class:`numpyro.distributions.constraints.Constraint`, optional
+            Region over which the parameter value is valid. Contains a bijective transformation to reach this region.
+            Cannot be used at the same time as `prior`.
+        prior: :py:class:`numpyro.distributions.Distribution`, optional
+            Distribution to determine the probability of a parameter value.
+            This is used by the optimization in :py:meth:`scarlet2.Scene.fit` and :py:meth:`scarlet2.Scene.sample`.
+        stepsize: (float, callable)
+            Step size, or function to determine it (e.g. :py:func:`~scarlet2.relative_step`) for parameter updates.
+            This is used by the optimization in :py:meth:`scarlet2.Scene.fit`.
+        """
         if name is None:
             self.name = varname.argname('node', vars_only=False)
         else:
@@ -53,8 +113,12 @@ class Parameter:
         self.constraint = constraint
         self.prior = prior
         self.stepsize = stepsize
-    
-    def set_constraint(self):
+
+    def apply_constraint(self):
+        """Transform the value of the parameter to the unconstrained region"""
+
+        # TODO: What is this thing doing???
+        # It doesn't modify in place and it does not return
         if self.constraint is not None:
             try:
                 from numpyro.distributions.transforms import biject_to
@@ -82,6 +146,17 @@ class Parameter:
 
 
 class Parameters:
+    """Collection of optimizable parameters
+
+    This class acts like a standard python list of :py:class:`~scarlet2.Parameter` instances.
+    It supports `len()`, item access, item addition, etc.
+
+    Attributes
+    ----------
+    base: :py:class:`~scarlet2.Module`
+        Module the parameters refer to
+    """
+
     def __init__(self, base):
         self.base = base
         self._base_leaves = jtu.tree_leaves(base)
@@ -107,12 +182,19 @@ class Parameters:
         return mess
 
     def __iadd__(self, parameter):
+        """Add parameter to collection
+
+        Parameters
+        ----------
+        parameter: :py:class:`~scarlet2.Parameter`
+            Parameter to be added
+        """
         assert isinstance(parameter, Parameter)
         found = False
         for i, leaf in enumerate(self._base_leaves):
             if leaf is parameter.node:
                 parameter = self.to_pixels(parameter)
-                parameter.set_constraint()
+                parameter.apply_constraint()
                 self._params.append(parameter)
                 self._leave_idx.append(i)
                 found = True
@@ -123,6 +205,13 @@ class Parameters:
         return self
 
     def __isub__(self, name):
+        """Remove parameter from collection
+
+        Parameters
+        ----------
+        parameter: :py:class:`~scarlet2.Parameter`
+            Parameter to be removed. Silently ignores if `parameter` is not in the collection.
+        """
         for i, param in enumerate(self._params):
             if param.name == name:
                 del self._params[i]
@@ -131,9 +220,21 @@ class Parameters:
         return self
 
     def __getitem__(self, i):
+        """Access item in collection
+
+        Parameters
+        ----------
+        i: (int,slice)
+
+        Returns
+        -------
+        :py:class:`~scarlet2.Parameter`
+            If `i` is a slice, returns a subset of the collection.
+        """
         return self._params[i]
 
     def __len__(self):
+        """Length of the collection"""
         return len(self._params)
 
     def extract_from(self, root):
@@ -141,9 +242,21 @@ class Parameters:
         assert jtu.tree_structure(root) == jtu.tree_structure(self.base)
         root_leaves = jtu.tree_leaves(root)
         return tuple(root_leaves[idx] for idx in self._leave_idx)
-    
 
     def to_pixels(self, parameter):
+        """Convert parameter to pixel coordinates of the model frame
+
+        scarlet2 models are optimized in pixel coordinates (defined by the model frame of :py:class:`~scarlet2.Scene`.
+        Therefore parameters (or their priors, stepsize, etc) that are defined in :py:mod:`astropy.units` or
+        :py:class:`astropy.SkyCoord` need to be transformed to pixel coordinates.
+
+        See details in issue :issue:`51`.
+
+        Parameters
+        ----------
+        parameter: :py:class:`~scarlet2.Parameter`
+            Parameter to transform from sky to pixel coordinates.
+        """
         frame = self.base.frame
         used_sky_coords_prior = False
 
@@ -152,7 +265,7 @@ class Parameters:
             if isinstance(field, u.Quantity):
                 setattr(parameter, fieldname, frame.u_to_pixel(field))
             if isinstance(field, SkyCoord):
-                    setattr(parameter, fieldname, frame.get_pixel(field))
+                setattr(parameter, fieldname, frame.get_pixel(field))
             for name in dir(field):
                 try:
                     attrib = getattr(field, name)
@@ -185,7 +298,23 @@ class Parameters:
 def relative_step(x, *args, factor=0.01, minimum=1e-6):
     """Step size set at `factor` times the norm of `x`
 
-    As step size functions have the signature (array, int) -> float, *args captures, 
-    and then ignores, the iteration counter.
+    This step size is useful for `Parameter` instances whose uncertainty is relative, not absolute,
+    e.g. for :py:class:`~scarlet2.ArraySpectrum`.
+
+    Parameters
+    ----------
+    x: jnp.array
+        Array to compute step size for
+    *args: list
+        Additional arguments
+    factor: float
+        Scale norm by this number
+    minimum: float
+        Minimum return value to prevent zero step sizes
+
+    Returns
+    -------
+    float
+        factor*norm(x), or `minimum`, whichever is larger.
     """
     return jnp.maximum(minimum, factor * jnp.linalg.norm(x))

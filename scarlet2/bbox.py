@@ -2,7 +2,7 @@ import equinox as eqx
 import jax.numpy as jnp
 
 class Box(eqx.Module):
-    """Bounding Box for a data array
+    """Bounding Box for data array
 
     A Bounding box describes the location of a data array in the model coordinate system.
     It is used to identify spatial and channel overlap and to map from model
@@ -13,16 +13,11 @@ class Box(eqx.Module):
 
     - 2D shapes denote (Height, Width)
     - 3D shapes denote (Channels, Height, Width)
-
-    Attributes
-    ----------
-    shape : tuple
-            Size of the array
-    origin: tuple
-            Start coordinate (in 2D: lower-left corner) of the array in model frame
     """
     shape: tuple
+    """Size of the array"""
     origin: tuple
+    """Start coordinate (in 2D:: lower-left corner) of the array in model frame"""
 
     def __init__(self, shape, origin=None):
         self.shape = tuple(shape)
