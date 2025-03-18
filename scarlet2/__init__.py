@@ -3,12 +3,12 @@ class Scenery:
     scene = None
 
 
-from . import initialization as init
+from . import init
 from . import measure
 from . import plot
 from .bbox import Box
 from .frame import Frame
-from .module import Parameter, Module, relative_step
+from .module import Parameter, Parameters, Module, relative_step
 from .morphology import Morphology, ArrayMorphology, GaussianMorphology, SersicMorphology, StarletMorphology
 from .observation import Observation
 from .psf import PSF, ArrayPSF, GaussianPSF
