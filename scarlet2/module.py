@@ -237,12 +237,6 @@ class Parameters:
         """Length of the collection"""
         return len(self._params)
 
-    def extract_from(self, root):
-        # create function that ingests root and returns all nodes
-        assert jtu.tree_structure(root) == jtu.tree_structure(self.base)
-        root_leaves = jtu.tree_leaves(root)
-        return tuple(root_leaves[idx] for idx in self._leave_idx)
-
     def to_pixels(self, parameter):
         """Convert parameter to pixel coordinates of the model frame
 
