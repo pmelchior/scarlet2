@@ -1,14 +1,12 @@
 import equinox as eqx
-import jax.numpy as jnp
 import jax
+import jax.numpy as jnp
 
-from .fft import convolve, deconvolve, _get_fast_shape, transform, good_fft_size, _trim, _pad
-
+from .fft import _wrap_hermitian_x
+from .fft import convolve, deconvolve, _get_fast_shape, transform, good_fft_size, _trim
 from .interpolation import resample_ops
-
-from .fft import wrap_hermitian_x
-
 from .measure import get_angle, get_sign
+
 
 class Renderer(eqx.Module):
     def __call__(
@@ -237,15 +235,15 @@ class PostprocessMultiresRenderer(Renderer):
 
         model_kim, model_kpsf, obs_kpsf = kimages
         kimage_final = model_kim / model_kpsf * obs_kpsf
-        
-        kimage_final_wrap = jax.vmap(wrap_hermitian_x, in_axes=(0, None, None, None, None, None, None))(
-                            kimage_final,
-                            -self.fft_shape_target//2,
-                            -self.fft_shape_target//2,
-                            -self.fft_shape_target//2+1,
-                            -self.fft_shape_target//2,
-                            self.fft_shape_target-1,
-                            self.fft_shape_target-1
+
+        kimage_final_wrap = jax.vmap(_wrap_hermitian_x, in_axes=(0, None, None, None, None, None, None))(
+            kimage_final,
+            -self.fft_shape_target // 2,
+            -self.fft_shape_target // 2,
+            -self.fft_shape_target // 2 + 1,
+            -self.fft_shape_target // 2,
+            self.fft_shape_target - 1,
+            self.fft_shape_target - 1
         )
 
         kimage_final_wrap = kimage_final_wrap[:, :-1, :]

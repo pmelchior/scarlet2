@@ -7,11 +7,21 @@ from astropy.coordinates import SkyCoord
 from .bbox import Box
 from .psf import PSF
 
+
 class Frame(eqx.Module):
+    """Definition of a view of the sky
+
+    This class combines all elements to determine how a piece of the sky will appear.
+    It includes metadata about the spatial and spectral coverage and resolution.
+    """
     bbox: Box
+    """Bounding box of the frame"""
     psf: PSF = None
+    """PSF of the frame"""
     wcs: astropy.wcs.wcs = None
+    """WCS information of the frame"""
     channels: list
+    """Identifiers for the spectral elements"""
 
     def __init__(self, bbox, psf=None, wcs=None, channels=None):
         self.bbox = bbox
@@ -27,14 +37,22 @@ class Frame(eqx.Module):
         return hash(self.bbox)
 
     @property
-    def C(self):
+    def C(self) -> int:
+        """Number of channels"""
         return len(self.channels)
 
     @property
     def pixel_size(self):
+        """Get the size of the pixels
+
+        Returns
+        -------
+        float
+            Pixel size in arcsec, averaged over x and y direction
+        """
         if self.wcs is not None:
             # return get_pixel_size(get_affine(self.wcs)) * 60 * 60  # in arcsec
-            return get_scale(self.wcs).mean() * 60 * 60 # in arcsec
+            return get_scale(self.wcs).mean() * 60 * 60  # in arcsec
         else:
             return 1
 
@@ -77,19 +95,19 @@ class Frame(eqx.Module):
         return pos
     
     def convert_pixel_to(self, target, pixel=None):
-        """Converts pixel coordinates from this frame to `target` Frame
+        """Converts pixel coordinates from this frame to `target` frame
 
             Parameters
             ----------
-            target: `~scarlet2.Frame`
+            target: :py:class:`~scarlet2.Frame`
                 target frame
-            pixel: `array`, pixel coordinates in this frame
-                If not set, convert all pixels in this frame
+            pixel: array
+                Pixel coordinates in this frame. If not set, convert all pixels in this frame
 
             Returns
             -------
-            coord_target: `array`
-                coordinates at the location of `coord` in the target frame
+            array
+                coordinates at the location of `pixel` in the frame `target`
         """
 
         if pixel is None:

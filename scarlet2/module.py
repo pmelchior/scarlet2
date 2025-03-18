@@ -79,14 +79,14 @@ class Module(eqx.Module):
 
 
 class Parameter:
-    """Definition of optimizable parameters"""
+    """Definition of optimizable parameter"""
 
     def __init__(self, node, name=None, constraint=None, prior=None, stepsize=0):
         """Initialize parameter definition
 
         Parameters
         ----------
-        node: jnp.array
+        node: array
             Data portion of a member of :py:class:`~scarlet2.Module`
         name: str, optional
             Name to assign to this parameter
@@ -297,7 +297,7 @@ def relative_step(x, *args, factor=0.01, minimum=1e-6):
 
     Parameters
     ----------
-    x: jnp.array
+    x: array
         Array to compute step size for
     *args: list
         Additional arguments
