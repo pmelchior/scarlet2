@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 from functools import partial
+import numpy as np
 
 """
 Some of the code to perform interpolation in Fourier space as been adapted from
@@ -86,7 +87,7 @@ class Lanczos(Interpolant):
 
         self.extent = n
     
-    def f_1(x, n):
+    def f_1(self, x, n):
         """
         Approximation from galsim
         // res = n/(pi x)^2 * sin(pi x) * sin(pi x / n)
@@ -96,27 +97,36 @@ class Lanczos(Interpolant):
         px = jnp.pi * x
         temp = 1./6. * px * px
         res = 1. - temp * (1. + 1. / (n * n))
-        return res
+        return jnp.ones_like(x) #res
 
-    def f_2(x, n):
+    def f_2(self, x, n):
         px = jnp.pi * x
         return n * jnp.sin(px) * jnp.sin(px / n) / px / px
 
-    def lanczos_n(x, n=3):
+    def lanczos_n(self, x, n=3):
         """
         Lanczos interpolation kernel in direct space
         """
-        small_x = jnp.abs(x) <= 1e-4
+        small_x = jnp.abs(x) <= 1e-3
         window_n = jnp.abs(x) <= n
 
         return jnp.piecewise(
             x, 
             [small_x, (~small_x) & window_n], 
-            [f_1, f_2, lambda x, n: jnp.array(0)], n
+            [self.f_1, self.f_2, lambda x, n: jnp.array(0)], n
         )
 
+    # def kernel(self, x):
+    #     return self.lanczos_n(x, self.extent)
+    
     def kernel(self, x):
-        return self.lanczos_n(x, self.extent)
+        radius = self.extent
+        y = radius * jnp.sin(np.pi * x) * jnp.sin(np.pi * x / radius)
+        #  out = y / (np.pi ** 2 * x ** 2) where x >1e-3, 1 otherwise
+        # out = jnp.where(jnp.abs(x) > 1e-3, jnp.divide(y, jnp.where(x != 0, np.pi**2 * x**2, 1)), 1)
+        # return jnp.where(jnp.abs(x) > radius, 0., out)
+        out = jnp.where(jnp.abs(x) > 1e-3, jnp.divide(y, jnp.where(x != 0, np.pi**2 * x**2, 1)), 1)
+        return jnp.where(jnp.abs(x) > radius, 0., out)
 
 ### Resampling function
 
@@ -153,15 +163,15 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):
 
     coords_x = coords[0, :, 0]
     coords_y = coords[:, 0, 1]
-
+    
     h = coords_x[1] - coords_x[0]
-
+    
     xi = jnp.floor((x - coords_x[0]) / h).astype(jnp.int32)
     yi = jnp.floor((y - coords_y[0]) / h).astype(jnp.int32)
 
     Nx = coords.shape[0]
     Ny = coords.shape[1]
-
+    
     def body_fun_x(i, args):
         res, yind, ky, masky = args
 
@@ -169,7 +179,7 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):
         maskx = (xind >= 0) & (xind < Ny)
 
         kx = interpolant.kernel((x - coords_x[xind]) / h)
-
+        print("kx", kx)
         k = kx * ky
         mask = maskx & masky
         res += jnp.where(mask, k * signal[yind, xind], 0)
@@ -181,7 +191,7 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):
 
         yind = yi + i
         masky = (yind >= 0) & (yind < Nx)
-
+                
         ky = interpolant.kernel((y - coords_y[yind]) / h)
 
         res = jax.lax.fori_loop(-interpolant.extent, interpolant.extent + 1, body_fun_x, (res, yind, ky, masky))[0]
@@ -193,6 +203,69 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):
     )
 
     return res.reshape(warp[..., 0].shape)
+
+"""
+Rewritting the hermitian sampling operation without any for loops
+"""
+
+@partial(jax.vmap, in_axes=(0, None, None, None, None, None))
+@partial(jax.jit, static_argnames=("interp",))
+def _interp_weight_1d_xval(ioff, xi, xp, x, nx, interp):
+    xind = xi + ioff
+    mskx = (xind >= 0) & (xind < nx)
+    _x = x - (xp + ioff)
+    wx = interp.kernel(_x)
+    wx = jnp.where(mskx, wx, 0)
+    return wx, xind.astype(jnp.int32)
+
+def resample_2d_vectorized(signal, warp, xmin, ymin, interp=Quintic()):
+    print("in the vmap resample ops")
+    print(interp)
+    orig_shape = warp[...,0].shape
+
+    x = warp[..., 0].flatten()
+    y = warp[..., 1].flatten()
+    zp = signal
+
+    x = x.ravel()
+    xi = jnp.floor(x - xmin).astype(jnp.int32)
+    xp = xi + xmin
+    nx = zp.shape[1]
+
+    y = y.ravel()
+    yi = jnp.floor(y - ymin).astype(jnp.int32)
+    yp = yi + ymin
+    ny = zp.shape[0]
+
+    irange = interp.extent #interp.ixrange // 2
+    iinds = jnp.arange(-irange, irange + 1)
+
+    wx, xind = _interp_weight_1d_xval(
+        iinds,
+        xi,
+        xp,
+        x,
+        nx,
+        interp,
+    )
+
+    wy, yind = _interp_weight_1d_xval(
+        iinds,
+        yi,
+        yp,
+        y,
+        ny,
+        interp,
+    )
+
+    z = jnp.sum(
+        wx[None, :, :] * wy[:, None, :] * zp[yind[:, None, :], xind[None, :, :]],
+        axis=(0, 1),
+    )
+
+    # we reshape on the way out to match the input shape
+    return z.reshape(orig_shape)
+    # return signal
 
 def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):
     """
@@ -407,7 +480,7 @@ def resample_ops_new(kimage, shape_in, shape_out, res_in, res_out, phi=None, fli
         ), -1)
 
     
-    # Apply rotation to the frequencies
+    # Apply inverse rotation to the frequencies
     if phi is not None:
         R = jnp.array([[jnp.cos(phi), jnp.sin(phi)],
                        [-jnp.sin(phi), jnp.cos(phi)]])
@@ -415,6 +488,7 @@ def resample_ops_new(kimage, shape_in, shape_out, res_in, res_out, phi=None, fli
         b_shape = kcoords_out.shape
         kcoords_out = (R @ kcoords_out.reshape((-1, 2)).T).T.reshape((b_shape))
 
+    
     k_resampled = jax.vmap(resample_hermitian_vmap, in_axes=(0,None,None,None,None))(
         kimage,
         kcoords_out,
@@ -430,3 +504,6 @@ def resample_ops_new(kimage, shape_in, shape_out, res_in, res_out, phi=None, fli
     xint_val = interpolant.uval(coords[...,0]) * interpolant.uval(coords[...,1])
     
     return k_resampled * jnp.expand_dims(xint_val, 0)
+
+
+# def resample_hermitian_new(kimage, warp, x_min, y_min, interpolant=Quintic()):
