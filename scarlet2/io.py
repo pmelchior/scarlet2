@@ -1,35 +1,42 @@
-import h5py
+"""Methods to save and load scenes"""
+
 import os
-import numpy as np
-import jax.numpy as jnp
-from scarlet2 import *
 import pickle
-import jax
+
+import h5py
+import numpy as np
 
 
-def model_to_h5(filename, scene, ID, path="", overwrite=False):
-    """
-    Save the model output to a single HDF5 file.
-    NOTE: This is not a pure function hence cannot be
-    utalized within a JAX JIT compilation.
+def model_to_h5(filename, scene, id, path="", overwrite=False):
+    """Save the scene model to a HDF5 file
 
-    Inputs
-    ------
+    Parameters
+    ----------
     filename : str
-    model : scarlet2.scene instance
-    ID : int
+        Name of the HDF5 file to create
+    scene : :py:class:`~scarlet2.Scene`
+        Scene to be stored
+    id : int
+        HDF5 group to store this `scene` under
+    path: str, optional
+        Explicit path for `filename`. If not set, uses local directory
     overwrite : bool, optional
+        Whether to overwrite an existing file with the same path and filename
 
     Returns
     -------
     None
+
+    Notes
+    -----
+    This is not a pure function hence cannot be utilized within a JAX JIT compilation.
     """
     # create directory if it does not exist
     if not os.path.exists(path):
         os.makedirs(path)
 
     # first serialize the model into a pytree
-    model_group = str(ID)
+    model_group = str(id)
     save_h5_path = os.path.join(path, filename)
 
     f = h5py.File(f"{save_h5_path}.h5", "a")
@@ -49,18 +56,22 @@ def model_to_h5(filename, scene, ID, path="", overwrite=False):
     f.close()
 
 
-def model_from_h5(filename, ID, path=""):
+def model_from_h5(filename, id, path=""):
     """
-    Load the model output from a single HDF5 file.
+    Load scene model from a HDF5 file
 
-    Inputs
-    ------
+    Parameters
+    ----------
     filename : str
-    ID : int
+        Name of the HDF5 file to load from
+    id : int
+        HDF5 group to identify the scene by
+    path: str, optional
+        Explicit path for `filename`. If not set, uses local directory
 
     Returns
     -------
-    scene : scarlet2.scene instance
+    :py:class:`~scarlet2.Scene`
     """
 
     filename = os.path.join(path, filename)

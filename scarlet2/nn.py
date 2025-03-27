@@ -1,9 +1,4 @@
-# -------------------------------------------------- #
-# This class is used to calculate the gradient       #
-# of the log-probability via calling the score prior #
-# ScoreNet model. A custom vjp is created to return  #
-# the score prior when calling jax.grad()            #
-# -------------------------------------------------- #
+"""Neural network priors"""
 try:
     import numpyro.distributions as dist
     import numpyro.distributions.constraints as constraints
@@ -114,24 +109,38 @@ from functools import partial
 def _log_prob(model, x):
     return 0.
 
-def log_prob_fwd(model, x):
+
+def _log_prob_fwd(model, x):
     score_func = calc_grad(x, model)
     return 0., score_func  # cannot directly call log_prob in Class object
 
-def log_prob_bwd(model, res, g):
+
+def _log_prob_bwd(model, res, g):
     score_func = res  # Get residuals computed in f_fwd
     return (g * score_func,)  # create the vector (g) jacobian (score_func) product
 
 # register the custom vjp 
-_log_prob.defvjp(log_prob_fwd, log_prob_bwd)
+_log_prob.defvjp(_log_prob_fwd, _log_prob_bwd)
 
 
 # inheritance from Distribution class
 class ScorePrior(dist.Distribution):
+    """Score-matching neural network to represent the prior distribution
+
+    This class extends :py:class:`numpyro.distributions.Distribution` and is used to calculate the gradient of the
+    log-probability of the prior distribution. A custom vjp is created to return the score when calling `jax.grad()`.
+    """
     support = constraints.real_vector
-    """Prior distribution based on a neural network"""
+    model = callable
 
     def __init__(self, model, validate_args=None):
+        """Initialize score model
+
+        Parameters
+        ----------
+        model: callable
+            Returns the score value given parameter and the temperature: `model(x)`
+        """
         self.model = model
 
         super().__init__(
@@ -152,9 +161,20 @@ class ScorePrior(dist.Distribution):
 # define a class for temperature adjustable prior
 class TempScore(ScorePrior):
     """Temperature adjustable ScorePrior"""
+
     def __init__(self, model, temp=0.02):
+        """Initialize score model with fixed `temperature`
+
+        Parameters
+        ----------
+        model: callable
+            Returns the score value given parameter and the temperature: `model(x, temp)`
+        temp: float
+            Temperature for the evaluation of the score model
+        """
         self.model = model
         self.temp = temp
-    def __call__(self, x):
-        return self.model(x, t=self.temp)
 
+    def __call__(self, x):
+        ### TODO: why does this not go through the custom gradient like ScorePrior.__call__?
+        return self.model(x, t=self.temp)

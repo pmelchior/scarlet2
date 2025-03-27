@@ -10,17 +10,21 @@ from .wavelets import starlet_transform, starlet_reconstruction
 
 
 class Morphology(Module):
-
+    """Morphology base class"""
     @property
     def shape(self):
+        """Shape (2D) of the morphology model"""
         raise NotImplementedError
 
     def normalize(self, x):
+        """Apply max normalization to map values between 0 and 1"""
         return x / x.max()
 
 
 class ArrayMorphology(Morphology):
+    """Morphology defined by a 2D array"""
     data: jnp.array
+    """2D image"""
 
     def __init__(self, data):
         self.data = data
@@ -34,12 +38,18 @@ class ArrayMorphology(Morphology):
 
 
 class ProfileMorphology(Morphology):
+    """Base class for morpholgies based on a radial profile"""
     size: float
+    """Size of the profile
+    
+    Can be given as an astropy angle, which will be transformed with the WCS of the current
+    :py:class:`~scarlet2.Scene`.
+    """
     ellipticity: (None, jnp.array)
+    """Ellipticity of the profile"""
     _shape: tuple = eqx.field(static=True, init=False, repr=False)
 
     def __init__(self, size, ellipticity=None, shape=None):
-
         if isinstance(size, u.Quantity):
             try:
                 size = Scenery.scene.frame.u_to_pixel(size)
@@ -63,9 +73,21 @@ class ProfileMorphology(Morphology):
 
     @property
     def shape(self):
+        """Shape of the bounding box for the profile.
+
+        If not set during `__init__`,  uses a square box with an odd number of pixels
+        not smaller than `10*size`.
+        """
         return self._shape
 
     def f(self, R2):
+        """Radial profile function
+
+        Parameters
+        ----------
+        R2: float or array
+            Radius (distance from the center) squared
+        """
         raise NotImplementedError
 
     def __call__(self, delta_center=jnp.zeros(2)):
@@ -94,7 +116,7 @@ class ProfileMorphology(Morphology):
 
 
 class GaussianMorphology(ProfileMorphology):
-
+    """Gaussian radial profile"""
     def f(self, R2):
         return jnp.exp(-R2 / 2)
 
@@ -120,6 +142,17 @@ class GaussianMorphology(ProfileMorphology):
 
     @staticmethod
     def from_image(image):
+        """Create Gaussian radial profile from the 2nd moments of `image`
+
+        Parameters
+        ----------
+        image: array
+            2D array to measure :py:class:`~scarlet2.measure.Moments` from.
+
+        Returns
+        -------
+        GaussianMorphology
+        """
         assert image.ndim == 2
         center = measure.centroid(image)
         # compute moments and create Gaussian from it
@@ -128,6 +161,17 @@ class GaussianMorphology(ProfileMorphology):
 
     @staticmethod
     def from_moments(g):
+        """Create Gaussian radial profile from the moments `g`
+
+        Parameters
+        ----------
+        g: :py:class:`~scarlet2.measure.Moments`
+            Moments, order >= 2
+
+        Returns
+        -------
+        GaussianMorphology
+        """
         T = g.size
         ellipticity = g.ellipticity
 
@@ -141,7 +185,9 @@ class GaussianMorphology(ProfileMorphology):
 
 
 class SersicMorphology(ProfileMorphology):
+    """Sersic radial profile"""
     n: float
+    """Sersic index"""
 
     def __init__(self, n, size, ellipticity=None):
         self.n = n
@@ -173,9 +219,18 @@ prox_soft_plus = lambda x, thresh: prox_plus(prox_soft(x, thresh))
 
 
 class StarletMorphology(Morphology):
+    """Morphology in the starlet basis
+
+    See Also
+    --------
+    scarlet2.wavelets.Starlet
+    """
     coeffs: jnp.ndarray
+    """Starlet coefficients"""
     l1_thresh: float = eqx.field(default=1e-2, static=True)
+    """L1 threshold for coefficient to create sparse representation"""
     positive: bool = eqx.field(default=True, static=True)
+    """Whether the coefficients are restricted to non-negative values"""
 
     def __call__(self, **kwargs):
         if self.positive:
@@ -190,6 +245,19 @@ class StarletMorphology(Morphology):
 
     @staticmethod
     def from_image(image, **kwargs):
+        """Create starlet morphology from `image`
+
+        Parameters
+        ----------
+        image: array
+            2D image array to determine coefficients from.
+        kwargs: dict
+            Additional arguments for `__init__`
+
+        Returns
+        -------
+        StarletMorphology
+        """
         # Starlet transform of image (n1,n2) into coefficient with 3 dimensions: (scales+1,n1,n2)
         coeffs = starlet_transform(image)
         return StarletMorphology(coeffs, **kwargs)

@@ -1,18 +1,27 @@
+"""Measurement methods"""
+
+import math
+
+import astropy.units as u
 import numpy as jnp
 import numpy.ma as ma
-import math
-import astropy.units as u
 
-from .source import Component
 from .frame import get_scale, get_angle, get_sign
+from .source import Component
+
 
 def max_pixel(component):
     """Determine pixel with maximum value
 
     Parameters
     ----------
-    component: `scarlet.Component` or array
+    component: :py:class:`~scarlet2.Component` or array
         Component to analyze or its hyperspectral model
+
+    Returns
+    -------
+    array
+        Coordinates of the brightest pixel in pixel coordinates or in the model frame (if `component` has a `bbox`)
     """
     if isinstance(component, Component):
         model = component()
@@ -29,8 +38,12 @@ def flux(component):
 
     Parameters
     ----------
-    component: `scarlet.Component` or array
+    component: :py:class:`~scarlet2.Component` or array
         Component to analyze or its hyperspectral model
+
+    Returns
+    -------
+    float
     """
     if isinstance(component, Component):
         model = component()
@@ -45,8 +58,13 @@ def centroid(component):
 
     Parameters
     ----------
-    component: `scarlet2.Component` or array
+    component: :py:class:`~scarlet2.Component` or array
         Component to analyze or its hyperspectral model
+
+    Returns
+    -------
+    array
+        Coordinates of the centroid in pixel coordinates or in the model frame (if `component` has a `bbox`)
     """
     if isinstance(component, Component):
         model = component()
@@ -65,14 +83,17 @@ def centroid(component):
 
 
 def snr(component, observations):
-    """Determine SNR with morphology as weight function
+    """Determine SNR with `component` as weight function
 
     Parameters
     ----------
-    component: `scarlet.Component` or array
+    component: :py:class:`~scarlet2.Component` or array
         Component to analyze or its hyperspectral model
+    observations: :py:class:`scarlet2.Observation` or list
 
-    observations: `scarlet.Observation` or list thereof
+    Returns
+    -------
+    float
     """
     if not hasattr(observations, "__iter__"):
         observations = (observations,)
@@ -107,44 +128,31 @@ def snr(component, observations):
     # SNR = (I @ W) / sqrt(W @ Sigma^2 @ W)
     # with W = morph, Sigma^2 = diagonal variance matrix
     snr = (M * W).sum() / jnp.sqrt(((var * W) * W).sum())
-
     return snr
 
 
-# moment code adapted from https://github.com/pmelchior/shapelens/blob/master/src/Moments.cc
-def moments(component, N=2, center=None, weight=None):
-    """Compute centered moments of the component.
-
-    Parameters
-    ----------
-    component: `scarlet.Component` or array
-        Component to analyze or its hyperspectral model
-    N: int >=0
-        Moment order
-    center: array
-        2D coordinate in frame of `component`
-    weight: array
-        weight function with same shape as `component`
-    """
-    return Moments(component, N=N, center=center, weight=weight)
-
-
 class Moments(dict):
-
     def __init__(self, component, N=2, center=None, weight=None):
-        """Compute moments of the light distribution.
+        """Moments of the brightness distribution
 
-         Parameters
-         ----------
-         component: `scarlet.Component` or array
-             Component to analyze or its hyperspectral model
-         N: int >=0
-             Moment order
-         center: array
-             2D coordinate in frame of `component`
-         weight: array
-             weight function with same shape as `component`
-         """
+        The dict is accessed by keys, which denote the power of y/x of the specific Moment:
+        `m[p,q] = \int dx dy f(y,x) y^p x^q`.
+
+        Notes
+        -----
+        Like all coordinates in scarlet2, moments are computed in (y,x) order.
+
+        Parameters
+        ----------
+        component: :py:class:`~scarlet2.Component` or array
+            Component to analyze or its hyperspectral model
+        N: int >=0
+            Moment order
+        center: array
+            2D coordinate in frame of `component`
+        weight: array
+            weight function with same shape as `component`
+        """
         super().__init__()
 
         if isinstance(component, Component):
@@ -162,6 +170,7 @@ class Moments(dict):
             grid_x = grid_x[None, :, :]
 
         self.N = N
+        # moment code adapted from https://github.com/pmelchior/shapelens/blob/master/src/Moments.cc
         for n in range(self.N + 1):
             for m in range(n + 1):
                 # moments ordered by power in y, then x
@@ -185,15 +194,33 @@ class Moments(dict):
 
     @property
     def order(self):
+        """Moment order
+
+        Returns
+        -------
+        int
+        """
+        # TODO: why is this not simply self.N? Probably left over from a dynamic computation of higher moments
         return max(key[0] for key in self.keys())
 
     @property
     def centroid(self):
+        """Determine centroid from moments
+
+        Returns
+        -------
+        array
+            Coordinates of the centroid in the pixel frame of the data that defines these moments
+        """
         return jnp.array((self[1, 0] / self[0, 0], self[0, 1] / self[0, 0]))
 
     @property
     def size(self):
         """Determine size from moments
+
+        Returns
+        -------
+        float
         """
         flux = self[0, 0]
         T = (self[0, 2] / flux * self[2, 0] / flux - (self[1, 1] / flux) ** 2) ** (1 / 4)
@@ -201,17 +228,32 @@ class Moments(dict):
 
     @property
     def ellipticity(self):
-        """Determine complex ellipticity from moments.
+        """Determine complex ellipticity from moments
 
-        Returns:
-        --------
+        Returns
+        -------
         jnp.array
+            Ellipticity (2D) of the data that defines these moments
         """
         ellipticity = (self[0, 2] - self[2, 0] + 2j * self[1, 1]) / (self[2, 0] + self[0, 2])
         return jnp.array((ellipticity.real, ellipticity.imag))
 
     def deconvolve(self, p):
-        """Deconvolve from moments p"""
+        """Deconvolve moments from moments `p`
+
+        The moments are changed in place.
+
+        See Melchior et al. (2010), "Weak gravitational lensing with Deimos", Table 1
+
+        Parameters
+        ----------
+        p: Moments
+            Moments of the kernel to deconvolve from
+
+        Returns
+        -------
+        None
+        """
         g = self
         Nmin = min(p.order, g.order)
 
@@ -246,26 +288,49 @@ class Moments(dict):
                         g[i, j] /= p[0, 0]
 
     def resize(self, c):
-        """
-        Resize moments given a scaling factor c
-        scaling can be different along x and y (c is therefore a list [c1, c2])
+        """Change moments for a change of factor `c` of the size/spatial resolution of the defining frame
+
+        This operation arises when one adjust the moments for a change in the size of pixels of the defining frame, e.g.
+        when asking "what would the moments be if the pixels were factor c smaller (or the source c times larger)"?
+        The moments are changed in place.
+
+        See Teague (1980), "Image  analysis via the general  theory of moments", eq. 34 for details.
+
+        Parameters
+        ----------
+        c: float or list
+            Scaling factor for the size change. Can be different along x and y
+
+        Returns
+        -------
+        None
         """
         # Teague (1980), eq. 34
         if jnp.isscalar(c):
             for e in self:
-                self[e] = self[e] * c**(2+e[0]+e[1])
-        elif len(c)==2:
+                self[e] = self[e] * c ** (2 + e[0] + e[1])
+        elif len(c) == 2:
             for e in self:
-                self[e] = self[e] * c[0]**(e[0]+1) * c[1]**(e[1]+1)
+                self[e] = self[e] * c[0] ** (e[0] + 1) * c[1] ** (e[1] + 1)
         else:
             raise AttributeError("c must be a scalar of a list or array of two components")
 
     def rotate(self, phi):
-        """
-        Rotate moments given a rotation angle phi (in astropy units)
-        """
-        # Teague (1980), eq. 36
+        """Change moments for rotation of angle `phi`.
 
+        The moments are changed in place.
+
+        See Teague (1980), "Image  analysis via the general  theory of moments", eq. 36 for details.
+
+        Parameters
+        ----------
+        phi: :py:class:`astropy.Quantity`
+            Rotation angle. Must be an astropy quantity of type="angle".
+
+        Returns
+        -------
+        None
+        """
         assert u.get_physical_type(phi) == "angle" # check that it's an angle with a suitable unit
         phi = phi.to(u.deg).value
         phi = phi * math.pi / 180 # radian
@@ -285,36 +350,48 @@ class Moments(dict):
         
         for e in self:
             self[e] = mu_p[e]
-        
+
     def transfer(self, wcs_in, wcs_out):
-        """
-        Compute rescaling and rotation from WCSs and apply to moments
-        wcs_in: astropy.wcs.Wcsprm
-        wcs_out: astropy.wcs.Wcsprm
+        """Compute rescaling and rotation from WCSs and apply to moments
+
+        This methods adjusts moments measured with a frame defined by `wcs_in` to to the frame `wcs_out`.
+        The moments are changed in place.
+
+        Parameters
+        ----------
+        wcs_in: :py:class:`astropy.wcs.Wcsprm`
+        wcs_out: :py:class:`astropy.wcs.Wcsprm`
+
+        Returns
+        -------
+        None
         """
 
         if (wcs_in is not None) and (wcs_out is not None):
-
             # Rescale moments (amplitude rescaling)
-            scale_in = get_scale(wcs_in) * 60**2 # arcsec
-            scale_out = get_scale(wcs_out) * 60**2 # arcsec
+            scale_in = get_scale(wcs_in) * 60 ** 2  # arcsec
+            scale_out = get_scale(wcs_out) * 60 ** 2  # arcsec
             c = jnp.array(scale_in) / jnp.array(scale_out)
             self.resize(c)
 
             # Rotate moments
             phi_in = get_angle(wcs_in)
             phi_out = get_angle(wcs_out)
-            phi = (phi_out - phi_in)/jnp.pi*180
-            self.rotate(phi*u.deg)
+            phi = (phi_out - phi_in) / jnp.pi * 180
+            self.rotate(phi * u.deg)
 
             # Flip moments if WCSs don't share the same convention
             sign_in = get_sign(wcs_in)
             sign_out = get_sign(wcs_out)
-            self.resize(sign_in*sign_out)
+            self.resize(sign_in * sign_out)
 
+
+# def moments(component, N=2, center=None, weight=None):
+#    return Moments(component, N=N, center=center, weight=weight)
 
 # adapted from  https://github.com/pmelchior/shapelens/blob/src/DEIMOS.cc
 def binomial(n, k):
+    """Binomial coefficient"""
     if k == 0:
         return 1
     if k > n // 2:

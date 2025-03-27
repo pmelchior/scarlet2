@@ -20,6 +20,7 @@ extensions = [
     "sphinx.ext.mathjax",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
+    "sphinx.ext.intersphinx",
     "sphinx_issues",
 ]
 
@@ -57,15 +58,19 @@ html_theme_options = {
 }
 html_baseurl = "https://scarlet2.readthedocs.io/en/latest/"
 
-autoclass_content = 'class'
+autoclass_content = 'both'
 autosummary_generate = True
 autosummary_imported_members = False
 autosummary_ignore_module_all = False
-
 autodoc_type_aliases = {
     "eqx.Module": "equinox.Module",
-    "jnp.array": "jax.numpy.array",
+    "jnp.ndarray": "jax.numpy.array",
 }
+
+intersphinx_mapping = {'astropy': ('https://docs.astropy.org/en/stable/', None),
+                       'optax': ('https://optax.readthedocs.io/en/latest/', None),
+                       'numpyro': ('https://num.pyro.ai/en/stable/', None),
+                       }
 
 issues_github_path = "pmelchior/scarlet2"
 

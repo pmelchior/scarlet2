@@ -1,5 +1,8 @@
+"""Main namespace for scarlet2"""
+
+
 class Scenery:
-    # static store for context manager
+    """Class to hold the context for the current scene"""
     scene = None
 
 
@@ -9,7 +12,8 @@ from . import plot
 from .bbox import Box
 from .frame import Frame
 from .module import Parameter, Parameters, Module, relative_step
-from .morphology import Morphology, ArrayMorphology, GaussianMorphology, SersicMorphology, StarletMorphology
+from .morphology import Morphology, ArrayMorphology, ProfileMorphology, GaussianMorphology, SersicMorphology, \
+    StarletMorphology
 from .observation import Observation
 from .psf import PSF, ArrayPSF, GaussianPSF
 from .scene import Scene

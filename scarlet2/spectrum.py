@@ -6,16 +6,19 @@ from .module import Module
 
 
 class Spectrum(Module):
-
+    """Spectrum base class"""
     @property
     def shape(self):
+        """Shape (1D) of the spectrum model"""
         raise NotImplementedError
 
 
 class ArraySpectrum(Spectrum):
     data: jnp.array
+    """1D spectrum"""
 
     def __init__(self, data):
+        """Spectrum defined by a 1D array"""
         self.data = data
 
     def __call__(self):
@@ -26,11 +29,14 @@ class ArraySpectrum(Spectrum):
         return self.data.shape
 
 
+# TODO: why is this derived from Spectrum instead of ArraySpectrum?
 class StaticArraySpectrum(Spectrum):
     data: jnp.array
     channelindex: list = eqx.field(static=True)
+    """TODO"""
 
     def __init__(self, data, filters):
+        """TODO"""
         try:
             frame = Scenery.scene.frame
         except AttributeError:
@@ -39,6 +45,7 @@ class StaticArraySpectrum(Spectrum):
             raise
 
         self.data = data
+        # TODO: why c[0]? Should this not be the entire channel name?
         self.channelindex = jnp.array([filters.index(c[0]) for c in frame.channels])
 
     def __call__(self):
@@ -49,11 +56,14 @@ class StaticArraySpectrum(Spectrum):
         return len(self.channelindex),
 
 
+# TODO: why is this derived from Spectrum instead of ArraySpectrum?
 class TransientArraySpectrum(Spectrum):
     data: jnp.array
     _epochmultiplier: jnp.array = eqx.field(static=True)
+    """TODO"""
 
     def __init__(self, data, epochs):
+        """TODO"""
         try:
             frame = Scenery.scene.frame
         except AttributeError:

@@ -1,3 +1,4 @@
+"""Plotting functions"""
 from abc import ABC, abstractmethod
 
 import jax
@@ -20,13 +21,16 @@ def channels_to_rgb(channels):
     direction, starting with the shortest wavelength. The mapping seeks to produce
     a relatively even weights for across all channels. It does not consider e.g.
     signal-to-noise variations across channels or human perception.
+
     Parameters
     ----------
     channels: int in range(0,7)
         Number of channels
+
     Returns
     -------
-    array (3, channels) to map onto RGB
+    array
+     (3, channels) to map onto RGB
     """
     assert channels in range(
         0, 8
@@ -91,45 +95,48 @@ def channels_to_rgb(channels):
 
 
 class Norm(ABC):
-    """Norm base class for RGB images"""
-
+    """Base class to normalize the color values of RGB images"""
     def __init__(self):
         self._uint8Max = float(np.iinfo(np.uint8).max)
 
-    """Compute total intensity image"""
-
     def get_intensity(self, im):
+        """Compute total intensity image"""
         return jnp.maximum(0, im).sum(axis=0)
 
-    """Clip image between m and M"""
-
     def clip(self, im, m, M):
+        """Clip image between m and M"""
         return jnp.maximum(0, jnp.minimum(im - m, M - m))
 
-    """Convert three-channel image to RGB image with uint8 dtype"""
 
     def convert_to_uint8(self, im):
+        """Convert three-channel image to RGB image with uint8 dtype"""
         im_clipped = self.clip(im, 0, 1)
         uint_im = (im_clipped * self._uint8Max).astype("uint8")
         im_flipped = uint_im.transpose().swapaxes(0, 1)  # 3 x Ny x Nx -> Ny x Nx x 3
         return im_flipped
 
-    """Compute RGB image from three-channel image"""
 
     def make_rgb_image(self, *im):
+        """Compute RGB image from three-channel image"""
         # backwards compatible to astropy Mapping Call
         return self.convert_to_uint8(self.__call__(jnp.stack(im, axis=0)))
 
-    """Compute normalized three-channel image"""
 
     @abstractmethod
     def __call__(self, im):
+        """Compute normalized three-channel image"""
         pass
 
 
 class LinearNorm(Norm):
     def __init__(self, minimum, maximum):
-        """Linear norm, mapping the interval [minimum, maximum] to [0,1]"""
+        """Linear norm, mapping the interval [`minimum`, `maximum`] to [0,1]
+        
+        Parameters
+        ----------
+        minimum: float
+        maximum: float
+        """
         self.m, self.M = minimum, maximum
         super().__init__()
 
@@ -139,13 +146,13 @@ class LinearNorm(Norm):
 
 class LinearPercentileNorm(LinearNorm):
     def __init__(self, img, percentiles=[1, 99]):
-        """Norm that is linear between lower and upper percentile of img
+        """Norm that is linear between the two elements of `percentiles` of `img`
 
         Parameters
         ----------
-        img: array_like
+        img: array
             Image to normalize
-        percentile: array_like, default=[1,99]
+        percentiles: list, optional
             Lower and upper percentile to consider. Pixel values below will be
             set to zero, above to saturated.
         """
@@ -156,7 +163,7 @@ class LinearPercentileNorm(LinearNorm):
 
 class AsinhNorm(Norm):
     def __init__(self, m, M, beta):
-        """Norm that scales with arcsinh(I / beta) between m and M
+        """Norm that scales as arcsinh(I / beta) between `m` and `M`
 
         See Lupton+(2004) https://ui.adsabs.harvard.edu/abs/2004PASP..116..133L
 
@@ -179,11 +186,11 @@ class AsinhNorm(Norm):
 
         Parameters
         ----------
-        img: array_like
+        img: array
             Three-channel image
         vibrance: float
             Allowance to exceed normalization of three-channel image.
-            Makes images more vibrant but causes slight color shifts in the highlights.
+            Makes images more vibrant but causes slight color shifts towards white in the highlights.
         """
         rgb = self.__call__(img)
         self._rgb_max = rgb[np.isfinite(rgb)].max() / (1 + vibrance)
@@ -210,7 +217,7 @@ class AsinhNorm(Norm):
 
 class AsinhPercentileNorm(AsinhNorm):
     def __init__(self, img, percentiles=[45, 50, 99], vibrance=0.15):
-        """Norm that scales with arcsinh(I / beta) between bottom and top percentile.
+        """Norm that scales as arcsinh(I / beta) between bottom and top percentile
 
         Uses the middle percentile to define the turnover `beta`. The defaults
         are chosen such that the median (percentile 50) tries to catch emission
@@ -244,8 +251,7 @@ class AsinhAutomaticNorm(AsinhNorm):
         noise_level=1,
         vibrance=0.15,
     ):
-        """Norm that scales with arcsinh(I / beta) between `minimum` and
-        `upper_percentile`.
+        """Norm that scales as arcsinh(I / beta) with parameters chosen automatically
 
         The turnover `beta` is taken from the at `noise_level` * RMS, where RMS is the
         total variance of the observations. This norm should automatically create an
@@ -253,10 +259,10 @@ class AsinhAutomaticNorm(AsinhNorm):
 
         Parameters
         ----------
-        observation: `~scarlet.Observation`
+        observation: py:class:`~scarlet2.Observation`
             Observation object with weights
-        channel_map: array_like
-            Linear mapping with dimensions (3, channels)
+        channel_map: array
+            Linear mapping from channels to RGB, dimensions (3, channels)
         noise_level: float
             Factor to be multiplied to the total noise RMS to define the turnover point
         upper_percentile: float
@@ -291,15 +297,18 @@ class AsinhAutomaticNorm(AsinhNorm):
 
 def img_to_3channel(img, channel_map=None):
     """Convert multi-band image cube into 3 RGB channels
+
     Parameters
     ----------
-    img: array_like
+    img: array
         This should be an array with dimensions (channels, height, width).
-    channel_map: array_like
-        Linear mapping with dimensions (3, channels)
+    channel_map: array
+        Linear mapping from channels to RGB, dimensions (3, channels)
+
     Returns
     -------
-    RGB: numpy array with dtype float
+    array
+        Dimensions (3, height, width), type float
     """
     # expand single img into cube
 
@@ -334,22 +343,23 @@ def img_to_rgb(img, channel_map=None, fill_value=0, norm=None, mask=None):
 
     Parameters
     ----------
-    img: array_like
+    img: array
         This should be an array with dimensions (channels, height, width).
-    channel_map: array_like
-        Linear mapping with dimensions (3, channels)
-    fill_value: float, default=`0`
+    channel_map: array
+        Linear mapping from channels to RGB, dimensions (3, channels)
+    fill_value: float, optional
         Value to use for any masked pixels.
-    norm: `scarlet.display.Norm`, default `None`
+    norm: Norm, optional
         Norm to use for mapping in the allowed range [0..255]. If `norm=None`,
         `scarlet.display.LinearPercentileNorm` will be used.
-    mask: array_like
+    mask: array_like, optional
         A [0,1] binary mask to apply over the top of the image,
         where pixels with mask==1 are masked out.
 
     Returns
     -------
-    rgb: numpy array with dimensions (3, height, width) and dtype uint8
+    array
+        Dimensions (3, height, width), type float
     """
     im3 = img_to_3channel(img, channel_map=channel_map)
     if norm is None:
@@ -372,13 +382,40 @@ def observation(
         title_kwargs=dict(),
         label_kwargs={"color": "w", "ha": "center", "va": "center"},
 ):
-    """Plot observation in standardized form.
+    """Plot observation
+
+    Show entire content of `observation`, optionally with list of sources given by `sky_coords` or a PSF image.
+
+    Parameters
+    ----------
+    observation: :py:class:`~scarlet2.Observation`
+    norm: Norm, optional
+        Norm to scale the intensity of `observation` into RGB 0..256
+    channel_map: array, optional
+        Linear mapping from channels to RGB, dimensions (3, channels)
+    sky_coords: list, optional
+        2D coordinates (in pixel coordinates or sky coordinates).
+        If in sky coordinates, the Frame of `observation` needs to have a valid WCS.
+    show_psf: bool, optional
+        Whether to plot a panel with the PSF model of `observation` centered in the middle
+    add_labels: bool, optional
+        Whether to plot a text label with the running number for each of the sources in `sky_coords`
+    fig_kwargs: dict, optional
+        Additional arguments for `mpl.subplots`
+    title_kwargs: dict, optional
+        Additional arguments for `mpl.set_title`
+    label_kwargs: dict, optional
+        Additional arguments for `mpl.text`
+
+    Returns
+    -------
+    mpl.Figure
     """
     panels = 1 if show_psf is False else 2
     figsize = fig_kwargs.pop("figsize", None)
     if figsize is None:
         figsize = (panel_size * panels, panel_size)
-    fig, ax = plt.subplots(1, panels, figsize=figsize)
+    fig, ax = plt.subplots(1, panels, figsize=figsize, **fig_kwargs)
     if not hasattr(ax, "__iter__"):
         ax = (ax,)
 
@@ -620,8 +657,49 @@ def sources(
         title_kwargs=dict(),
         marker_kwargs={"color": "w", "marker": "x", "mew": 1, "ms": 10},
         box_kwargs={"facecolor": "none", "edgecolor": "w", "lw": 0.5},
-):  
+):
+    """Plot all sources in `scene`
 
+    Creates one figure, with each source in `scene` occupying one row. Depending on the chosen options, multiple panels
+    per source will be created.
+
+    Parameters
+    ----------
+    scene: :py:class:`~scarlet2.Scene`
+    observation: :py:class:`~scarlet2.Observation`, optional
+    norm: Norm, optional
+        Norm to scale the intensity of `observation` into RGB 0..256
+    channel_map: array, optional
+        Linear mapping from channels to RGB, dimensions (3, channels)
+    show_model: bool, optional
+        Whether to show the internal model of each source
+    show_hallucination: bool, optional
+        Whether to show the hallucination score of each source.
+        See Sampson & Melchior (arXiv:2306.13272)
+    show_observed: bool, optional
+        Whether to show the observations in the same region as the source
+    show_rendered: bool, optional
+        Whether to show the model of each source rendered into the frame of `observation`
+    show_spectrum: bool, optional
+        Whether to show the spectrum of each source
+    add_markers: bool, optional
+        Whether to plot a marker at the center for each source
+        Requires the source to have a `center` attribute.
+    add_boxes: bool, optional
+        Whether to plot the bounding box of each source
+    fig_kwargs: dict, optional
+        Additional arguments for `mpl.subplots`
+    title_kwargs: dict, optional
+        Additional arguments for `mpl.set_title`
+    marker_kwargs: dict, optional
+        Additional arguments for `mpl.plot` of the source centers
+    box_kwargs: dict, optional
+        Additional arguments for `mpl.Polygon`
+
+    Returns
+    -------
+    mpl.Figure
+    """
     sources = scene.sources
     n_sources = len(sources)
     panels = sum((show_model, show_hallucination,show_observed, show_rendered, show_spectrum))
@@ -757,13 +835,14 @@ def scene(
 
     Parameters
     ----------
-    sources: list of source models
-    observation: `~scarlet.Observation`
-    norm: norm to compress image intensity to the range [0,255]
+    scene: :py:class:`~scarlet2.Scene`
+    observation: :py:class:`~scarlet2.Observation`, optional
+    norm: Norm
+        Norm to scale the intensity of `observation` into RGB 0..256
     channel_map: array_like
-        Linear mapping with dimensions (3, channels)
+        Linear mapping from channels to RGB, dimensions (3, channels)
     show_model: bool
-        Whether the model is shown in the model frame
+        Whether the internal model is shown in the model frame
     show_observed: bool
         Whether the observation is shown
     show_rendered: bool
@@ -788,7 +867,7 @@ def scene(
 
     Returns
     -------
-    matplotlib figure
+    mpl.Figure
     """
 
     # for animations with multiple scenes

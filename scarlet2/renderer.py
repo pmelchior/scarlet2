@@ -1,3 +1,4 @@
+"""Renderer classes"""
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,21 +10,51 @@ from .measure import get_angle, get_sign
 
 
 class Renderer(eqx.Module):
-    def __call__(
-        self, model, key=None
-    ):  # key is needed to chain renderers with eqx.nn.Sequential
+    """Renderer base class
+
+    Renderers are (potentially parameterized) transformations between the model frame and the observation frame,
+    or elements of such a transformation.
+    """
+
+    def __call__(self, model, key=None):  # key is needed to chain renderers with eqx.nn.Sequential
         raise NotImplementedError
 
 
 class NoRenderer(Renderer):
+    """Inactive renderer that does not change the model"""
     def __call__(self, model, key=None):
         return model
 
 
 class ChannelRenderer(Renderer):
-    channel_map: (None, list, slice) = None
+    """Map model to observed channels
+
+    This renderer only affects to spectral dimension of the model. It needs to be combined with spatial renderers
+    for a full transformation to the observed frame.
+    """
+    channel_map: (None, list, slice, jnp.array) = None
+    """Lookup table or transformation matrix
+    
+    For every channel in the observed frame, this map contained the index or weights of the model channels.
+    """
 
     def __init__(self, model_frame, obs_frame):
+        """Initialize channel mapping
+
+        This method will attempt to find the index in `model_frame.channels` for every item `obs_frame.channels`.
+        For this to work, the identifiers of the channels need to be the same, e.g. `channels=['g','r','i']` or
+        `channels=[0,1,2,3,4]`.
+
+        Parameters
+        ----------
+        model_frame: :py:class:`~scarlet.Frame`
+        obs_frame: :py:class:`~scarlet.Frame`
+
+        Raises
+        ------
+        ValueError
+            If observed channel(s) are not found in `model_frame`
+        """
         if obs_frame.channels == model_frame.channels:
             channel_map = None
         else:
@@ -64,14 +95,26 @@ class ChannelRenderer(Renderer):
 
 
 class ConvolutionRenderer(Renderer):
+    """Convolve model with observed PSF
+
+    The convolution is performed in Fourier space and applies the difference kernel between model PSF and observed PSF.
+    """
+
     def __init__(self, model_frame, obs_frame):
+        """Initialize convolution renderer with difference kernel between `model_frame` and `obs_frame`
+
+        Parameters
+        ----------
+        model_frame: :py:class:`~scarlet.Frame`
+        obs_frame: :py:class:`~scarlet.Frame`
+        """
         # create PSF model
         psf = model_frame.psf()
         if len(psf.shape) == 2:  # only one image for all bands
             psf_model = jnp.tile(psf, (obs_frame.bbox.shape[0], 1, 1))
         else:
             psf_model = psf
-        
+
         # make sure fft uses a shape large enough to cover the convolved model
         fft_shape = _get_fast_shape(
             model_frame.bbox.shape, psf_model.shape, padding=3, axes=(-2, -1)
@@ -105,25 +148,37 @@ Postprocess:
     - ifft and cropping to obs frame
 """
 
+
 class PreprocessMultiresRenderer(Renderer):
-    """
-    Perform padding and Fourier transform of the model image, model psf and
-    observed psf
+    """Renderer to preprocess resampling renderer.
+
+    The renderer for frame that have a different resolution from the model is broken into three parts:
+    * `PreprocessMultiresRenderer`
+    * `ResampleMultiresRenderer`
+    * `PostprocessMultiresRenderer`
+
+    This one (step 1) performs padding and Fourier transform of the model image, model psf and
+    observed psf.
     """
 
-    def __init__(self, model_frame, obs_frame, padding=None):
+    def __init__(self, model_frame, obs_frame, padding=4):
+        """Initialize preprocess renderer in multi-resolution mapping
 
-        if padding == None:
-            # use 4 times padding
-            padding = 4
+        Parameters
+        ----------
+        model_frame: :py:class:`~scarlet2.Frame`
+        obs_frame: :py:class:`~scarlet2.Frame`
+        padding: int, optional
+            How many times to input image if padded to reduce FFT artifacts.
+        """
         object.__setattr__(self, "_padding", padding)
 
         # create PSF model
         psf_model = model_frame.psf()
-        
+
         if len(psf_model.shape) == 2:  # only one image for all bands
             psf_model = jnp.tile(psf_model, (obs_frame.bbox.shape[0], 1, 1))
-        
+
         object.__setattr__(self, "_psf_model", psf_model)
 
         psf_obs = obs_frame.psf()
@@ -139,7 +194,17 @@ class PreprocessMultiresRenderer(Renderer):
         object.__setattr__(self, "fft_shape_obs_psf", fft_shape_obs_psf)
 
     def __call__(self, model, key=None):
+        """Computes the (padded) Fourier transform of `model`
 
+        Returns
+        -------
+        model_k: array
+            Padded Fourier transform of `model`
+        model_psf_k: array
+            Padded Fourier transform of the model PSF
+        obs_psf_k: array
+            Padded Fourier transform of the observed PSF
+        """
         psf_model = self._psf_model
         psf_obs = self._psf_obs
 
@@ -161,15 +226,12 @@ class ResamplingMultiresRenderer(Renderer):
     target grid
     """
 
-    def __init__(self, model_frame, obs_frame, padding=None):
-        
-        if padding == None:
-            # use 4 times padding
-            padding = 4
+    def __init__(self, model_frame, obs_frame, padding=4):
+
         object.__setattr__(self, "_padding", padding)
 
-        fft_shape_model_im = good_fft_size(self._padding*max(model_frame.bbox.shape))
-        fft_shape_obs_psf = good_fft_size(self._padding*max(obs_frame.psf().shape))
+        fft_shape_model_im = good_fft_size(self._padding * max(model_frame.bbox.shape))
+        fft_shape_obs_psf = good_fft_size(self._padding * max(obs_frame.psf().shape))
 
         # getting the smallest grid to perform the interpolation
         # odd shape is required for k-wrapping later
@@ -216,16 +278,13 @@ class ResamplingMultiresRenderer(Renderer):
     
 
 class PostprocessMultiresRenderer(Renderer):
-    def __init__(self, model_frame, obs_frame, padding=None):
-        if padding == None:
-            # use 4 times padding
-            padding = 4
+    def __init__(self, model_frame, obs_frame, padding=4):
         object.__setattr__(self, "_padding", padding)
 
-        fft_shape_model_im = good_fft_size(self._padding*max(model_frame.bbox.shape))
-        fft_shape_obs_psf = good_fft_size(self._padding*max(obs_frame.psf().shape))
+        fft_shape_model_im = good_fft_size(self._padding * max(model_frame.bbox.shape))
+        fft_shape_obs_psf = good_fft_size(self._padding * max(obs_frame.psf().shape))
         object.__setattr__(self, "real_shape_target", obs_frame.bbox.shape)
-        
+
         # getting the smallest grid to perform the interpolation
         # odd shape is required for k-wrapping later
         fft_shape_target = min(fft_shape_model_im, fft_shape_obs_psf) + 1

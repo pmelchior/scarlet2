@@ -1,5 +1,5 @@
 import astropy.units as u
-import astropy.wcs.wcs
+import astropy.wcs
 import equinox as eqx
 import jax.numpy as jnp
 from astropy.coordinates import SkyCoord
@@ -18,7 +18,7 @@ class Frame(eqx.Module):
     """Bounding box of the frame"""
     psf: PSF = None
     """PSF of the frame"""
-    wcs: astropy.wcs.wcs = None
+    wcs: astropy.wcs.WCS = None
     """WCS information of the frame"""
     channels: list
     """Identifiers for the spectral elements"""
@@ -116,27 +116,28 @@ class Frame(eqx.Module):
 
         ra_dec = self.get_sky_coord(pixel)
         return target.get_pixel(ra_dec)
-    
-    def u_to_pixel(self, size):
-        """Converts a size un astropy.units.Quantity to pixel size according 
-           to this frame WCS
+
+    def u_to_pixel(self, distance):
+        """Converts celestial distance to pixel size according to this frame WCS
 
             Parameters
             ----------
-            size: `astropy.units.Quantity`, must be PhysicalType("angle")
+            distance: :py:class:`astropy.units.Quantity`
+                Physical size, must be `PhysicalType("angle")`
 
             Returns
             -------
-            size in pixels
+            float
+                size in pixels
         """
-        assert u.get_physical_type(size) == "angle"
+        assert u.get_physical_type(distance) == "angle"
 
         # first computer the pixel size
         pixel_size = get_pixel_size(
             get_affine(self.wcs.celestial) # only use celestial portion
         ) * 60 * 60 # in arcsec/pixel
-        
-        return size.to(u.arcsec).value / pixel_size
+
+        return distance.to(u.arcsec).value / pixel_size
 
     @staticmethod
     def from_observations(
@@ -149,16 +150,15 @@ class Frame(eqx.Module):
 
         Parameters
         ----------
-        observations: array of `scarlet.Observation` objects
-            array that contains Observations to match onto a common frame
-        model_psf: `scarlet.PSF`
-            PSF of the model frame, to which all observations are to be deconvolved.
-            If None, uses the smallest PSF across all observations and channels.
-        model_wcs: `astropy.wcs.WCS`
-            WCS for the model frame. If None, uses transformation of the observation
-            with the smallest pixels.
-        obs_id: int
-            index of the reference observation
+        observations: list
+            list of :py:class:`~scarlet2.Observation` to determine a common frame
+        model_psf: :py:class:`~scarlet2.PSF`, optional
+            PSF to be adopted for the model frame. This is the effective resolution of the model, and all observations
+             are to be deconvolved to this limit. If None, uses the smallest PSF across all observations and channels.
+        model_wcs: :py:class:`astropy.wcs.WCS`
+            WCS for the model frame. If None, uses WCS information of the observation with the smallest pixels.
+        obs_id: int, optional
+            index of the reference observation.
             If set to None, uses the observation with the smallest pixels.
         coverage: "union" or "intersection"
             Sets the frame to incorporate the pixels covered by any observation ('union')

@@ -14,6 +14,7 @@ class Module(eqx.Module):
     with optimizable parameters.
     """
     def __call__(self):
+        """Evaluate the model"""
         raise NotImplementedError
 
     def make_parameters(self):
@@ -50,7 +51,7 @@ class Module(eqx.Module):
 
         Returns
         -------
-        scarlet2.Module
+        :py:class:`Module`
             Modified module. All other module components are unchanged.
         """
         where = lambda model: model.get(parameters)
@@ -79,10 +80,9 @@ class Module(eqx.Module):
 
 
 class Parameter:
-    """Definition of optimizable parameter"""
 
     def __init__(self, node, name=None, constraint=None, prior=None, stepsize=0):
-        """Initialize parameter definition
+        """Definition of optimizable parameter
 
         Parameters
         ----------
@@ -94,7 +94,7 @@ class Parameter:
         constraint: :py:class:`numpyro.distributions.constraints.Constraint`, optional
             Region over which the parameter value is valid. Contains a bijective transformation to reach this region.
             Cannot be used at the same time as `prior`.
-        prior: :py:class:`numpyro.distributions.Distribution`, optional
+        prior: :py:class:`numpyro.distributions.distribution.Distribution`, optional
             Distribution to determine the probability of a parameter value.
             This is used by the optimization in :py:meth:`scarlet2.Scene.fit` and :py:meth:`scarlet2.Scene.sample`.
         stepsize: (float, callable)
@@ -146,18 +146,17 @@ class Parameter:
 
 
 class Parameters:
-    """Collection of optimizable parameters
-
-    This class acts like a standard python list of :py:class:`~scarlet2.Parameter` instances.
-    It supports `len()`, item access, item addition, etc.
-
-    Attributes
-    ----------
-    base: :py:class:`~scarlet2.Module`
-        Module the parameters refer to
-    """
-
     def __init__(self, base):
+        """Collection of optimizable parameters
+
+        This class acts like a standard python list of :py:class:`~scarlet2.Parameter` instances.
+        It supports `len()`, item access, item addition, etc.
+
+        Attributes
+        ----------
+        base: :py:class:`~scarlet2.Module`
+            Module the parameters refer to
+        """
         self.base = base
         self._base_leaves = jtu.tree_leaves(base)
         self._params = list()
@@ -236,6 +235,25 @@ class Parameters:
     def __len__(self):
         """Length of the collection"""
         return len(self._params)
+
+    def extract_from(self, root):
+        """Extract all parameter arrays from `root`
+
+        Parameters
+        ----------
+        root: :py:class:`~scarlet2.Module`
+            The module to extract parameters from. Can be different from `base`, but must have the same Pytree structure
+
+        Returns
+        -------
+        tuple
+            Tuple of parameter arrays in the order listed by this `Parameters` collection.
+
+        """
+        # create function that ingests root and returns all nodes
+        assert jtu.tree_structure(root) == jtu.tree_structure(self.base)
+        root_leaves = jtu.tree_leaves(root)
+        return tuple(root_leaves[idx] for idx in self._leave_idx)
 
     def to_pixels(self, parameter):
         """Convert parameter to pixel coordinates of the model frame

@@ -1,6 +1,8 @@
+"""Interpolation methods"""
+
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-import equinox as eqx
 
 """
 Some of the code to perform interpolation in Fourier space as been adapted from
@@ -11,40 +13,61 @@ https://github.com/GalSim-developers/JAX-GalSim/blob/main/jax_galsim/interpolate
 ### Interpolant class
 
 class Interpolant(eqx.Module):
+    """Base class for interpolants"""
     extent: int
+    """Size of the interpolation kernel"""
     def __call__(
         self):
         raise NotImplementedError
 
     def kernel(self, x):
+        """Evaluate the kernel in configuration space at location `x`
+
+        Parameters
+        ----------
+        x: float or array
+            Position in real space
+
+        Returns
+        -------
+        float or array
+        """
         raise NotImplementedError
-    
+
     def uval(self, u):
+        """Evaluate the kernel in Fourier space at frequency `u`
+
+        Parameters
+        ----------
+        u: complex or array
+            Position in Fourier space
+
+        Returns
+        -------
+        complex or array
+        """
         raise NotImplementedError
+
 
 ### Quintic interpolant
-
 class Quintic(Interpolant):
+    """Quintic interpolation from Gruen & Bernstein (2014)"""
     def __init__(self):
         self.extent = 3
 
-    def f_0_1_q(self, x):
-        return 1 + x*x*x * (-95 + 138*x - 55*x*x) / 12
+    def _f_0_1_q(self, x):
+        return 1 + x * x * x * (-95 + 138 * x - 55 * x * x) / 12
 
-    def f_1_2_q(self, x):
-        return (x-1)*(x-2) * (-138 + 348*x - 249*x*x + 55*x*x*x) / 24
+    def _f_1_2_q(self, x):
+        return (x - 1) * (x - 2) * (-138 + 348 * x - 249 * x * x + 55 * x * x * x) / 24
 
+    def _f_2_3_q(self, x):
+        return (x - 2) * (x - 3) * (x - 3) * (-54 + 50 * x - 11 * x * x) / 24
 
-    def f_2_3_q(self, x):
-        return (x-2)*(x-3)*(x-3)*(-54 + 50*x - 11*x*x) / 24
-
-    def f_3_q(self, x):
+    def _f_3_q(self, x):
         return jnp.zeros_like(x, dtype=x.dtype)
 
     def kernel(self, x):
-        """
-        Quintic kernel values in direct space
-        """
         x = jnp.abs(x) # quitic kernel is even
 
         b1 = x <= 1
@@ -53,14 +76,11 @@ class Quintic(Interpolant):
 
         return jnp.piecewise(
             x, 
-            [b1, (~b1) & b2, (~b2) & b3], 
-            [self.f_0_1_q, self.f_1_2_q, self.f_2_3_q, self.f_3_q]
+            [b1, (~b1) & b2, (~b2) & b3],
+            [self._f_0_1_q, self._f_1_2_q, self._f_2_3_q, self._f_3_q]
             )
     
     def uval(self, u):
-        """
-        Quintic kernel values in Fourier space
-        """
         u = jnp.abs(u)
         s = jnp.sinc(u)
         piu = jnp.pi*u
@@ -70,22 +90,20 @@ class Quintic(Interpolant):
         
         return s * ssq * ssq * (s * (55. - 19. * piusq) + 2. * c * (piusq - 27.))
 
-### Lanczos interpolant
 
+### Lanczos interpolant
 class Lanczos(Interpolant):
-    
+    """Lanczos interpolation"""
     def __init__(self, n):
-        """
-        Lanczos interpolant
+        """ Lanczos interpolant
 
         Parameters
         ----------
         n: Lanczos order
         """
-
         self.extent = n
-    
-    def f_1(x, n):
+
+    def _f_1(self, x, n):
         """
         Approximation from galsim
         // res = n/(pi x)^2 * sin(pi x) * sin(pi x / n)
@@ -93,15 +111,15 @@ class Lanczos(Interpolant):
         //     = 1 - 1/6 pix^2 ( 1 + 1/n^2 )
         """
         px = jnp.pi * x
-        temp = 1./6. * px * px
+        temp = 1. / 6. * px * px
         res = 1. - temp * (1. + 1. / (n * n))
         return res
 
-    def f_2(x, n):
+    def _f_2(self, x, n):
         px = jnp.pi * x
         return n * jnp.sin(px) * jnp.sin(px / n) / px / px
 
-    def lanczos_n(x, n=3):
+    def _lanczos_n(self, x, n=3):
         """
         Lanczos interpolation kernel in direct space
         """
@@ -109,13 +127,13 @@ class Lanczos(Interpolant):
         window_n = jnp.abs(x) <= n
 
         return jnp.piecewise(
-            x, 
-            [small_x, (~small_x) & window_n], 
-            [f_1, f_2, lambda x, n: jnp.array(0)], n
+            x,
+            [small_x, (~small_x) & window_n],
+            [self._f_1, self._f_2, lambda x, n: jnp.array(0)], n
         )
 
     def kernel(self, x):
-        return self.lanczos_n(x, self.extent)
+        return self._lanczos_n(x, self.extent)
 
 ### Resampling function
 
@@ -140,11 +158,13 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):
         [ [[0,  0], [0,  1], ...,  [0,  N-1]],
                            [ ... ],
           [[N-1,0], [N-1,1], ...,  [N-1,N  ]] ]
-    n: Lanczos order
+    interpolant: Interpolant
+        Instance of interpolant
 
     Returns
     -------
-    resampled_signal: array
+    array
+        Resampled `signal` at the location indicated by `warp`
     """
 
     x = warp[..., 0].flatten()
@@ -212,11 +232,17 @@ def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):
         [ [[0,  0], [0,  1], ...,  [0,  N-1]],
                            [ ... ],
           [[N-1,0], [N-1,1], ...,  [N-1,N  ]] ]
-    n: Lanczos order
+    x_min: float
+        Left coordinate of corner of bounding box that defines the location of `signal`
+    y_min: float
+        Low coordinate of corner of bounding box that defines the location of `signal`
+    interpolant: Interpolant
+        Instance of interpolant
 
     Returns
     -------
-    resampled_signal: array
+    array
+        Resampled `signal` at the location indicated by `warp`
     """
 
     x = warp[..., 0].flatten()

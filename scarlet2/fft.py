@@ -1,3 +1,5 @@
+"""Methods for Fourier transforms"""
+
 import math
 import operator
 
