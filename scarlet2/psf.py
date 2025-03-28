@@ -11,7 +11,16 @@ class PSF(Module):
 
 
 class ArrayPSF(PSF):
-    """PSF defined by an array"""
+    """PSF defined by an image array
+
+    Warnings
+    --------
+    The number of pixels in `morphology` should be odd, and the centroid of the PSF image should be in the central pixel.
+    If that is not the case, one creates an effective shift by the PSF, which is not captured by the coordinate
+    convention of the frame, e.g. its :py:attr:`~scarlet2.Frame.wcs`.
+
+    See :issue:`96` from more details.
+    """
     morphology: jnp.ndarray
     """The PSF morphology image. Can be 2D (height, width) or 3D (channel, height, width)"""
 
