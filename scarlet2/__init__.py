@@ -2,8 +2,14 @@
 
 
 class Scenery:
-    """Class to hold the context for the current scene"""
+    """Class to hold the context for the current scene
+
+    See Also
+    --------
+    :py:class:`~scarlet2.Scene`
+    """
     scene = None
+    """Scene of the currently opened context"""
 
 
 from . import init

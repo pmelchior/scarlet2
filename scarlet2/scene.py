@@ -11,23 +11,42 @@ from .spectrum import ArraySpectrum
 
 
 class Scene(Module):
+    """Model of the celestial scene
+
+    This class connects the main functionality of `scarlet2`: the fitting of an :py:class:`~scarlet2.Observation`
+    (or several) by a :py:class:`~scarlet2.Source` model (or several). Model parameters can be optimized or samples with
+    any method implemented in jax, but this class provides the :py:func:`fit` and :py:func:`sample` methods as built-in
+    solutions.
+    """
     frame: Frame = eqx.field(static=True)
     """Portion of the sky represented by this model"""
     sources: list
     """List of :py:class:`~scarlet2.Source` comprised in this model"""
 
     def __init__(self, frame):
-        """Model of the celestial scene
-
-        This class connects the main functionality of `scarlet2`: the fitting of an :py:class:`~scarlet2.Observation`
-        (or several) by a :py:class:`~scarlet2.Source` model (or several). Model parameters can be optimized or samples with
-        any method implemented in jax, but this class provides the :py:func:`fit` and :py:func:`sample` methods as built-in
-        solutions.
-
+        """
         Parameters
         ----------
         frame: `Frame`
             Portion of the sky represented by this model
+
+        Examples
+        --------
+        The class provides a context so that sources can be added to the same model frame:
+
+        >>> with Scene(model_frame) as scene:
+        >>>    Source(center, spectrum, morphology)
+
+        This adds a single source to the list :py:attr:`~scarlet2.Scene.sources` of `scene`.
+        The context provides a common definition of the model frame, so that, e.g., `center` can be given
+        as :py:class:`astropy.coordinates.SkyCoord` and will automatically be converted to the pixel coordinate in the
+        model frame.
+
+        The constructed source does not go out of scope after the `with` context is closed, it is stored in the scene.
+
+        See Also
+        --------
+        :py:class:`~scarlet2.Scenery`, :py:class:`~scarlet2.Source`
         """
         self.frame = frame
         self.sources = list()

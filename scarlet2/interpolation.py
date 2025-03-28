@@ -1,17 +1,15 @@
-"""Interpolation methods"""
+"""Interpolation methods
 
-import equinox as eqx
-import jax
-import jax.numpy as jnp
-
-"""
 Some of the code to perform interpolation in Fourier space as been adapted from
 https://github.com/GalSim-developers/JAX-GalSim/blob/main/jax_galsim/interpolant.py
 https://github.com/GalSim-developers/JAX-GalSim/blob/main/jax_galsim/interpolatedimage.py
 """
 
-### Interpolant class
+import equinox as eqx
+import jax
+import jax.numpy as jnp
 
+### Interpolant class
 class Interpolant(eqx.Module):
     """Base class for interpolants"""
     extent: int
@@ -145,16 +143,14 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):
     ----------
     signal: array
         2d array containing the signal. We assume here that the coordinates of
-        the signal
-        shape: [Nx, Ny]
+        the signal. Shape: `[Nx, Ny]`
     coords: array
         Coordinates on which the signal is sampled.
-        shape: [Nx, Ny, 2]
-            - x-coordinates are coords[0,:,0]
-            - y-coordinates are coords[:,0,1]
+        Shape: `[Nx, Ny, 2]`
+        x-coordinates are `coords[0,:,0]`, y-coordinates are `coords[:,0,1]`.
     warp: array
         Coordinates on which to resample the signal.
-        shape:[nx, ny, 2]
+        Shape:[nx, ny, 2]
         [ [[0,  0], [0,  1], ...,  [0,  N-1]],
                            [ ... ],
           [[N-1,0], [N-1,1], ...,  [N-1,N  ]] ]

@@ -100,6 +100,10 @@ class Parameter:
         stepsize: (float, callable)
             Step size, or function to determine it (e.g. :py:func:`~scarlet2.relative_step`) for parameter updates.
             This is used by the optimization in :py:meth:`scarlet2.Scene.fit`.
+
+        See Also
+        --------
+        :py:class:`~scarlet2.Parameters`,
         """
         if name is None:
             self.name = varname.argname('node', vars_only=False)
@@ -156,6 +160,27 @@ class Parameters:
         ----------
         base: :py:class:`~scarlet2.Module`
             Module the parameters refer to
+
+        Examples
+        --------
+        >>> with Scene(model_frame) as scene:
+        >>>     Source(center1, spectrum1, morph1)
+        >>>     Source(center2, spectrum2, morph2)
+        >>>
+        >>> parameters = scene.make_parameters()
+        >>> parameters += Parameter(scene.sources[0].spectrum.data,
+        >>>                         name=f"spectrum:0",
+        >>>                         constraint=constraints.positive,
+        >>>                         stepsize=relative_step)
+        >>> maxiter = 200
+        >>> scene_ = scene.fit(observation, parameters, max_iter=maxiter)
+
+        This defines a scene with two sources, initialized with their respective `center`, `spectrum`, and `morphology`
+        parameters. It then fits `observation` by adjusting only the spectrum array of the first source for 200 steps.
+
+        See Also
+        --------
+        :py:class:`~scarlet2.Parameter`, :py:class:`~scarlet2.Scene`, :py:func:`~scarlet2.relative_step`
         """
         self.base = base
         self._base_leaves = jtu.tree_leaves(base)

@@ -32,7 +32,7 @@ class Component(Module):
         """
         Parameters
         ----------
-        center: jnp.array, :py:class:`astropy.coordinates.SkyCoord`
+        center: array, :py:class:`astropy.coordinates.SkyCoord`
             Center position. If given as astropy sky coordinate, it will be transformed with the WCS of the model frame.
         spectrum: :py:class:`~scarlet2.Spectrum`
         morphology: :py:class:`~scarlet2.Morphology`
@@ -95,7 +95,7 @@ class Source(Component):
         """
         Parameters
         ----------
-        center: jnp.array, :py:class:`astropy.coordinates.SkyCoord`
+        center: array, :py:class:`astropy.coordinates.SkyCoord`
             Center position. If given as astropy sky coordinate, it will be transformed with the WCS of the model frame.
         spectrum: :py:class:`~scarlet2.Spectrum`
         morphology: :py:class:`~scarlet2.Morphology`
