@@ -17,9 +17,17 @@ class Box(eqx.Module):
     shape: tuple
     """Size of the array"""
     origin: tuple
-    """Start coordinate (in 2D:: lower-left corner) of the array in model frame"""
+    """Start coordinate (in 2D: lower-left corner) of the array in model frame"""
 
     def __init__(self, shape, origin=None):
+        """
+        Parameters
+        ----------
+        shape: tuple
+            Size of the array
+        origin: tuple, optional
+            Start coordinate (in 2D: lower-left corner) of the array in model frame
+        """
         self.shape = tuple(shape)
         if origin is None:
             origin = (0,) * len(shape)

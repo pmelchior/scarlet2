@@ -123,18 +123,15 @@ def _log_prob_bwd(model, res, g):
 _log_prob.defvjp(_log_prob_fwd, _log_prob_bwd)
 
 
-# inheritance from Distribution class
 class ScorePrior(dist.Distribution):
-    """Score-matching neural network to represent the prior distribution
-
-    This class extends :py:class:`numpyro.distributions.Distribution` and is used to calculate the gradient of the
-    log-probability of the prior distribution. A custom vjp is created to return the score when calling `jax.grad()`.
-    """
     support = constraints.real_vector
     model = callable
 
     def __init__(self, model, validate_args=None):
-        """Initialize score model
+        """Score-matching neural network to represent the prior distribution
+
+        This class is used to calculate the gradient of the log-probability of the prior distribution.
+        A custom vjp is created to return the score when calling `jax.grad()`.
 
         Parameters
         ----------
@@ -160,10 +157,8 @@ class ScorePrior(dist.Distribution):
 
 # define a class for temperature adjustable prior
 class TempScore(ScorePrior):
-    """Temperature adjustable ScorePrior"""
-
     def __init__(self, model, temp=0.02):
-        """Initialize score model with fixed `temperature`
+        """Temperature adjustable ScorePrior
 
         Parameters
         ----------
