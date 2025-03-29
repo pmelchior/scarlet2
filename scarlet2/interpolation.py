@@ -340,7 +340,77 @@ def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):
 
     return res.reshape(warp[..., 0].shape)
 
-def resample_ops(kimage, shape_in, shape_out, res_in, res_out, phi=None, flip_sign=None, interpolant=Quintic()):
+def resample_image(image, target_coords, interp, hermitian=False):
+  """Resamples an image onto a target coordinate grid using Lanczos interpolation.
+
+  Args:
+    image: A 2D JAX array representing the image.
+    target_coords: A 2D JAX array of shape (H_out, W_out, 2) where
+      target_coords[i, j] contains the (x, y) coordinates in the
+      original image to sample from for the output pixel at (i, j).
+
+  Returns:
+    A 2D JAX array of shape (H_out, W_out) representing the resampled image.
+  """
+  h_in, w_in = image.shape
+
+  # Extract y and x coordinates from target_coords
+  y_coords = target_coords[:, :, 0]
+  x_coords = target_coords[:, :, 1]
+
+  # Calculate integer and fractional parts of the coordinates
+  y_floor = jnp.floor(y_coords).astype(int)
+  x_floor = jnp.floor(x_coords).astype(int)
+  y_frac = y_coords - y_floor
+  x_frac = x_coords - x_floor
+
+  # Define the support of the Lanczos kernel (a=3)
+  kernel_radius = interp.extent
+
+  # Create indices for the neighboring pixels to sample
+  y_indices = jnp.arange(-kernel_radius, kernel_radius+1)
+  x_indices = jnp.arange(-kernel_radius, kernel_radius+1)
+
+  # Create a meshgrid of offsets
+  dx, dy = jnp.meshgrid(x_indices, y_indices)
+
+  # Calculate base neighbor coordinates
+  y_neighbors = y_floor[:, :, None, None] + dy[None, None, :, :]
+  x_neighbors = x_floor[:, :, None, None] + dx[None, None, :, :]
+
+  # Check if neighbor indices are within bounds
+  y_valid_mask = (y_neighbors >= 0) & (y_neighbors < h_in)
+  x_valid_mask = (x_neighbors >= 0) & (x_neighbors < w_in)
+  valid_mask = y_valid_mask & x_valid_mask
+
+  # Clip neighbor indices to be within bounds for gathering
+  y_neighbors_clipped = jnp.clip(y_neighbors, 0, h_in - 1)
+  x_neighbors_clipped = jnp.clip(x_neighbors, 0, w_in - 1)
+
+  if hermitian:
+    # Gather pixel values using the clipped indices
+    print(y_neighbors_clipped.shape)
+    print(x_neighbors_clipped.shape)
+    neighbor_pixels = image[y_neighbors_clipped, x_neighbors_clipped]
+  else:
+    # Gather pixel values using the clipped indices
+    neighbor_pixels = image[y_neighbors_clipped, x_neighbors_clipped]
+
+  # Calculate weights based on the original offsets from the target coordinate
+  wy = interp.kernel(dy - y_frac[:, :, None, None])
+  wx = interp.kernel(dx - x_frac[:, :, None, None])
+  weights = wy * wx
+
+  # Mask out the weights of invalid neighbors
+  weights = jnp.where(valid_mask, weights, 0.0)
+
+  # Resample the image by taking a weighted sum of the neighboring pixels
+  resampled_pixel = jnp.sum(weights * neighbor_pixels, axis=(2, 3))
+
+  return resampled_pixel
+
+def resample_ops(kimage, shape_in, shape_out, res_in, res_out, phi=None, flip_sign=None, interpolant=Quintic(),
+                 v2=False):
     """
     Resampling operation used in the Multiresolution Renderers
     This is assuming that the signal is Hermitian and starting at 0 on axis=2,
@@ -369,13 +439,26 @@ def resample_ops(kimage, shape_in, shape_out, res_in, res_out, phi=None, flip_si
         kcoords_out = (R @ kcoords_out.reshape((-1, 2)).T).T.reshape((b_shape))
 
     print("kimage.shape", kimage.shape)
-    k_resampled = jax.vmap(resample_hermitian, in_axes=(0,None,None,None,None))(
-        kimage,
-        kcoords_out,
-        -shape_in/2,
-        -shape_in/2,
-        interpolant
-        )
+
+    if v2:
+        # kcoords_out += -shape_in/2
+        print(kcoords_out.shape)
+        k_resampled = jax.vmap(resample_image, in_axes=(0,None,None,None))(
+            kimage,
+            kcoords_out,
+            interpolant,
+            True
+            )
+
+    else:
+        k_resampled = jax.vmap(resample_hermitian, in_axes=(0,None,None,None,None))(
+            kimage,
+            kcoords_out,
+            -shape_in/2,
+            -shape_in/2,
+            interpolant
+            )
+
     
     kx = jnp.linspace(0, jnp.pi, shape_out//2 + 1) * res_in/res_out
     ky = jnp.linspace(-jnp.pi, jnp.pi, shape_out)
