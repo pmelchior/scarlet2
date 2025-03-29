@@ -340,6 +340,7 @@ def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):
 
     return res.reshape(warp[..., 0].shape)
 
+# @partial(jax.jit, static_argnums=(2,3))
 def resample_image(image, target_coords, interp, hermitian=False):
   """Resamples an image onto a target coordinate grid using Lanczos interpolation.
 
@@ -355,8 +356,8 @@ def resample_image(image, target_coords, interp, hermitian=False):
   h_in, w_in = image.shape
 
   # Extract y and x coordinates from target_coords
-  y_coords = target_coords[:, :, 0]
-  x_coords = target_coords[:, :, 1]
+  y_coords = target_coords[:, :, 1]
+  x_coords = target_coords[:, :, 0]
 
   # Calculate integer and fractional parts of the coordinates
   y_floor = jnp.floor(y_coords).astype(int)
@@ -387,14 +388,11 @@ def resample_image(image, target_coords, interp, hermitian=False):
   y_neighbors_clipped = jnp.clip(y_neighbors, 0, h_in - 1)
   x_neighbors_clipped = jnp.clip(x_neighbors, 0, w_in - 1)
 
-  if hermitian:
-    # Gather pixel values using the clipped indices
-    print(y_neighbors_clipped.shape)
-    print(x_neighbors_clipped.shape)
-    neighbor_pixels = image[y_neighbors_clipped, x_neighbors_clipped]
-  else:
-    # Gather pixel values using the clipped indices
-    neighbor_pixels = image[y_neighbors_clipped, x_neighbors_clipped]
+  # if hermitian:
+    
+
+  # Gather pixel values using the clipped indices
+  neighbor_pixels = image[y_neighbors_clipped, x_neighbors_clipped]
 
   # Calculate weights based on the original offsets from the target coordinate
   wy = interp.kernel(dy - y_frac[:, :, None, None])
