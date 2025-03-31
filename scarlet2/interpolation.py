@@ -341,7 +341,7 @@ def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):
     return res.reshape(warp[..., 0].shape)
 
 # @partial(jax.jit, static_argnums=(2,3))
-def resample_image(image, target_coords, interp, hermitian=False):
+def resample_image(image, target_coords, interp, x_min=0., y_min=0, hermitian=False):
   """Resamples an image onto a target coordinate grid using Lanczos interpolation.
 
   Args:
@@ -356,14 +356,22 @@ def resample_image(image, target_coords, interp, hermitian=False):
   h_in, w_in = image.shape
 
   # Extract y and x coordinates from target_coords
-  y_coords = target_coords[:, :, 1]
-  x_coords = target_coords[:, :, 0]
+  y_coords_target = target_coords[:, :, 1]
+  x_coords_target = target_coords[:, :, 0]
+
+   # Shift target coordinates to the image's pixel grid
+  y_coords_pixel = y_coords_target - y_min
+  x_coords_pixel = x_coords_target - x_min
 
   # Calculate integer and fractional parts of the coordinates
-  y_floor = jnp.floor(y_coords).astype(int)
-  x_floor = jnp.floor(x_coords).astype(int)
-  y_frac = y_coords - y_floor
-  x_frac = x_coords - x_floor
+  y_floor = jnp.floor(y_coords_pixel).astype(int)
+  x_floor = jnp.floor(x_coords_pixel).astype(int)
+  y_frac = y_coords_pixel - y_floor
+  x_frac = x_coords_pixel - x_floor
+#   y_floor = jnp.floor(y_coords).astype(int)
+#   x_floor = jnp.floor(x_coords).astype(int)
+#   y_frac = y_coords - y_floor
+#   x_frac = x_coords - x_floor
 
   # Define the support of the Lanczos kernel (a=3)
   kernel_radius = interp.extent
@@ -441,10 +449,12 @@ def resample_ops(kimage, shape_in, shape_out, res_in, res_out, phi=None, flip_si
     if v2:
         # kcoords_out += -shape_in/2
         print(kcoords_out.shape)
-        k_resampled = jax.vmap(resample_image, in_axes=(0,None,None,None))(
+        k_resampled = jax.vmap(resample_image, in_axes=(0,None,None,None,None,None))(
             kimage,
             kcoords_out,
             interpolant,
+            0.,
+            -shape_in/2,
             True
             )
 

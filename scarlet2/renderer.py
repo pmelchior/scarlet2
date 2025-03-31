@@ -201,31 +201,34 @@ class ResamplingMultiresRenderer(Renderer):
 
         model_kim, model_kpsf, obs_kpsf = kimages
 
-        # model_kim_interp = resample_ops(model_kim, model_kim.shape[-2], 
-        #                                 self.fft_shape_target, self.res_in, self.res_out,
-        #                                 phi=self.rotation_angle,
-        #                                 flip_sign=self.flip_sign)
-
-        # model_kpsf_interp = resample_ops(model_kpsf, model_kpsf.shape[-2], 
-        #                                 self.fft_shape_target, self.res_in, self.res_out,
-        #                                 phi=self.rotation_angle,
-        #                                 flip_sign=self.flip_sign)
-        
-        # obs_kpsf_interp = resample_ops(obs_kpsf, obs_kpsf.shape[-2], 
-        #                                 self.fft_shape_target, self.res_out, self.res_out)
-
-        model_kim_interp = resample_ops_new(model_kim, model_kim.shape[-2], 
-                                self.fft_shape_target, self.res_in, self.res_out,
-                                phi=self.rotation_angle,
-                                flip_sign=self.flip_sign)
-
-        model_kpsf_interp = resample_ops_new(model_kpsf, model_kpsf.shape[-2], 
+        model_kim_interp = resample_ops(model_kim, model_kim.shape[-2], 
                                         self.fft_shape_target, self.res_in, self.res_out,
                                         phi=self.rotation_angle,
-                                        flip_sign=self.flip_sign)
+                                        flip_sign=self.flip_sign,
+                                        v2=True)
+
+        model_kpsf_interp = resample_ops(model_kpsf, model_kpsf.shape[-2], 
+                                        self.fft_shape_target, self.res_in, self.res_out,
+                                        phi=self.rotation_angle,
+                                        flip_sign=self.flip_sign,
+                                        v2=True)
         
-        obs_kpsf_interp = resample_ops_new(obs_kpsf, obs_kpsf.shape[-2], 
-                                        self.fft_shape_target, self.res_out, self.res_out)
+        obs_kpsf_interp = resample_ops(obs_kpsf, obs_kpsf.shape[-2], 
+                                        self.fft_shape_target, self.res_out, self.res_out,
+                                        v2=True)
+
+        # model_kim_interp = resample_ops_new(model_kim, model_kim.shape[-2], 
+        #                         self.fft_shape_target, self.res_in, self.res_out,
+        #                         phi=self.rotation_angle,
+        #                         flip_sign=self.flip_sign)
+
+        # model_kpsf_interp = resample_ops_new(model_kpsf, model_kpsf.shape[-2], 
+        #                                 self.fft_shape_target, self.res_in, self.res_out,
+        #                                 phi=self.rotation_angle,
+        #                                 flip_sign=self.flip_sign)
+        
+        # obs_kpsf_interp = resample_ops_new(obs_kpsf, obs_kpsf.shape[-2], 
+        #                                 self.fft_shape_target, self.res_out, self.res_out)
 
 
         return model_kim_interp, model_kpsf_interp, obs_kpsf_interp
