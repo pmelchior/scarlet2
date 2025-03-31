@@ -95,7 +95,7 @@ class ConvolutionRenderer(Renderer):
 class MultiresolutionRenderer(Renderer):
 
     """
-    Multiresolution renderer steps
+    Multiresolution renderer steps:
 
         Preprocess:
             - padd img, psf_in and psf_out on the according goodfftsize
@@ -221,6 +221,4 @@ class MultiresolutionRenderer(Renderer):
 
         img_trimed = _trim(real_image_arr, [real_image_arr.shape[0], self.real_shape_target[-2], self.real_shape_target[-1]])
 
-        return img_trimed
-        
-        
+        return img_trimed        
