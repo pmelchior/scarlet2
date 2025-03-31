@@ -79,8 +79,6 @@ def snr(component, observations):
 
     if hasattr(component, "get_model"):
         frame = None
-        if not prerender:
-            frame = observations[0].model_frame
         model = component.get_model(frame=frame)
     else:
         model = component
