@@ -85,7 +85,7 @@ class Lanczos(Interpolant):
 
         self.extent = n
     
-    def f_1(x, n):
+    def f_1(self, x, n):
         """
         Approximation from galsim
         // res = n/(pi x)^2 * sin(pi x) * sin(pi x / n)
@@ -97,11 +97,11 @@ class Lanczos(Interpolant):
         res = 1. - temp * (1. + 1. / (n * n))
         return res
 
-    def f_2(x, n):
+    def f_2(self, x, n):
         px = jnp.pi * x
         return n * jnp.sin(px) * jnp.sin(px / n) / px / px
 
-    def lanczos_n(x, n=3):
+    def lanczos_n(self, x, n=3):
         """
         Lanczos interpolation kernel in direct space
         """
