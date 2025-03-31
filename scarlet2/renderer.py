@@ -92,27 +92,25 @@ class ConvolutionRenderer(Renderer):
     def __call__(self, model, key=None):
         return convolve(model, self._diff_kernel_fft, axes=(-2, -1))
 
-"""
-Preprocess:
-    - padd img, psf_in and psf_out on the according goodfftsize
-    - return kimages
+class MultiresolutionRenderer(Renderer):
 
-Resample:
-    - resample the three kimages on the target kgrid
-    - return these kimages
-
-Postprocess:
-    - Deconvolve model PSF and convolve obs PSF in Fourier space
-    - kwrapping
-    - ifft and cropping to obs frame
-"""
-
-class PreprocessMultiresRenderer(Renderer):
     """
-    Perform padding and Fourier transform of the model image, model psf and
-    observed psf
-    """
+    Multiresolution renderer steps:
 
+        Preprocess:
+            - padd img, psf_in and psf_out on the according goodfftsize
+            - return kimages
+
+        Resample:
+            - resample the three kimages on the target kgrid
+            - return these kimages
+
+        Postprocess:
+            - Deconvolve model PSF and convolve obs PSF in Fourier space
+            - kwrapping
+            - ifft and cropping to obs frame
+
+    """
     def __init__(self, model_frame, obs_frame, padding=None):
 
         if padding == None:
@@ -126,52 +124,23 @@ class PreprocessMultiresRenderer(Renderer):
         if len(psf_model.shape) == 2:  # only one image for all bands
             psf_model = jnp.tile(psf_model, (obs_frame.bbox.shape[0], 1, 1))
         
-        object.__setattr__(self, "_psf_model", psf_model)
-
         psf_obs = obs_frame.psf()
 
-        object.__setattr__(self, "_psf_obs", psf_obs)
-
-        fft_shape_model_im = good_fft_size(self._padding*max(model_frame.bbox.shape))
-        fft_shape_model_psf = good_fft_size(self._padding*max(psf_model.shape))
-        fft_shape_obs_psf = good_fft_size(self._padding*max(psf_obs.shape))
+        fft_shape_model_im = good_fft_size(padding*max(model_frame.bbox.shape))
+        fft_shape_model_psf = good_fft_size(padding*max(psf_model.shape))
+        fft_shape_obs_psf = good_fft_size(padding*max(psf_obs.shape))
 
         object.__setattr__(self, "fft_shape_model_im", fft_shape_model_im)
         object.__setattr__(self, "fft_shape_model_psf", fft_shape_model_psf)
         object.__setattr__(self, "fft_shape_obs_psf", fft_shape_obs_psf)
 
-    def __call__(self, model, key=None):
-
-        psf_model = self._psf_model
-        psf_obs = self._psf_obs
-
-        model_kim = jnp.fft.fftshift(
-            transform(model, (self.fft_shape_model_im, self.fft_shape_model_im), (-2, -1)),
-            (-2))
+        # Fourier transform model and observation PSFs
         model_kpsf = jnp.fft.fftshift(
-            transform(psf_model, (self.fft_shape_model_psf, self.fft_shape_model_psf), (-2, -1)),
+            transform(psf_model, (fft_shape_model_psf, fft_shape_model_psf), (-2, -1)),
             (-2))
         obs_kpsf = jnp.fft.fftshift(
-            transform(psf_obs, (self.fft_shape_obs_psf, self.fft_shape_obs_psf), (-2, -1)),
+            transform(psf_obs, (fft_shape_obs_psf, fft_shape_obs_psf), (-2, -1)),
             (-2))
-
-        return model_kim, model_kpsf, obs_kpsf
-    
-class ResamplingMultiresRenderer(Renderer):
-    """
-    Perform the interpolation of the model, model psf and obs psf on the same
-    target grid
-    """
-
-    def __init__(self, model_frame, obs_frame, padding=None):
-        
-        if padding == None:
-            # use 4 times padding
-            padding = 4
-        object.__setattr__(self, "_padding", padding)
-
-        fft_shape_model_im = good_fft_size(self._padding*max(model_frame.bbox.shape))
-        fft_shape_obs_psf = good_fft_size(self._padding*max(obs_frame.psf().shape))
 
         # getting the smallest grid to perform the interpolation
         # odd shape is required for k-wrapping later
@@ -197,15 +166,6 @@ class ResamplingMultiresRenderer(Renderer):
 
         object.__setattr__(self, "flip_sign", sign_in*sign_out)
 
-    def __call__(self, kimages, key=None):
-
-        model_kim, model_kpsf, obs_kpsf = kimages
-
-        model_kim_interp = resample_ops(model_kim, model_kim.shape[-2], 
-                                        self.fft_shape_target, self.res_in, self.res_out,
-                                        phi=self.rotation_angle,
-                                        flip_sign=self.flip_sign)
-
         model_kpsf_interp = resample_ops(model_kpsf, model_kpsf.shape[-2], 
                                         self.fft_shape_target, self.res_in, self.res_out,
                                         phi=self.rotation_angle,
@@ -214,28 +174,30 @@ class ResamplingMultiresRenderer(Renderer):
         obs_kpsf_interp = resample_ops(obs_kpsf, obs_kpsf.shape[-2], 
                                         self.fft_shape_target, self.res_out, self.res_out)
         
-        return model_kim_interp, model_kpsf_interp, obs_kpsf_interp
-    
 
-class PostprocessMultiresRenderer(Renderer):
-    def __init__(self, model_frame, obs_frame, padding=None):
-        if padding == None:
-            # use 4 times padding
-            padding = 4
-        object.__setattr__(self, "_padding", padding)
+        object.__setattr__(self, "model_kpsf_interp", model_kpsf_interp)
+        object.__setattr__(self, "obs_kpsf_interp", obs_kpsf_interp)
 
-        fft_shape_model_im = good_fft_size(self._padding*max(model_frame.bbox.shape))
-        fft_shape_obs_psf = good_fft_size(self._padding*max(obs_frame.psf().shape))
         object.__setattr__(self, "real_shape_target", obs_frame.bbox.shape)
+
+    def __call__(self, model, key=None):
+
+        # Fourier transform model
+        model_kim = jnp.fft.fftshift(
+            transform(model, (self.fft_shape_model_im, self.fft_shape_model_im), (-2, -1)),
+            (-2))
         
-        # getting the smallest grid to perform the interpolation
-        # odd shape is required for k-wrapping later
-        fft_shape_target = min(fft_shape_model_im, fft_shape_obs_psf) + 1
-        object.__setattr__(self, "fft_shape_target", fft_shape_target)
+        # resample on target grid
+        model_kim_interp = resample_ops(model_kim, model_kim.shape[-2], 
+                                        self.fft_shape_target, self.res_in, self.res_out,
+                                        phi=self.rotation_angle,
+                                        flip_sign=self.flip_sign)
 
-    def __call__(self, kimages, key=None):
-
-        model_kim, model_kpsf, obs_kpsf = kimages
+        # deconvolve with model psf, re-convolve with observation psf and Fourier transform back to real space
+        model_kim = model_kim_interp 
+        model_kpsf = self.model_kpsf_interp
+        obs_kpsf = self.obs_kpsf_interp
+        
         kimage_final = model_kim / model_kpsf * obs_kpsf
         
         kimage_final_wrap = jax.vmap(wrap_hermitian_x, in_axes=(0, None, None, None, None, None, None))(
@@ -259,4 +221,4 @@ class PostprocessMultiresRenderer(Renderer):
 
         img_trimed = _trim(real_image_arr, [real_image_arr.shape[0], self.real_shape_target[-2], self.real_shape_target[-1]])
 
-        return img_trimed
+        return img_trimed        

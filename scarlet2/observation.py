@@ -9,9 +9,7 @@ from .renderer import (
     NoRenderer,
     ConvolutionRenderer,
     ChannelRenderer,
-    PreprocessMultiresRenderer,
-    ResamplingMultiresRenderer,
-    PostprocessMultiresRenderer
+    MultiresolutionRenderer
 )
 
 
@@ -69,25 +67,11 @@ class Observation(Module):
             if self.frame.psf != frame.psf:
                 if frame.wcs != self.frame.wcs:
                     # 2) Pad model, model psf and obs psf and Fourier transform
-                    renderers.append(PreprocessMultiresRenderer(frame, self.frame))
-
-                    # 3)a) Resample at the obs resolution, deconvolve model PSF and
-                    # convolve with obs PSF in Fourier space
-                    renderers.append(ResamplingMultiresRenderer(frame, self.frame))
-
-                    # 3)b) TODO: rotate and resample to obs orientation
-                    # angle, h = interpolation.get_angles(self.wcs, frame.wcs)
-                    # same_res = abs(h - 1) < np.finfo(float).eps
-                    # same_rot = (np.abs(angle[1]) ** 2) < np.finfo(float).eps
-
-                    # # convolve with obs PSF
-                    # # TODO: if 2) is a resampling operation: model PSF needs to be resampled accordingly
-                    # # Can be done by passing the renderer up to here to ConvolutionRenderer constructor below
-                    # # Alternative: deconvolve from model_psf before 2) and convolve with full PSF in 3)
-                    # # which is more modular but also more expensive unless all operations remain in Fourier space
-
+                    # 3)a) rotate and resample to obs orientation
+                    # 3)b) Resample at the obs resolution
+                    # 3)c) deconvolve with model PSF and re-convolve with obs PSF
                     # 4) Wrap the Fourier image and crop to obs frame
-                    renderers.append(PostprocessMultiresRenderer(frame, self.frame))
+                    renderers.append(MultiresolutionRenderer(frame, self.frame))
 
                 else:
                     renderers.append(ConvolutionRenderer(frame, self.frame))
