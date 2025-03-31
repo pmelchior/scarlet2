@@ -111,7 +111,7 @@ class Lanczos(Interpolant):
         return jnp.piecewise(
             x, 
             [small_x, (~small_x) & window_n], 
-            [f_1, f_2, lambda x, n: jnp.array(0)], n
+            [self.f_1, self.f_2, lambda x, n: jnp.array(0)], n
         )
 
     def kernel(self, x):
