@@ -6,6 +6,8 @@ from numpy.testing import assert_allclose
 import astropy.units as u
 
 from scarlet2.measure import get_scale
+from utils import import_scarlet_test_data
+import_scarlet_test_data()
 from scarlet_test_data import data_path
 import os
 import astropy.io.fits as fits
