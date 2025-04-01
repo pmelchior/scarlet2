@@ -54,10 +54,23 @@ class Scene(Module):
     def __call__(self):
         model = jnp.zeros(self.frame.bbox.shape)
         for source in self.sources:
-            model += self._eval_src_in_frame(source)
+            model += self.evaluate_source(source)
         return model
 
-    def _eval_src_in_frame(self, source):
+    def evaluate_source(self, source):
+        """Evaluate a single source in the frame of this scene.
+
+        This method inserts the model of `source` into the proper location in `scene`.
+
+        Parameters
+        ----------
+        source: :py:class:`~scarlet2.Source`
+
+        Returns
+        -------
+        array
+            Array of the dimension indicated by :py:attr:`shape`.
+        """
         model_ = source()
         # cut out region from model, add single source model
         bbox, bbox_ = overlap_slices(self.frame.bbox, source.bbox, return_boxes=True)
@@ -318,7 +331,7 @@ class Scene(Module):
                         break
 
             # evaluate the model for any source so that fit includes it even if its spectrum is not updated
-            model = self._eval_src_in_frame(src)  # assumes all sources are single components
+            model = self.evaluate_source(src)  # assumes all sources are single components
 
             # check for models with identical initializations, see scarlet repo issue #282
             # if duplicate: raise ValueError

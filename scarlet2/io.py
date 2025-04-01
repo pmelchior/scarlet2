@@ -7,17 +7,17 @@ import h5py
 import numpy as np
 
 
-def model_to_h5(filename, scene, id, path="", overwrite=False):
+def model_to_h5(model, filename, id=0, path=".", overwrite=False):
     """Save the scene model to a HDF5 file
 
     Parameters
     ----------
     filename : str
         Name of the HDF5 file to create
-    scene : :py:class:`~scarlet2.Scene`
+    model : :py:class:`~scarlet2.Module`
         Scene to be stored
     id : int
-        HDF5 group to store this `scene` under
+        HDF5 group to store this `model` under
     path: str, optional
         Explicit path for `filename`. If not set, uses local directory
     overwrite : bool, optional
@@ -39,7 +39,7 @@ def model_to_h5(filename, scene, id, path="", overwrite=False):
     model_group = str(id)
     save_h5_path = os.path.join(path, filename)
 
-    f = h5py.File(f"{save_h5_path}.h5", "a")
+    f = h5py.File(save_h5_path, "a")
     # create a group for the scene
     if model_group in f.keys():
         if overwrite:
@@ -51,12 +51,12 @@ def model_to_h5(filename, scene, id, path="", overwrite=False):
 
     # save the binary to HDF5
     group = f.create_group(model_group)
-    model = pickle.dumps(scene)
+    model = pickle.dumps(model)
     group.attrs["model"] = np.void(model)
     f.close()
 
 
-def model_from_h5(filename, id, path=""):
+def model_from_h5(filename, id=0, path="."):
     """
     Load scene model from a HDF5 file
 
@@ -75,10 +75,10 @@ def model_from_h5(filename, id, path=""):
     """
 
     filename = os.path.join(path, filename)
-    f = h5py.File(f"{filename}.h5", "r")
-    model_group = str(ID)
+    f = h5py.File(filename, "r")
+    model_group = str(id)
     if model_group not in f.keys():
-        raise ValueError(f"ID {ID} not found in the file.")
+        raise ValueError(f"ID {id} not found in the file.")
 
     group = f.get(model_group)
     out = group.attrs["model"]

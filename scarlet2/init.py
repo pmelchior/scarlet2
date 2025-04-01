@@ -181,7 +181,7 @@ def standardized_moments(
 
     # getting moment measures:
     # 1) get convolved moments
-    g = measure.moments(cutout_img, center=center, weight=cutout_fp[None, :, :], N=2)
+    g = measure.Moments(cutout_img, center=center, weight=cutout_fp[None, :, :], N=2)
     # 2) adjust moments for model frame
     g.transfer(obs.frame.wcs, frame.wcs)
     # 3) deconvolve from PSF (actually: difference kernel between obs PSF and model frame PSF)
@@ -189,9 +189,9 @@ def standardized_moments(
         p = obs._dp
     else:
         # moments of difference kernel between the model PSF and the observed PSF
-        p = measure.moments(obs.frame.psf(), N=2)
+        p = measure.Moments(obs.frame.psf(), N=2)
         p.transfer(obs.frame.wcs, frame.wcs)
-        p0 = measure.moments(frame.psf(), N=2)
+        p0 = measure.Moments(frame.psf(), N=2)
         p.deconvolve(p0)
         # store in obs for repeated use
         object.__setattr__(obs, "_dp", p)

@@ -4,9 +4,7 @@ _scarlet2_ is an open-source python library for modeling astronomical sources fr
 multi-instrument data.
 It's implemented in [jax](http://jax.readthedocs.io/), layered on top of
 the [equinox](https://docs.kidger.site/equinox/)
-library. It can be deployed to GPUs and TPUs and supports optimization and sampling approaches
-(by default [optax](https://optax.readthedocs.io/) and [numpyro](https://numpydoc.readthedocs.io/),
-but _scarlet2_ is agnostic about that).
+library. It can be deployed to GPUs and TPUs and supports optimization and sampling approaches.
 
 ## Installation
 
@@ -22,18 +20,16 @@ should do. If you want the latest development version, use
 pip install git+https://github.com/pmelchior/scarlet2.git
 ```
 
-This will allow you to evaluate source model and compute likelihood of observed data, so you can run your own
+This will allow you to evaluate source models and compute likelihoods of observed data, so you can run your own
 optimizer/sampler. If you want a fully fledged library out of the box, you need to install `optax`, `numpyro`, and
-`h5py` as well.
+`h5py` as well.tes
 
 ## Usage
-
-Head over to our [quickstart guide](quickstart) to see how things are done.
-More tutorials and the API documentation are below.
 
 ```{toctree}
 :maxdepth: 2
 
+quickstart
 tutorials
 api
 ```
@@ -75,3 +71,7 @@ That can lead to problems with calibration, but, more importantly, it prevents t
 optimization or sampling. As a result, we could never calculate errors for _scarlet1_ models.
 **_scarlet2_ uses only constraints that can be differentiated.** It supports any continuous optimization or sampling
 method, including error estimates.
+
+## Ideas, Questions or Problems?
+
+If you have any of those, head over to our [github repo](https://github.com/pmelchior/scarlet2/) and create an issue.

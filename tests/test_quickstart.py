@@ -13,13 +13,14 @@ from scarlet_test_data import data_path
 def test_quickstart():
     file = jnp.load(os.path.join(data_path, "hsc_cosmos_35.npz"))
     data = jnp.asarray(file["images"])
+    channels = list(file['filters'])
     centers = [(src['y'], src['x']) for src in file["catalog"]]  # Note: y/x convention!
     weights = jnp.asarray(1 / file["variance"])
     psf = jnp.asarray(file["psfs"])
 
     frame_psf = GaussianPSF(0.7)
-    model_frame = Frame(Box(data.shape), psf=frame_psf)
-    obs = Observation(data, weights, psf=ArrayPSF(jnp.asarray(psf))).match(model_frame)
+    model_frame = Frame(Box(data.shape), psf=frame_psf, channels=channels)
+    obs = Observation(data, weights, psf=ArrayPSF(jnp.asarray(psf)), channels=channels).match(model_frame)
 
     from functools import partial
     spec_step = partial(relative_step, factor=0.05)

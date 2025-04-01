@@ -11,6 +11,7 @@ import numpy as np
 from jax import jvp, grad, jit
 from matplotlib.patches import Rectangle, Polygon
 
+from . import measure
 from .bbox import Box
 from .renderer import ChannelRenderer
 
@@ -762,7 +763,7 @@ def sources(
         # model in observation frame
         extent = get_extent(observation.frame.bbox)
         if show_rendered:
-            model = scene._eval_src_in_frame(src)
+            model = scene.evaluate_source(src)
             model_ = observation.render(model)
 
             ax[k - skipped][panel].imshow(
@@ -796,7 +797,7 @@ def sources(
 
         if show_spectrum:
             # needs to be evaluated in the source box to prevent truncation
-            spectra = [src.spectrum()]
+            spectra = [measure.flux(src), ] + [measure.flux(component) for component in src.components]
             
             for spectrum in spectra:
                 ax[k-skipped][panel].plot(spectrum)
