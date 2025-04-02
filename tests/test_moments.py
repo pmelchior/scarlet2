@@ -1,12 +1,13 @@
+import astropy.units as u
 import jax.numpy as jnp
 from jax import vmap
+from numpy.testing import assert_allclose
+
 import scarlet2
 from scarlet2 import *
-from numpy.testing import assert_allclose
-import astropy.units as u
-
 from scarlet2.measure import get_scale
-from utils import import_scarlet_test_data
+from scarlet2.utils import import_scarlet_test_data
+
 import_scarlet_test_data()
 from scarlet_test_data import data_path
 import os

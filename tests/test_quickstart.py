@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from numpyro.distributions import constraints
 
 from scarlet2 import *
-from utils import import_scarlet_test_data
+from scarlet2.utils import import_scarlet_test_data
 
 import_scarlet_test_data()
 from scarlet_test_data import data_path

@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 
 from scarlet2 import *
-from utils import import_scarlet_test_data
+from scarlet2.utils import import_scarlet_test_data
 
 import_scarlet_test_data()
 from scarlet_test_data import data_path
@@ -22,10 +22,6 @@ def test_save_output():
     frame_psf = GaussianPSF(0.7)
     model_frame = Frame(Box(data.shape), psf=frame_psf)
     obs = Observation(data, weights, psf=ArrayPSF(jnp.asarray(psf))).match(model_frame)
-
-    from functools import partial
-
-    spec_step = partial(relative_step, factor=0.05)
 
     with Scene(model_frame) as scene:
 
