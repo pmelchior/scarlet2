@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from astropy.coordinates import SkyCoord
 
 from .bbox import Box
-from .psf import PSF
+from .psf import PSF, ArrayPSF
 
 
 class Frame(eqx.Module):
@@ -196,7 +196,7 @@ class Frame(eqx.Module):
                         (small_psf_size is None) or (psf_size < small_psf_size)
                     ):
                         small_psf_size = psf_size
-                        model_psf_temp = ImagePSF(psf[np.newaxis, :, :])
+                        model_psf_temp = ArrayPSF(psf[jnp.newaxis, :, :])
                         psf_h = h_temp
 
         # Find a reference observation. Either provided by obs_id or as the observation with the smallest pixel

@@ -1,16 +1,17 @@
-import os
-
-import astropy.io.fits as fits
-import astropy.units as u
 import jax.numpy as jnp
-from astropy.wcs import WCS
 from jax import vmap
-from numpy.testing import assert_allclose
-from scarlet_test_data import data_path
-
 import scarlet2
 from scarlet2 import *
+from numpy.testing import assert_allclose
+import astropy.units as u
+
 from scarlet2.measure import get_scale
+from utils import import_scarlet_test_data
+import_scarlet_test_data()
+from scarlet_test_data import data_path
+import os
+import astropy.io.fits as fits
+from astropy.wcs import WCS
 
 T0 = 30
 ellipticity = jnp.array((0.3,0.5))

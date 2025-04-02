@@ -22,4 +22,5 @@ def import_scarlet_test_data():
 
 if __name__=="__main__":
     import_scarlet_test_data()
-    print(scarlet_test_data.data_path)
+    from scarlet_test_data import data_path
+    print(data_path)

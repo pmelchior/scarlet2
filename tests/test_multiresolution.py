@@ -18,7 +18,7 @@ import jax.numpy as jnp
 # Load the HSC image data
 obs_hdu = fits.open(os.path.join(data_path, "test_resampling", "Cut_HSC1.fits"))
                     
-data_hsc = jnp.array(obs_hdu[0].data.byteswap().newbyteorder(), jnp.float32)
+data_hsc = jnp.array(obs_hdu[0].data, jnp.float32)
 wcs_hsc = WCS(obs_hdu[0].header)
 channels_hsc = ['g','r','i','z','y']
 
@@ -32,7 +32,7 @@ psf_hsc = scarlet2.ArrayPSF(psf_hsc_data)
 # Load the HST image data
 hst_hdu = fits.open(os.path.join(data_path, "test_resampling", "Cut_HST1.fits"))
 
-data_hst = hst_hdu[0].data
+data_hst = jnp.array(hst_hdu[0].data, jnp.float32)
 wcs_hst = WCS(hst_hdu[0].header)
 channels_hst = ['F814W']
 
@@ -46,7 +46,7 @@ psf_hst = scarlet2.ArrayPSF(psf_hst_)
 
 # Scale the HST data
 n1, n2 = jnp.shape(data_hst)
-data_hst = data_hst.reshape(1, n1, n2).byteswap().newbyteorder()
+data_hst = data_hst.reshape(1, n1, n2)
 data_hst *= data_hsc.max() / data_hst.max()
 
 r, N1, N2 = data_hsc.shape
