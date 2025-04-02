@@ -2,8 +2,6 @@ import os
 import warnings
 warnings.filterwarnings('ignore')
 
-from numpy.testing import assert_allclose
-
 import scarlet2
 from utils import import_scarlet_test_data
 import_scarlet_test_data()
@@ -84,7 +82,7 @@ def test_hst_to_hsc_against_galsim():
     # Perform the same operations with galsim 
     out_galsim = jnp.load(os.path.join(tests_path, "galsim_hst_to_hsc_resolution.npy"))
 
-    assert_allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
+    jnp.allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
 
 def test_hst_to_hsc_against_galsim_rotated_wcs():
     # Remember images coordinates are [y, x]
@@ -120,7 +118,7 @@ def test_hst_to_hsc_against_galsim_rotated_wcs():
     # Perform the same operations with galsim 
     out_galsim = jnp.load(os.path.join(tests_path, "galsim_hst_to_hsc_resolution.npy"))
 
-    assert_allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
+    jnp.allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
 
 if __name__=="__main__":
     test_hst_to_hsc_against_galsim()
