@@ -13,12 +13,38 @@ from .spectrum import Spectrum
 
 
 class Component(Module):
+    """Single component of a hyperspectral model
+
+    The parameterization of the 3D model (channel, height, width) is defined by the outer product of
+    `spectrum` and `morphology`. That means that there is no variation of the spectrum in spatial direction.
+    The `center` coordinate is only needed to define the bounding box and place the component in the model frame.
+    """
     center: jnp.ndarray
+    """Center position, in pixel coordinates of the model frame"""
     spectrum: Spectrum
+    """Spectrum model"""
     morphology: Morphology
+    """Morphology model"""
     bbox: Box = eqx.field(static=True, init=False)
+    """Bounding box of the model, in pixel coordinates of the model frame"""
 
     def __init__(self, center, spectrum, morphology):
+        """
+        Parameters
+        ----------
+        center: array, :py:class:`astropy.coordinates.SkyCoord`
+            Center position. If given as astropy sky coordinate, it will be transformed with the WCS of the model frame.
+        spectrum: :py:class:`~scarlet2.Spectrum`
+        morphology: :py:class:`~scarlet2.Morphology`
+
+        Examples
+        --------
+        To uniquely determine coordinates, the creation of components is restricted to a context defined by
+        a :py:class:`~scarlet2.Scene`, which define the :py:class:`~scarlet2.Frame` of the model.
+
+        >>> with Scene(model_frame) as scene:
+        >>>    component = Component(center, spectrum, morphology)
+        """
         assert isinstance(spectrum, Spectrum)
         self.spectrum = spectrum
         assert isinstance(morphology, Morphology)
@@ -45,15 +71,50 @@ class Component(Module):
 
 
 class DustComponent(Component):
+    """Component with negative exponential model
+
+    This component is meant to describe the dust attenuation, :math:`\\exp(-\\tau)`,
+    where :math:`\\tau` is the hyperspectral model defined by the base :py:class:`~scarlet2.Component`.
+    """
+
     def __call__(self):
         return jnp.exp(-super().__call__())
 
 
 class Source(Component):
+    """Source model
+
+    The class is the basic parameterization for sources in :py:class:`~scarlet2.Scene`.
+    """
     components: list
+    """List of components in this source"""
     component_ops: list = eqx.field(static=True)
+    """List of operators to combine `components` for the final model"""
 
     def __init__(self, center, spectrum, morphology):
+        """
+        Parameters
+        ----------
+        center: array, :py:class:`astropy.coordinates.SkyCoord`
+            Center position. If given as astropy sky coordinate, it will be transformed with the WCS of the model frame.
+        spectrum: :py:class:`~scarlet2.Spectrum`
+        morphology: :py:class:`~scarlet2.Morphology`
+
+        Examples
+        --------
+        A source  declaration is restricted to a context of a :py:class:`~scarlet2.Scene`,
+        which defines the :py:class:`~scarlet2.Frame` of the entire model.
+
+        >>> with Scene(model_frame) as scene:
+        >>>    source = Source(center, spectrum, morphology)
+
+        A source can comprise one or multiple :py:class:`~scarlet2.Component`, which can be added by
+        :py:func:`add_component` or operators `+=` (for an additive component) or `*=` (for a multiplicative component).
+
+        >>> with Scene(model_frame) as scene:
+        >>>    source = Source(center, spectrum, morphology)
+        >>>    source *= DustComponent(center, dust_spectrum, dust_morphology)
+        """
         # set the base component
         super().__init__(center, spectrum, morphology)
         # create the empty component list
@@ -69,6 +130,16 @@ class Source(Component):
             raise
 
     def add_component(self, component, op):
+        """Add `component` to this source
+
+        Parameters
+        ----------
+        component: :py:class:`~scarlet2.Component`
+        op: callable
+            Operator to combine this `component` with those before it in the list :py:attr:`components`.
+            Conventional operators from the :py:mod:`operator` package can be used.
+            Signature: op(x,y) -> z, where all terms have the same shapes
+        """
         assert isinstance(component, (Source, Component))
 
         # if component is a source, it's already registered in scene
@@ -113,6 +184,24 @@ class Source(Component):
 
 class PointSource(Source):
     def __init__(self, center, spectrum):
+        """Model for point sources
+
+        Because the morphology is determined by the model PSF, it does not need to be provided.
+
+        Parameters
+        ----------
+        center: jnp.array, :py:class:`astropy.coordinates.SkyCoord`
+            Center position. If given as astropy sky coordinate, it will be transformed with the WCS of the model frame.
+        spectrum: :py:class:`~scarlet2.Spectrum`
+
+        Examples
+        --------
+        A source declaration is restricted to a context of a :py:class:`~scarlet2.Scene`,
+        which defines the :py:class:`~scarlet2.Frame` of the entire model.
+
+        >>> with Scene(model_frame) as scene:
+        >>>    point_source = PointSource(center, spectrum)
+        """
         try:
             frame = Scenery.scene.frame
         except AttributeError:

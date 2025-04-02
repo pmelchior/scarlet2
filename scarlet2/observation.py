@@ -14,13 +14,18 @@ from .renderer import (
 
 
 class Observation(Module):
-    data: jnp.ndarray = eqx.field(static=True)
-    weights: jnp.ndarray = eqx.field(static=True)
+    """Content and definition of an observation"""
+    data: jnp.ndarray
+    """Observed data"""
+    weights: jnp.ndarray
+    """Statistical weights (usually inverse variance) for :py:meth:`log_likelihood`"""
     frame: Frame = eqx.field(static=True)
+    """Metadata to describe what view of the sky `data` amounts to"""
+    # TODO: requires static, otherwise quickstart test aborts wiht "TypeError: unhashable type: 'slice'"
     renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
+    """Renderer to translate from the model frame the observation frame"""
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
-        # TODO: replace by DataStore class, and make that static
         self.data = data
         self.weights = weights
         if channels is None:
@@ -30,15 +35,34 @@ class Observation(Module):
             renderer = NoRenderer()
         self.renderer = renderer
 
-    @property
-    def C(self):
-        return self.frame.C
-    
     def render(self, model):
-        # render the model in the frame of the observation
+        """Render `model` in the frame of this observation
+
+        Parameters
+        ----------
+        model: array
+            The (pre-rendered) predicted data cube, typically from evaluateing :py:class:`~scarlet2.Scene`
+
+        Returns
+        -------
+        array
+            Prediction of the observation given the `model`. Has the same shape as :py:attr:`data`.
+        """
         return self.renderer(model)
 
     def log_likelihood(self, model):
+        """The logarithm the likelihood of :py:attr:`data` given `model`
+
+        Parameters
+        ----------
+        model: array
+            The (pre-rendered) predicted data cube, typically from evaluateing :py:class:`~scarlet2.Scene`
+
+        Returns
+        -------
+        float
+        """
+
         return self._log_likelihood(model, self.data)
 
     def _log_likelihood(self, model, data):
@@ -55,6 +79,20 @@ class Observation(Module):
         return log_like - log_norm
 
     def match(self, frame, renderer=None):
+        """Construct the mapping between `frame` (from the model) and this observation frame
+
+        Parameters
+        ----------
+        frame: Frame
+            Model frame, typically :py:attr:`scarlet2.Scene.frame` for the current scene.
+        renderer: Renderer, optional
+            Custom transformation to translate the `frame` (from the model) to this observation frame.
+            If not set, this method will attempt to create the mapping from the information in both frames.
+
+        Returns
+        -------
+        self
+        """
         # choose the renderer
         if renderer is None:
             renderers = []

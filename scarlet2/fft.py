@@ -1,5 +1,7 @@
-import operator
+"""Methods for Fourier transforms"""
+
 import math
+import operator
 
 import jax.lax
 import jax.numpy as jnp
@@ -283,6 +285,7 @@ def _pad(arr, newshape, axes=None, mode="constant", constant_values=0):
 
 
 def good_fft_size(input_size):
+    """Determine fast size for FFT"""
     # Code from JAX-Galsim
     # https://github.com/GalSim-developers/JAX-GalSim/blob/4b12d6b3520938cd823ae3978c400bb9a2b454d3/jax_galsim/image.py#L830
     # Reference from GalSim C++
@@ -297,12 +300,11 @@ def good_fft_size(input_size):
     Nk = max(int(math.ceil(math.exp(min(log2n, log2n3)) - 1.0e-5)), 2)
     return Nk
 
-def wrap_hermitian_x(im, im_xmin, im_ymin, wrap_xmin, wrap_ymin, wrap_nx, wrap_ny):
-    """
-    Bernstein & Gruen (2014) arxiv:1401.2636
-    This function is taken from JAX-Galsim wrap_image utils written by Matthew R. Becker
-    https://github.com/GalSim-developers/JAX-GalSim/blob/4b12d6b3520938cd823ae3978c400bb9a2b454d3/jax_galsim/core/wrap_image.py#L6C1-L54C40
-    """
+
+def _wrap_hermitian_x(im, im_xmin, im_ymin, wrap_xmin, wrap_ymin, wrap_nx, wrap_ny):
+    # Bernstein & Gruen (2014) arxiv:1401.2636
+    # This function is taken from JAX-Galsim wrap_image utils written by Matthew R. Becker
+    # https://github.com/GalSim-developers/JAX-GalSim/blob/4b12d6b3520938cd823ae3978c400bb9a2b454d3/jax_galsim/core/wrap_image.py#L6C1-L54C40
 
     def wrap_nonhermitian(im, xmin, ymin, nxwrap, nywrap):
         def _body_j(j, vals):

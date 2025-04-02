@@ -1,28 +1,28 @@
+"""Wavelet functions"""
 # from https://github.com/pmelchior/scarlet/blob/master/scarlet/wavelet.py
 
 import jax.numpy as jnp
 
 class Starlet:
-    """ A class used to create the Wavelet transform of a cube of images from the 'a trou' algorithm.
+    """Wavelet transform of a images (2D or 3D) with the 'a trou' algorithm.
 
-        The transform is performed by convolving the image by a seed starlet: the transform of an all-zero
-        image with its central pixel set to one. This requires 2-fold padding of the image and an odd pad
-        shape. The fft of the seed starlet is cached so that it can be reused in the transform of other
-        images that have the same shape.
+    The transform is performed by convolving the image by a seed starlet: the transform of an all-zero
+    image with its central pixel set to one. This requires 2-fold padding of the image and an odd pad
+    shape. The fft of the seed starlet is cached so that it can be reused in the transform of other
+    images that have the same shape.
     """
 
     def __init__(self, image, coefficients, generation, convolve2D):
-        """ Initialise the Starlet object
-
+        """
         Parameters
         ----------
-        image: numpy ndarray
+        image: array
             Image in real space.
         coefficients: array
             Starlet transform of the image.
         generation: int
             The generation of the starlet transform (either `1` or `2`).
-        convolve2D: array-like
+        convolve2D: array
             The filter used to convolve the image and create the wavelets.
             When `convolve2D` is `None` this uses a cubic bspline.
         """

@@ -2,10 +2,10 @@ import equinox as eqx
 import jax.numpy as jnp
 
 class Box(eqx.Module):
-    """Bounding Box for an object
+    """Bounding Box for data array
 
-    A Bounding box describes the location of a data unit in the global/model coordinate
-    system. It is used to identify spatial and channel overlap and to map from model
+    A Bounding box describes the location of a data array in the model coordinate system.
+    It is used to identify spatial and channel overlap and to map from model
     to observed frames and back.
 
     The `BBox` code is agnostic about the meaning of the dimensions.
@@ -14,11 +14,20 @@ class Box(eqx.Module):
     - 2D shapes denote (Height, Width)
     - 3D shapes denote (Channels, Height, Width)
     """
-
     shape: tuple
+    """Size of the array"""
     origin: tuple
+    """Start coordinate (in 2D: lower-left corner) of the array in model frame"""
 
     def __init__(self, shape, origin=None):
+        """
+        Parameters
+        ----------
+        shape: tuple
+            Size of the array
+        origin: tuple, optional
+            Start coordinate (in 2D: lower-left corner) of the array in model frame
+        """
         self.shape = tuple(shape)
         if origin is None:
             origin = (0,) * len(shape)
@@ -35,7 +44,7 @@ class Box(eqx.Module):
 
         Returns
         -------
-        bbox: :class:`scarlet2.bbox.Box`
+        bbox: Box
             A new box bounded by the input bounds.
         """
         shape = tuple(max(0, cmax - cmin) for cmin, cmax in bounds)
@@ -48,14 +57,14 @@ class Box(eqx.Module):
 
         Parameters
         ----------
-        X: jnp.ndarray
+        X : jnp.ndarray
             Data to threshold
-        min_value: float
+        min_value : float
             Minimum value of the result.
 
         Returns
         -------
-        bbox: :class:`scarlet2.bbox.Box`
+        bbox : :class:`scarlet2.bbox.Box`
             Bounding box for the thresholded `X`
         """
         sel = X > min_value

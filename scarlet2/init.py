@@ -1,3 +1,5 @@
+"""Helper methods to initialize sources"""
+
 import operator
 from functools import reduce
 
@@ -26,8 +28,7 @@ def _get_edge_pixels(img, box):
 
 
 def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0.99):
-    """
-    Make a bounding box for source at center.
+    """Make a bounding box for source at center
 
     This method finds small box around the center so that the edge flux has a minimum SNR,
     the color of the edge pixels remains highly correlated to the center pixel color,
@@ -36,7 +37,7 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
 
     Parameters
     ----------
-    obs: `~scarlet2.Observation`
+    obs: :py:class:`~scarlet2.Observation`
     center_pix: tuple
         source enter, in pixel coordinates
     min_size: int
@@ -91,8 +92,7 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
 
 
 def compact_morphology(min_value=1e-6, return_array=False):
-    """
-    Create image of the point source morphology model, i.e. the most compact source possible.
+    """Create image of the point source morphology model, i.e. the most compact source possible
 
     Parameters
     ----------
@@ -103,7 +103,8 @@ def compact_morphology(min_value=1e-6, return_array=False):
 
     Returns
     -------
-    2D jnp.array (normalized to (0,1)) or ArrayMorphology
+    array or :py:class:`~scarlet2.ArrayMorphology`
+        2D array, normalized to the range [0,1], or :py:class:`~scarlet2.ArrayMorphology` made from this image
 
     """
     try:
@@ -128,23 +129,30 @@ def standardized_moments(
         footprint=None,
         bbox=None,
 ):
-    """Create image of a Gaussian from the 2nd moments of the observation in the region of the bounding box.
+    """Create image of a Gaussian from the 2nd moments of the observation in the region of the bounding box
+
+    The methods cuts out the pixel included in `bbox` or in `footprint`, measures their 2nd moments with respect to
+    `center`, adjust the spatial coordinates and the PSF to match the model frame.
 
     Parameters
     ----------
-    obs : `~scarlet2.Observation`
-    center : tuple
+    obs: :py:class:`~scarlet2.Observation`
+    center: tuple
         central pixel of the source
-    bbox: `~scarlet2.BBox`
+    footprint: array, optional
+        2D image with non-zero values for all pixels associated with this source (aka a segmentation map or footprint)
+    bbox: :py:class:`~scarlet2.BBox`, optional
         box to cut out source from observation, in pixel coordinates
-    min_value: float
-        minimum pixel value (useful to set to > 0 for positivity constraints)
-    return_array: bool
-        Whether to return arrays or ArraySpectrum and ArrayMorphology
 
     Returns
     -------
-    jnp.ndarrays (for spectrum and morphology) or ArraySpectrum, ArrayMorphology
+    measure.Moments
+        2nd moments, deconvolved, and in the coordinate frame of the model frame
+
+    Raises
+    ------
+    AssertionError
+        If neither `bbox` or `footprint` are set
     """
     assert isinstance(obs, Observation)
     # construct box from footprint
@@ -173,7 +181,7 @@ def standardized_moments(
 
     # getting moment measures:
     # 1) get convolved moments
-    g = measure.moments(cutout_img, center=center, weight=cutout_fp[None, :, :], N=2)
+    g = measure.Moments(cutout_img, center=center, weight=cutout_fp[None, :, :], N=2)
     # 2) adjust moments for model frame
     g.transfer(obs.frame.wcs, frame.wcs)
     # 3) deconvolve from PSF (actually: difference kernel between obs PSF and model frame PSF)
@@ -181,9 +189,9 @@ def standardized_moments(
         p = obs._dp
     else:
         # moments of difference kernel between the model PSF and the observed PSF
-        p = measure.moments(obs.frame.psf(), N=2)
+        p = measure.Moments(obs.frame.psf(), N=2)
         p.transfer(obs.frame.wcs, frame.wcs)
-        p0 = measure.moments(frame.psf(), N=2)
+        p0 = measure.Moments(frame.psf(), N=2)
         p.deconvolve(p0)
         # store in obs for repeated use
         object.__setattr__(obs, "_dp", p)
@@ -192,10 +200,61 @@ def standardized_moments(
     return g
 
 
-def from_gaussian_moments(obs, center, min_size=11, delta_size=3, min_snr=20, min_corr=0.99, min_value=1e-6,
-                          return_array=False):
-    # TODO: implement with source footprints given for each observation
+def from_gaussian_moments(
+        obs,
+        center,
+        min_size=11,
+        delta_size=3,
+        min_snr=20,
+        min_corr=0.99,
+        min_value=1e-6,
+        return_array=False,
+):
+    """Create a Gaussian-shaped morphology and associated spectrum from the observation(s).
 
+    The method determines an suitable bounding box that contains the source given its `center`,
+    computes the deconvolved moments up to order 2, constructs the spectrum from the 0th moment and a morphology image
+    from the 2nd moments (assuming a Gaussian shape).
+
+    If multiple observations are given, it takes the median of the moments in the same channel.
+
+    Parameters
+    ----------
+    obs: :py:class:`~scarlet2.Observation` or list
+        Observation from which the source is initialized.
+    center: tuple
+        central pixel of the source
+    min_size: int
+        smallest size (in pixels) for source bounding box
+    delta_size: int
+        increase in pixel size for the source bounding box
+    min_snr: float
+        minimum SNR of edge pixels (aggregated over all observation channel) to allow increase of box size
+    min_corr: float
+        minimum correlation coefficient between center and edge color to allow increase of box size
+    min_value: float
+        minimum pixel value (useful to set to > 0 for positivity constraints)
+    return_array: bool
+        Whether to return arrays or :py:class:`~scarlet2.ArraySpectrum` and :py:class:`~scarlet2.ArrayMorphology`
+
+    Returns
+    -------
+    (array,array) or (ArraySpectrum, ArrayMorphology)
+         Spectrum and morphology, either as simple arrays or as :py:class:`~scarlet2.ArraySpectrum` and
+         :py:class:`~scarlet2.ArrayMorphology`
+
+    Warnings
+    --------
+    This method is stable only for isolated sources. In cases of significant blending, the size of the bounding box
+    and the measured moments are likely biased high.
+
+    See Also
+    --------
+    make_bbox: Defines bounding box that contains the source
+    standardized_moments: Computes 2nd moments for source in bounding box
+    """
+
+    # TODO: implement with source footprints given for each observation
     # get moments from all channels in all observations
     if not isinstance(obs, (list, tuple)):
         observations = (obs,)
@@ -210,7 +269,7 @@ def from_gaussian_moments(obs, center, min_size=11, delta_size=3, min_snr=20, mi
     # flat lists of spectra, sorted as model frame channels
     spectra = jnp.concatenate([g[0, 0] for g in moments])
     channels = reduce(operator.add, [obs_.frame.channels for obs_ in observations])
-    spectrum = sort_spectra(spectra, channels)
+    spectrum = _sort_spectra(spectra, channels)
 
     # average over all channels
     g = moments[0]
@@ -236,27 +295,23 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
     Yields the spectrum of a single-pixel source with flux 1 in every channel,
     concatenated for all observations.
 
-    If `correct_psf`, it homogenizes the PSFs of the observations, which yields the
-    correct spectrum for a flux=1 point source.
-
-    If `model` is set, it reads of the value of the model at `sky_coord` and yields the
-    spectrum for that model.
-
     Parameters
     ----------
-    obs: `~scarlet2.Observation` or lists of observations
+    obs: `:py:class:`~scarlet2.Observation` or list
         Observation(s) to extract pixel SED from
     pos: tuple
         Position in the observation. Needs to be in sky coordinates if multiple observations have different locations
         or pixel scales.
-    correct_psf: bool
-        Whether PSF shape variations in the observations should be corrected
-    return_array: bool
-        Whether to return the array or an ArraySpectrum
+    correct_psf: bool, optional
+        Whether PSF shape variations in the observations should be corrected. If `True`, this method homogenizes the
+        PSFs of the observations, which yields the correct spectrum for a flux=1 point source.
+    return_array: bool, optional
+        Whether to return the array or an :py:class:`~scarlet2.ArraySpectrum`
 
     Returns
     -------
-    spectrum: `~jnp.array`, ArraySpectrum, or list thereof if given list of observations
+    array or ArraySpectrum or list
+        If `obs` is a list, the method returns the associate list of spectra.
     """
 
     # for multiple observations, get spectrum from each observation and then combine channels in order of model frame
@@ -266,7 +321,7 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
         spectra = jnp.concatenate(
             [pixel_spectrum(obs_, pos, correct_psf=correct_psf, return_array=True) for obs_ in obs])
         channels = reduce(operator.add, [obs_.frame.channels for obs_ in obs])
-        spectrum = sort_spectra(spectra, channels)
+        spectrum = _sort_spectra(spectra, channels)
 
         if return_array:
             return spectrum
@@ -316,7 +371,7 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
     return ArraySpectrum(spectrum)
 
 
-def sort_spectra(spectra, channels):
+def _sort_spectra(spectra, channels):
     try:
         frame = Scenery.scene.frame
     except AttributeError:

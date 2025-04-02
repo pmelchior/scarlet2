@@ -1,50 +1,71 @@
-import jax
-import jax.numpy as jnp
-import equinox as eqx
+"""Interpolation methods
 
-"""
 Some of the code to perform interpolation in Fourier space as been adapted from
 https://github.com/GalSim-developers/JAX-GalSim/blob/main/jax_galsim/interpolant.py
 https://github.com/GalSim-developers/JAX-GalSim/blob/main/jax_galsim/interpolatedimage.py
 """
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+
 
 ### Interpolant class
-
 class Interpolant(eqx.Module):
+    """Base class for interpolants"""
     extent: int
+    """Size of the interpolation kernel"""
+
     def __call__(
-        self):
+            self):
         raise NotImplementedError
 
     def kernel(self, x):
+        """Evaluate the kernel in configuration space at location `x`
+
+        Parameters
+        ----------
+        x: float or array
+            Position in real space
+
+        Returns
+        -------
+        float or array
+        """
         raise NotImplementedError
-    
+
     def uval(self, u):
+        """Evaluate the kernel in Fourier space at frequency `u`
+
+        Parameters
+        ----------
+        u: complex or array
+            Position in Fourier space
+
+        Returns
+        -------
+        complex or array
+        """
         raise NotImplementedError
 
 ### Quintic interpolant
-
 class Quintic(Interpolant):
+    """Quintic interpolation from Gruen & Bernstein (2014)"""
     def __init__(self):
         self.extent = 3
 
-    def f_0_1_q(self, x):
-        return 1 + x*x*x * (-95 + 138*x - 55*x*x) / 12
+    def _f_0_1_q(self, x):
+        return 1 + x * x * x * (-95 + 138 * x - 55 * x * x) / 12
 
-    def f_1_2_q(self, x):
-        return (x-1)*(x-2) * (-138 + 348*x - 249*x*x + 55*x*x*x) / 24
+    def _f_1_2_q(self, x):
+        return (x - 1) * (x - 2) * (-138 + 348 * x - 249 * x * x + 55 * x * x * x) / 24
 
+    def _f_2_3_q(self, x):
+        return (x - 2) * (x - 3) * (x - 3) * (-54 + 50 * x - 11 * x * x) / 24
 
-    def f_2_3_q(self, x):
-        return (x-2)*(x-3)*(x-3)*(-54 + 50*x - 11*x*x) / 24
-
-    def f_3_q(self, x):
+    def _f_3_q(self, x):
         return jnp.zeros_like(x, dtype=x.dtype)
 
     def kernel(self, x):
-        """
-        Quintic kernel values in direct space
-        """
         x = jnp.abs(x) # quitic kernel is even
 
         b1 = x <= 1
@@ -53,14 +74,11 @@ class Quintic(Interpolant):
 
         return jnp.piecewise(
             x, 
-            [b1, (~b1) & b2, (~b2) & b3], 
-            [self.f_0_1_q, self.f_1_2_q, self.f_2_3_q, self.f_3_q]
+            [b1, (~b1) & b2, (~b2) & b3],
+            [self._f_0_1_q, self._f_1_2_q, self._f_2_3_q, self._f_3_q]
             )
     
     def uval(self, u):
-        """
-        Quintic kernel values in Fourier space
-        """
         u = jnp.abs(u)
         s = jnp.sinc(u)
         piu = jnp.pi*u
@@ -70,48 +88,39 @@ class Quintic(Interpolant):
         
         return s * ssq * ssq * (s * (55. - 19. * piusq) + 2. * c * (piusq - 27.))
 
-### Lanczos interpolant
-
 class Lanczos(Interpolant):
     
     def __init__(self, n):
-        """
-        Lanczos interpolant
+        """Lanczos interpolant
 
         Parameters
         ----------
         n: Lanczos order
         """
-
         self.extent = n
-    
-    def f_1(self, x, n):
-        """
-        Approximation from galsim
-        // res = n/(pi x)^2 * sin(pi x) * sin(pi x / n)
-        //     ~= (1 - 1/6 pix^2) * (1 - 1/6 pix^2 / n^2)
-        //     = 1 - 1/6 pix^2 ( 1 + 1/n^2 )
-        """
+
+    def _f_1(self, x, n):
+        # Approximation from galsim
+        # res = n/(pi x)^2 * sin(pi x) * sin(pi x / n)
+        #     ~= (1 - 1/6 pix^2) * (1 - 1/6 pix^2 / n^2)
+        #     = 1 - 1/6 pix^2 ( 1 + 1/n^2 )
         px = jnp.pi * x
-        temp = 1./6. * px * px
+        temp = 1. / 6. * px * px
         res = 1. - temp * (1. + 1. / (n * n))
         return res
 
-    def f_2(self, x, n):
+    def _f_2(self, x, n):
         px = jnp.pi * x
         return n * jnp.sin(px) * jnp.sin(px / n) / px / px
 
-    def lanczos_n(self, x, n=3):
-        """
-        Lanczos interpolation kernel in direct space
-        """
+    def _lanczos_n(self, x, n=3):
         small_x = jnp.abs(x) <= 1e-4
         window_n = jnp.abs(x) <= n
 
         return jnp.piecewise(
-            x, 
-            [small_x, (~small_x) & window_n], 
-            [self.f_1, self.f_2, lambda x, n: jnp.array(0)], n
+            x,
+            [small_x, (~small_x) & window_n],
+            [self._f_1, self._f_2, lambda x, n: jnp.array(0)], n
         )
 
     def kernel(self, x):
@@ -120,33 +129,31 @@ class Lanczos(Interpolant):
 ### Resampling function
 
 def resample2d(signal, coords, warp, interpolant=Quintic()):
-    """
-    Resample a 2-dimensional image using a Lanczos kernel
+    """Resample a 2-dimensional image using a Lanczos kernel
 
     Parameters
     ----------
     signal: array
         2d array containing the signal. We assume here that the coordinates of
-        the signal
-        shape: [Nx, Ny]
+        the signal. Shape: `[Nx, Ny]`
     coords: array
         Coordinates on which the signal is sampled.
-        shape: [Nx, Ny, 2]
-            - x-coordinates are coords[0,:,0]
-            - y-coordinates are coords[:,0,1]
+        Shape: `[Nx, Ny, 2]`
+        x-coordinates are `coords[0,:,0]`, y-coordinates are `coords[:,0,1]`.
     warp: array
         Coordinates on which to resample the signal.
-        shape:[nx, ny, 2]
+        Shape:[nx, ny, 2]
         [ [[0,  0], [0,  1], ...,  [0,  N-1]],
                            [ ... ],
           [[N-1,0], [N-1,1], ...,  [N-1,N  ]] ]
-    n: Lanczos order
+    interpolant: Interpolant
+        Instance of interpolant
 
     Returns
     -------
-    resampled_signal: array
+    array
+        Resampled `signal` at the location indicated by `warp`
     """
-
     x = warp[..., 0].flatten()
     y = warp[..., 1].flatten()
 
@@ -193,9 +200,10 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):
 
     return res.reshape(warp[..., 0].shape)
 
+
 def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):
-    """
-    Resample a 2-dimensional image using a Lanczos kernel
+    """Resample a 2-dimensional image using a Lanczos kernel
+
     This is assuming that the signal is Hermitian and starting at 0 on axis=2,
     i.e. f(-x, -y) = conjugate(f(x, y))
 
@@ -212,11 +220,17 @@ def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):
         [ [[0,  0], [0,  1], ...,  [0,  N-1]],
                            [ ... ],
           [[N-1,0], [N-1,1], ...,  [N-1,N  ]] ]
-    n: Lanczos order
+    x_min: float
+        Left coordinate of corner of bounding box that defines the location of `signal`
+    y_min: float
+        Low coordinate of corner of bounding box that defines the location of `signal`
+    interpolant: Interpolant
+        Instance of interpolant
 
     Returns
     -------
-    resampled_signal: array
+    array
+        Resampled `signal` at the location indicated by `warp`
     """
 
     x = warp[..., 0].flatten()
@@ -266,19 +280,21 @@ def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):
 
     return res.reshape(warp[..., 0].shape)
 
+
 def resample_ops(kimage, shape_in, shape_out, res_in, res_out, phi=None, flip_sign=None, interpolant=Quintic()):
-    """
-    Resampling operation used in the Multiresolution Renderers
-    This is assuming that the signal is Hermitian and starting at 0 on axis=2,
+    """Resampling operation
+
+    This method is used by :py:class:`~scarlet2.renderer.MultiresolutionRenderer`
+    and assumes that the signal is Hermitian and starting at 0 on axis=2,
     i.e. f(-x, -y) = conjugate(f(x, y))
     """
-    
+
     # Apply rescaling to the frequencies
     # [0, Fe/2+1]
     # [-Fe/2+1, Fe/2]
     kcoords_out = jnp.stack(jnp.meshgrid(
-        jnp.linspace(0, 
-                     shape_in / 2 / res_out * res_in, 
+        jnp.linspace(0,
+                     shape_in / 2 / res_out * res_in,
                      shape_out // 2 + 1),
         jnp.linspace(-shape_in / 2 / res_out * res_in, 
                      shape_in / 2 / res_out * res_in, 

@@ -11,20 +11,66 @@ from .spectrum import ArraySpectrum
 
 
 class Scene(Module):
+    """Model of the celestial scene
+
+    This class connects the main functionality of `scarlet2`: the fitting of an :py:class:`~scarlet2.Observation`
+    (or several) by a :py:class:`~scarlet2.Source` model (or several). Model parameters can be optimized or samples with
+    any method implemented in jax, but this class provides the :py:func:`fit` and :py:func:`sample` methods as built-in
+    solutions.
+    """
     frame: Frame = eqx.field(static=True)
+    """Portion of the sky represented by this model"""
     sources: list
+    """List of :py:class:`~scarlet2.Source` comprised in this model"""
 
     def __init__(self, frame):
+        """
+        Parameters
+        ----------
+        frame: `Frame`
+            Portion of the sky represented by this model
+
+        Examples
+        --------
+        The class provides a context so that sources can be added to the same model frame:
+
+        >>> with Scene(model_frame) as scene:
+        >>>    Source(center, spectrum, morphology)
+
+        This adds a single source to the list :py:attr:`~scarlet2.Scene.sources` of `scene`.
+        The context provides a common definition of the model frame, so that, e.g., `center` can be given
+        as :py:class:`astropy.coordinates.SkyCoord` and will automatically be converted to the pixel coordinate in the
+        model frame.
+
+        The constructed source does not go out of scope after the `with` context is closed, it is stored in the scene.
+
+        See Also
+        --------
+        :py:class:`~scarlet2.Scenery`, :py:class:`~scarlet2.Source`
+        """
         self.frame = frame
         self.sources = list()
 
     def __call__(self):
         model = jnp.zeros(self.frame.bbox.shape)
         for source in self.sources:
-            model += self._eval_src_in_frame(source)
+            model += self.evaluate_source(source)
         return model
 
-    def _eval_src_in_frame(self, source):
+    def evaluate_source(self, source):
+        """Evaluate a single source in the frame of this scene.
+
+        This method inserts the model of `source` into the proper location in `scene`.
+
+        Parameters
+        ----------
+        source: :py:class:`~scarlet2.Source`
+
+        Returns
+        -------
+        array
+            Array of the dimension indicated by :py:attr:`shape`.
+        """
         model_ = source()
         # cut out region from model, add single source model
         bbox, bbox_ = overlap_slices(self.frame.bbox, source.bbox, return_boxes=True)
@@ -46,6 +92,34 @@ class Scene(Module):
         Scenery.scene = None
 
     def sample(self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs):
+        """Sample `parameters` of every source in the scene to get posteriors given `observations`.
+
+        This method runs the HMC NUTS sampler from `numpyro` to get parameter posteriors. It uses the likehood of
+        `observations` as well as the `prior` attribute set for every :py:class:`~scarlet2.Parameter` in `parameters`.
+
+        Parameters
+        ----------
+        observations: :py:class:`~scarlet2.Observation` or list
+        parameters: :py:class:`~scarlet2.Parameters`
+            Parameters to sample. This method will ignore all parameters that are not in this list.
+            Every parameter in the list needs to have the attribute `prior` set.
+        seed: int, optional
+            RNG seed for the sampler
+        num_warmup: int, optional
+            Number of samples during HMC warm-up
+        num_samples: int, optional
+            Number of samples to create from tuned HMC
+        progress_bar: bool, optional
+            Whether to show a progress bar
+
+        Notes
+        -----
+        Requires `numpyro`
+
+        Returns
+        -------
+        numpyro.infer.mcmc.MCMC
+        """
         # uses numpyro NUTS on all non-fixed parameters
         # requires that those have priors set
         try:
@@ -111,10 +185,38 @@ class Scene(Module):
 
     def fit(self, observations, parameters, schedule=None, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None,
             **kwargs):
-        # optax fit with adam optimizer
-        # Transforms constrained parameters into unconstrained ones
-        # and filters out fixed parameters
-        # TODO: check alternative optimizers
+        """Fit model `parameters` of every source in the scene to match `observations`.
+
+        Computes the best-fit parameters of all components in every source by first-order gradient descent with
+        the Adam optimizer from `optax`.
+
+        Parameters
+        ----------
+        observations: :py:class:`~scarlet2.Observation` or list
+        parameters: :py:class:`~scarlet2.Parameters`
+            Parameters to optimize. This method will ignore all parameters that are not in this list.
+        schedule: callable, optional
+            A function that maps optimizer step count to value. See :py:class:`optax.Schedule` for details.
+        max_iter: int, optional
+            Maximum number of optimizer iterations
+        e_rel: float, optional
+            Upper limit for the relative change in the norm of any parameter to termine the optimization early.
+        progress_bar: bool, optional
+            Whether to show a progress bar
+        callback: callable, optional
+            Function to be called on the current state of the optimized scene.
+            Signature `callback(scene, convergence, loss) -> None`, where `convergence` is a tree of the same structure
+            as `scene`, and `loss` is the current value of the log_posterior.
+
+        Notes
+        -----
+        Requires `optax`
+
+        Returns
+        -------
+        Scene
+            The scene model with updated parameters
+        """
         try:
             import tqdm
             import optax
@@ -195,14 +297,21 @@ class Scene(Module):
         return _constraint_replace(scene, parameters)  # transform back to constrained variables
 
     def set_spectra_to_match(self, observations, parameters):
-        """Sets the spectra of every source in the scene to match the observations.
+        """Sets the spectra of every source in the scene to match the observations
 
         Computes the best-fit amplitude of the rendered model of all components in every
         channel of every observation as a linear inverse problem.
 
         Parameters
         ----------
-        observations: `scarlet2.Observation` or list thereof
+        observations: :py:class:`~scarlet2.Observation` or list
+        parameters: :py:class:`~scarlet2.Parameters`
+            Parameters to adjust. This method will ignore all parameters that are not :py:class:`~scarlet.ArraySpectrum`
+            or not included in this list.
+
+        Returns
+        -------
+        None
         """
 
         if not hasattr(observations, "__iter__"):
@@ -222,7 +331,7 @@ class Scene(Module):
                         break
 
             # evaluate the model for any source so that fit includes it even if its spectrum is not updated
-            model = self._eval_src_in_frame(src)  # assumes all sources are single components
+            model = self.evaluate_source(src)  # assumes all sources are single components
 
             # check for models with identical initializations, see scarlet repo issue #282
             # if duplicate: raise ValueError
