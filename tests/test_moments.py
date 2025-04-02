@@ -1,15 +1,16 @@
+import os
+
+import astropy.io.fits as fits
+import astropy.units as u
 import jax.numpy as jnp
+from astropy.wcs import WCS
 from jax import vmap
+from numpy.testing import assert_allclose
+from scarlet_test_data import data_path
+
 import scarlet2
 from scarlet2 import *
-from numpy.testing import assert_allclose
-import astropy.units as u
-
 from scarlet2.measure import get_scale
-from scarlet_test_data import data_path
-import os
-import astropy.io.fits as fits
-from astropy.wcs import WCS
 
 T0 = 30
 ellipticity = jnp.array((0.3,0.5))
@@ -18,22 +19,22 @@ morph = GaussianMorphology(size=T0, ellipticity=ellipticity)
 print("Constructed moments")
 print(f"Size: {T0}, Ellipticity: {ellipticity}")
 
-g = scarlet2.measure.moments(component=morph(), N=2)
+g = scarlet2.measure.Moments(component=morph(), N=2)
 
 def test_measure_size():
-    g = scarlet2.measure.moments(component=morph(), N=2)
+    g = scarlet2.measure.Moments(component=morph(), N=2)
     print("Measured moments")
     print(f"Size: {g.size}")
     assert_allclose(T0, g.size, rtol=1e-3)
 
 def test_measure_ellipticity():
-    g = scarlet2.measure.moments(component=morph(), N=2)
+    g = scarlet2.measure.Moments(component=morph(), N=2)
     print("Measured moments")
     print(f"Ellipticity: {g.ellipticity}")
     assert_allclose(ellipticity, g.ellipticity, rtol=2e-3)
 
 def test_gaussian_from_moments():
-    g = scarlet2.measure.moments(component=morph(), N=2)
+    g = scarlet2.measure.Moments(component=morph(), N=2)
     # generate Gaussian from moments
     T = g.size
     ellipticity = g.ellipticity
@@ -45,7 +46,7 @@ def test_rotate_moments():
     a.to(u.deg).value
     # rotate 90 degrees counterclockwise the image
     # and measure its moments
-    g2 = scarlet2.measure.moments(jnp.rot90(morph()))
+    g2 = scarlet2.measure.Moments(jnp.rot90(morph()))
 
     # rotate moments computed on the original image
     g.rotate(a)
@@ -57,13 +58,13 @@ def test_resize_moments():
     c = 0.5
 
     # resize the image
-    morph2 = GaussianMorphology(size=T0*c, 
-                            ellipticity=ellipticity,
-                            shape=morph().shape)
-    g2 = scarlet2.measure.moments(morph2(),2)
+    morph2 = GaussianMorphology(size=T0 * c,
+                                ellipticity=ellipticity,
+                                shape=morph().shape)
+    g2 = scarlet2.measure.Moments(morph2(), 2)
 
     # resize moments computed on the original image
-    g = scarlet2.measure.moments(component=morph(), N=2)
+    g = scarlet2.measure.Moments(component=morph(), N=2)
     g.resize(0.5)
 
     assert_allclose(g.size, g2.size, rtol=1e-3)
@@ -94,10 +95,10 @@ def test_wcs_transfer_moments():
     im_hsc = morph1()
 
     # Measure moments of the HST image
-    g0 = scarlet2.measure.moments(im_hst)
+    g0 = scarlet2.measure.Moments(im_hst)
 
     # Measure moments of the HSC image
-    g1 = scarlet2.measure.moments(im_hsc)
+    g1 = scarlet2.measure.Moments(im_hsc)
 
     # Transfer moments from HST to HSC frame
     g0.transfer(wcs_hst, wcs_hsc)
@@ -136,10 +137,10 @@ def test_wcs_transfer_w_flip_moments():
     im_hsc = morph1()
 
     # Measure moments of the HST image
-    g0 = scarlet2.measure.moments(im_hst)
+    g0 = scarlet2.measure.Moments(im_hst)
 
     # Measure moments of the HSC image
-    g1 = scarlet2.measure.moments(im_hsc)
+    g1 = scarlet2.measure.Moments(im_hsc)
 
     # Transfer moments from HST to HSC frame
     g0.transfer(wcs_hst, wcs_hsc)
@@ -177,10 +178,10 @@ def test_wcs_transfer_moments_multichannels():
     im_hsc = morph1()
 
     # Measure moments of the HST image
-    g0 = scarlet2.measure.moments(im_hst)
+    g0 = scarlet2.measure.Moments(im_hst)
 
     # Measure moments of the HSC image
-    g1 = scarlet2.measure.moments(im_hsc)
+    g1 = scarlet2.measure.Moments(im_hsc)
 
     # Transfer moments from HST to HSC frame
     g0.transfer(wcs_hst, wcs_hsc)
