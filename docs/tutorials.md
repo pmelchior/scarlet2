@@ -1,3 +1,8 @@
 # Tutorials
 
-_coming soon_
+```{toctree}
+:maxdepth: 2
+
+tutorials/priors
+tutorials/sampling
+```

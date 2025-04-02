@@ -22,7 +22,7 @@ pip install git+https://github.com/pmelchior/scarlet2.git
 
 This will allow you to evaluate source models and compute likelihoods of observed data, so you can run your own
 optimizer/sampler. If you want a fully fledged library out of the box, you need to install `optax`, `numpyro`, and
-`h5py` as well.tes
+`h5py` as well.
 
 ## Usage
 
