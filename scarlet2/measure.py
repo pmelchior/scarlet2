@@ -365,6 +365,8 @@ class Moments(dict):
         None
         """
 
+        flux_in = self[0,0]
+
         if (wcs_in is not None) and (wcs_out is not None):
             # Rescale moments (amplitude rescaling)
             scale_in = get_scale(wcs_in) * 60 ** 2  # arcsec
@@ -383,7 +385,11 @@ class Moments(dict):
             sign_out = get_sign(wcs_out)
             self.resize(sign_in * sign_out)
 
-
+            flux_out = self[0,0]
+            
+            for key in self.keys():
+                self[key]  /= flux_out/flux_in
+                
 # def moments(component, N=2, center=None, weight=None):
 #    return Moments(component, N=N, center=center, weight=weight)
 
