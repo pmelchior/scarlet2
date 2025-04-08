@@ -31,8 +31,8 @@ optimizer/sampler. If you want a fully fledged library out of the box, you need 
 ```{toctree}
 :maxdepth: 2
 
-quickstart
-tutorials
+0-quickstart
+1-howto
 api
 ```
 
