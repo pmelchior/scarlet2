@@ -137,6 +137,10 @@ class ScorePrior(dist.Distribution):
         ----------
         model: callable
             Returns the score value given parameter and the temperature: `model(x, temp)`
+        temp: float
+            Temperature for the evaluation of the score model
+        validate_args: bool
+            Whether to enable validation of distribution parameters and arguments to `.log_prob` method.
         """
         self.model = model
         self.temp = temp
