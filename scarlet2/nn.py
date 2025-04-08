@@ -146,6 +146,9 @@ class ScorePrior(dist.Distribution):
             validate_args=validate_args,
         )
 
+    def __call__(self, x):
+        return self.model(x, t=self.temp)
+
     def sample(self, key, sample_shape=()):
         # TODO: add ability to draw samples from the prior, if desired
         raise NotImplementedError
@@ -154,5 +157,5 @@ class ScorePrior(dist.Distribution):
         raise NotImplementedError
     
     def log_prob(self, x):
-        return _log_prob(self.model, x, t=self.temp)  
+        return _log_prob(self.model, x)  
 
