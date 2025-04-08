@@ -1,8 +1,8 @@
-# Tutorials
+# How To ...
 
 ```{toctree}
 :maxdepth: 2
 
-tutorials/priors
-tutorials/sampling
+howto/priors
+howto/sampling
 ```

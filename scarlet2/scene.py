@@ -177,7 +177,17 @@ class Scene(Module):
                 numpyro.sample(f"obs.{i}", ObsDistribution(obs_, pred), obs=obs_.data)
 
         from numpyro.infer import MCMC, NUTS
-        nuts_kernel = NUTS(pyro_model, **kwargs)
+
+        # use init from current value of model
+        try:
+            init_strategy = kwargs.pop("init_strategy")
+        except KeyError:
+            from numpyro.infer.initialization import init_to_value
+            from functools import partial
+            values = {p.name: p.node for p in parameters}
+            init_strategy = partial(init_to_value, values=values)
+
+        nuts_kernel = NUTS(pyro_model, init_strategy=init_strategy, **kwargs)
         mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, progress_bar=progress_bar)
         rng_key = jax.random.PRNGKey(seed)
         mcmc.run(rng_key, self)
