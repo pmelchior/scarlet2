@@ -5,4 +5,5 @@
 
 howto/priors
 howto/sampling
+howto/multiresolution
 ```
