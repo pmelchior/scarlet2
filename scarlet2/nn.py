@@ -127,7 +127,7 @@ class ScorePrior(dist.Distribution):
     support = constraints.real_vector
     model = callable
 
-    def __init__(self, model, validate_args=None):
+    def __init__(self, model, temp=0.02, validate_args=None):
         """Score-matching neural network to represent the prior distribution
 
         This class is used to calculate the gradient of the log-probability of the prior distribution.
@@ -136,14 +136,22 @@ class ScorePrior(dist.Distribution):
         Parameters
         ----------
         model: callable
-            Returns the score value given parameter and the temperature: `model(x)`
+            Returns the score value given parameter and the temperature: `model(x, temp)`
+        temp: float
+            Temperature for the evaluation of the score model
+        validate_args: bool
+            Whether to enable validation of distribution parameters and arguments to `.log_prob` method.
         """
         self.model = model
+        self.temp = temp
 
         super().__init__(
             event_shape=model.shape,
             validate_args=validate_args,
         )
+
+    def __call__(self, x):
+        return self.model(x, t=self.temp)
 
     def sample(self, key, sample_shape=()):
         # TODO: add ability to draw samples from the prior, if desired
@@ -153,23 +161,5 @@ class ScorePrior(dist.Distribution):
         raise NotImplementedError
     
     def log_prob(self, x):
-        return _log_prob(self.model, x)
+        return _log_prob(self.model, x)  
 
-# define a class for temperature adjustable prior
-class TempScore(ScorePrior):
-    def __init__(self, model, temp=0.02):
-        """Temperature adjustable ScorePrior
-
-        Parameters
-        ----------
-        model: callable
-            Returns the score value given parameter and the temperature: `model(x, temp)`
-        temp: float
-            Temperature for the evaluation of the score model
-        """
-        self.model = model
-        self.temp = temp
-
-    def __call__(self, x):
-        ### TODO: why does this not go through the custom gradient like ScorePrior.__call__?
-        return self.model(x, t=self.temp)

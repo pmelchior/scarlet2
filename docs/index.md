@@ -1,8 +1,10 @@
 # _scarlet2_ Documentation
 
 _scarlet2_ is an open-source python library for modeling astronomical sources from multi-band, multi-epoch, and
-multi-instrument data.
-It's implemented in [jax](http://jax.readthedocs.io/), layered on top of
+multi-instrument data. It provides non-parametric and parametric models, can handle source overlap (aka blending), and
+can integrate neural network priors. It's designed to be modular, flexible, and powerful.
+
+_scarlet2_ is implemented in [jax](http://jax.readthedocs.io/), layered on top of
 the [equinox](https://docs.kidger.site/equinox/)
 library. It can be deployed to GPUs and TPUs and supports optimization and sampling approaches.
 
@@ -29,8 +31,8 @@ optimizer/sampler. If you want a fully fledged library out of the box, you need 
 ```{toctree}
 :maxdepth: 2
 
-quickstart
-tutorials
+0-quickstart
+1-howto
 api
 ```
 

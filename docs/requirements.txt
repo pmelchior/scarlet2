@@ -2,3 +2,6 @@ scarlet-test-data @ git+https://github.com/astro-data-lab/scarlet-test-data@main
 sphinx-issues
 myst-nb
 sphinx-book-theme
+ipywidgets
+corner
+arviz
