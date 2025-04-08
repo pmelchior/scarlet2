@@ -905,8 +905,13 @@ def scene(
 
     panel = 0
     model = scene()
+
     if show_model:
-        extent = get_extent(observation.frame.bbox)
+        extent = get_extent(scene.frame.bbox)
+        extent = observation.frame.get_pixel(
+            scene.frame.get_sky_coord(np.array([[extent[0], extent[1]], [extent[2], extent[3]]]))
+            ).flatten()
+
         if observation is not None:
             c = ChannelRenderer(scene.frame, observation.frame)
             model_ = c(model)
@@ -922,7 +927,10 @@ def scene(
 
     if show_rendered or show_residual:
         model = observation.render(model)
-        extent = get_extent(observation.frame.bbox)
+        extent = get_extent(scene.frame.bbox)
+        extent = observation.frame.get_pixel(
+            scene.frame.get_sky_coord(np.array([[extent[0], extent[1]], [extent[2], extent[3]]]))
+            ).flatten()
 
     if show_rendered:
         rendered_img = ax[panel].imshow(
@@ -954,7 +962,6 @@ def scene(
         panel += 1
 
     for k, src in enumerate(scene.sources):
-        
         start, stop = src.bbox.start[-2:][::-1], src.bbox.stop[-2:][::-1]
         start = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(start)))[0]
         stop = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(stop)))[0]
