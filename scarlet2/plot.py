@@ -905,8 +905,13 @@ def scene(
 
     panel = 0
     model = scene()
+
     if show_model:
-        extent = get_extent(observation.frame.bbox)
+        extent = get_extent(scene.frame.bbox)
+        extent = observation.frame.get_pixel(
+            scene.frame.get_sky_coord(np.array([[extent[0], extent[1]], [extent[2], extent[3]]]))
+            ).flatten()
+
         if observation is not None:
             c = ChannelRenderer(scene.frame, observation.frame)
             model_ = c(model)
@@ -922,7 +927,10 @@ def scene(
 
     if show_rendered or show_residual:
         model = observation.render(model)
-        extent = get_extent(observation.frame.bbox)
+        extent = get_extent(scene.frame.bbox)
+        extent = observation.frame.get_pixel(
+            scene.frame.get_sky_coord(np.array([[extent[0], extent[1]], [extent[2], extent[3]]]))
+            ).flatten()
 
     if show_rendered:
         rendered_img = ax[panel].imshow(
@@ -954,8 +962,9 @@ def scene(
         panel += 1
 
     for k, src in enumerate(scene.sources):
-        
         start, stop = src.bbox.start[-2:][::-1], src.bbox.stop[-2:][::-1]
+        start = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(start)))[0]
+        stop = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(stop)))[0]
         points = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
         box_coords = [
             p for p in points
@@ -964,7 +973,7 @@ def scene(
         if add_boxes:
             panel = 0
             if show_model:
-                extent = get_extent(src.bbox)
+                extent = [start[0], stop[0], start[1], stop[1]]
                 rect = Rectangle(
                     (extent[0], extent[2]),
                     extent[1] - extent[0],
@@ -980,6 +989,7 @@ def scene(
 
         if add_labels:
             center = np.array(src.center)[::-1]
+            center = observation.frame.get_pixel(scene.frame.get_sky_coord(center))[0]
             panel = 0
             if show_model:
                 ax[panel].text(*center, k, **label_kwargs)
