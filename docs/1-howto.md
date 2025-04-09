@@ -3,7 +3,7 @@
 ```{toctree}
 :maxdepth: 2
 
-howto/priors
 howto/sampling
+howto/priors
 howto/multiresolution
 ```
