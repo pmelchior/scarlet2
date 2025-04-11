@@ -169,11 +169,15 @@ class MultiresolutionRenderer(Renderer):
 
         # create PSF model
         psf_model = model_frame.psf()
+        if len(psf_model.shape)==2:
+            psf_model = psf_model[None,...]
 
         if len(psf_model.shape) == 2:  # only one image for all bands
             psf_model = jnp.tile(psf_model, (obs_frame.bbox.shape[0], 1, 1))
 
         psf_obs = obs_frame.psf()
+        if len(psf_obs.shape)==2:
+            psf_obs = psf_obs[None,...]
 
         fft_shape_model_im = good_fft_size(padding * max(model_frame.bbox.shape))
         fft_shape_model_psf = good_fft_size(padding * max(psf_model.shape))

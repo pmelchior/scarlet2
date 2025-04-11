@@ -41,7 +41,7 @@ class Observation(Module):
         Parameters
         ----------
         model: array
-            The (pre-rendered) predicted data cube, typically from evaluateing :py:class:`~scarlet2.Scene`
+            The (pre-rendered) predicted data cube, typically from evaluating :py:class:`~scarlet2.Scene`
 
         Returns
         -------
@@ -56,7 +56,7 @@ class Observation(Module):
         Parameters
         ----------
         model: array
-            The (pre-rendered) predicted data cube, typically from evaluateing :py:class:`~scarlet2.Scene`
+            The (pre-rendered) predicted data cube, typically from evaluating :py:class:`~scarlet2.Scene`
 
         Returns
         -------
