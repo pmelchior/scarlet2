@@ -40,9 +40,9 @@ def test_quickstart():
     # fitting
     parameters = scene.make_parameters()
     for i in range(len(scene.sources)):
-        parameters += Parameter(scene.sources[i].spectrum.data, name=f"spectrum:{i}", constraint=constraints.positive,
+        parameters += Parameter(scene.sources[i].spectrum, name=f"spectrum:{i}", constraint=constraints.positive,
                                 stepsize=spec_step)
-        parameters += Parameter(scene.sources[i].morphology.data, name=f"morph:{i}", constraint=constraints.positive,
+        parameters += Parameter(scene.sources[i].morphology, name=f"morph:{i}", constraint=constraints.positive,
                                 stepsize=0.1)
 
     maxiter = 200
@@ -53,7 +53,7 @@ def test_quickstart():
     import numpyro.distributions as dist
     from numpyro.infer.initialization import init_to_sample
     parameters = scene_.make_parameters()
-    p = scene_.sources[0].spectrum.data
+    p = scene_.sources[0].spectrum
     prior = dist.Normal(p, scale=1)
     parameters += Parameter(p, name=f"spectrum:0", prior=prior)
     mcmc = scene_.sample(obs, parameters, num_samples=200, dense_mass=True, init_strategy=init_to_sample,

@@ -21,22 +21,6 @@ class Morphology(Module):
         return x / x.max()
 
 
-class ArrayMorphology(Morphology):
-    """Morphology defined by a 2D array"""
-    data: jnp.array
-    """2D image"""
-
-    def __init__(self, data):
-        self.data = data
-
-    def __call__(self, **kwargs):
-        return self.normalize(self.data)
-
-    @property
-    def shape(self):
-        return self.data.shape
-
-
 class ProfileMorphology(Morphology):
     """Base class for morpholgies based on a radial profile"""
     size: float

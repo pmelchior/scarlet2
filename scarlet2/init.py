@@ -8,9 +8,8 @@ import jax.numpy as jnp
 from . import Scenery
 from . import measure
 from .bbox import Box
-from .morphology import ArrayMorphology, GaussianMorphology
+from .morphology import GaussianMorphology
 from .observation import Observation
-from .spectrum import ArraySpectrum
 
 
 # function to calculate values of perimeter pixels
@@ -56,7 +55,7 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
     assert isinstance(obs, Observation)
     assert obs.weights is not None, "Observation weights are required"
 
-    peak_spectrum = pixel_spectrum(obs, center_pix, correct_psf=True, return_array=True)
+    peak_spectrum = pixel_spectrum(obs, center_pix, correct_psf=True)
     last_spectrum = peak_spectrum.copy()
     box2d = Box((min_size, min_size))
     if not obs.frame.bbox.spatial.contains(center_pix):
@@ -91,20 +90,18 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
     return box
 
 
-def compact_morphology(min_value=1e-6, return_array=False):
+def compact_morphology(min_value=1e-6):
     """Create image of the point source morphology model, i.e. the most compact source possible
 
     Parameters
     ----------
     min_value: float
         Minimum pixel value (needed for positively constrained morphologies)
-    return_array: bool
-        Whether to return the array or an ArrayMorphology
 
     Returns
     -------
-    array or :py:class:`~scarlet2.ArrayMorphology`
-        2D array, normalized to the range [0,1], or :py:class:`~scarlet2.ArrayMorphology` made from this image
+    array
+        2D array, normalized to the range [0,1]
 
     """
     try:
@@ -118,9 +115,7 @@ def compact_morphology(min_value=1e-6, return_array=False):
 
     morph = frame.psf.morphology()
     morph = jnp.maximum(morph, min_value)
-    if return_array:
-        return morph
-    return ArrayMorphology(morph)
+    return morph
 
 
 def standardized_moments(
@@ -208,7 +203,6 @@ def from_gaussian_moments(
         min_snr=20,
         min_corr=0.99,
         min_value=1e-6,
-        return_array=False,
 ):
     """Create a Gaussian-shaped morphology and associated spectrum from the observation(s).
 
@@ -234,14 +228,11 @@ def from_gaussian_moments(
         minimum correlation coefficient between center and edge color to allow increase of box size
     min_value: float
         minimum pixel value (useful to set to > 0 for positivity constraints)
-    return_array: bool
-        Whether to return arrays or :py:class:`~scarlet2.ArraySpectrum` and :py:class:`~scarlet2.ArrayMorphology`
 
     Returns
     -------
-    (array,array) or (ArraySpectrum, ArrayMorphology)
-         Spectrum and morphology, either as simple arrays or as :py:class:`~scarlet2.ArraySpectrum` and
-         :py:class:`~scarlet2.ArrayMorphology`
+    (array,array)
+         Spectrum and morphology arrays
 
     Warnings
     --------
@@ -282,14 +273,11 @@ def from_gaussian_moments(
     morph = morph()
     spectrum /= morph.sum()
     morph = jnp.maximum(morph, min_value)
-
-    if return_array:
-        return spectrum, morph
-    return ArraySpectrum(spectrum), ArrayMorphology(morph)
+    return spectrum, morph
 
 
 # initialise the spectrum
-def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
+def pixel_spectrum(obs, pos, correct_psf=False):
     """Get the spectrum at a given position in the observation(s).
 
     Yields the spectrum of a single-pixel source with flux 1 in every channel,
@@ -305,12 +293,10 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
     correct_psf: bool, optional
         Whether PSF shape variations in the observations should be corrected. If `True`, this method homogenizes the
         PSFs of the observations, which yields the correct spectrum for a flux=1 point source.
-    return_array: bool, optional
-        Whether to return the array or an :py:class:`~scarlet2.ArraySpectrum`
 
     Returns
     -------
-    array or ArraySpectrum or list
+    array or list
         If `obs` is a list, the method returns the associate list of spectra.
     """
 
@@ -319,13 +305,11 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
 
         # flat lists of spectra and channels in order of observations
         spectra = jnp.concatenate(
-            [pixel_spectrum(obs_, pos, correct_psf=correct_psf, return_array=True) for obs_ in obs])
+            [pixel_spectrum(obs_, pos, correct_psf=correct_psf) for obs_ in obs])
         channels = reduce(operator.add, [obs_.frame.channels for obs_ in obs])
         spectrum = _sort_spectra(spectra, channels)
 
-        if return_array:
-            return spectrum
-        return ArraySpectrum(spectrum)
+        return spectrum
 
     assert isinstance(obs, Observation)
 
@@ -366,9 +350,7 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
             spectrum = jnp.ones_like(spectrum)
         print(msg)
 
-    if return_array:
-        return spectrum
-    return ArraySpectrum(spectrum)
+    return spectrum
 
 
 def _sort_spectra(spectra, channels):

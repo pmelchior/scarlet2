@@ -13,23 +13,8 @@ class Spectrum(Module):
         raise NotImplementedError
 
 
-class ArraySpectrum(Spectrum):
-    data: jnp.array
-    """1D spectrum"""
 
-    def __init__(self, data):
-        """Spectrum defined by a 1D array"""
-        self.data = data
-
-    def __call__(self):
-        return self.data
-
-    @property
-    def shape(self):
-        return self.data.shape
-
-
-class StaticArraySpectrum(ArraySpectrum):
+class StaticArraySpectrum(Spectrum):
     """Static (non-variable) source in a transient scene
 
     In the frames of transient scenes, the attribute :py:attr:`~scarlet2.Frame.channels` are overloaded and defined
@@ -90,7 +75,7 @@ class StaticArraySpectrum(ArraySpectrum):
         return len(self.channelindex),
 
 
-class TransientArraySpectrum(ArraySpectrum):
+class TransientArraySpectrum(Spectrum):
     """Variable source in a transient scene with possible quiescent periods
 
     In the frames of transient scenes, the attribute :py:attr:`~scarlet2.Frame.channels` are overloaded and defined

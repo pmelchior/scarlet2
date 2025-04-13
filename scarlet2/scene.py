@@ -7,7 +7,6 @@ from .bbox import overlap_slices
 from .frame import Frame
 from .module import Module, Parameters
 from .renderer import ChannelRenderer
-from .spectrum import ArraySpectrum
 
 
 class Scene(Module):
@@ -331,13 +330,13 @@ class Scene(Module):
         spectrum_parameters = []
         models = []
         for i, src in enumerate(self.sources):
-            if isinstance(src.spectrum, ArraySpectrum):
-                # search for spectrum.data in parameters
+            # search for spectrum in parameters: only works for standard arrays
+            if isinstance(src.spectrum, jnp.ndarray):
                 for p in parameters:
-                    if p.node is src.spectrum.data:
+                    if p.node is src.spectrum:
                         spectrum_parameters.append(i)
                         # update source to have flat spectrum
-                        src = eqx.tree_at(lambda src: src.spectrum.data, src, jnp.ones_like(p.node))
+                        src = eqx.tree_at(lambda src: src.spectrum, src, jnp.ones_like(p.node))
                         break
 
             # evaluate the model for any source so that fit includes it even if its spectrum is not updated
@@ -390,8 +389,8 @@ class Scene(Module):
             for i in spectrum_parameters:
                 src_ = self.sources[i]
                 # faint galaxy can have erratic solution, bound from below by noise_bg
-                v = src_.spectrum.data.at[channel_map].set(jnp.maximum(spectra[i], noise_bg))
-                self.sources[i] = eqx.tree_at(lambda src: src.spectrum.data, src_, v)
+                v = src_.spectrum.at[channel_map].set(jnp.maximum(spectra[i], noise_bg))
+                self.sources[i] = eqx.tree_at(lambda src: src.spectrum, src_, v)
 
 def _constraint_replace(self, parameters, inv=False):
     # replace any parameter with constraint into unconstrained ones by calling its constraint bijector
