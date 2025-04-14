@@ -7,7 +7,9 @@ from .bbox import overlap_slices
 from .frame import Frame
 from .module import Module, Parameters
 from .renderer import ChannelRenderer
+from .nn import ScorePrior, pad_fwd
 
+from collections import defaultdict
 
 class Scene(Module):
     """Model of the celestial scene
@@ -315,7 +317,7 @@ class Scene(Module):
         ----------
         observations: :py:class:`~scarlet2.Observation` or list
         parameters: :py:class:`~scarlet2.Parameters`
-            Parameters to adjust. This method will ignore all parameters that are not :py:class:`~scarlet.ArraySpectrum`
+            Parameters to adjust. This method will ignore all spectrum parameters that are not arrays
             or not included in this list.
 
         Returns
@@ -420,10 +422,20 @@ def _make_step(model, observations, parameters, optim, opt_state, filter_spec=No
         log_like = sum(obs.log_likelihood(pred) for obs in observations)
 
         param_values = model.get(parameters)
-        log_prior = sum(param.prior.log_prob(value)
-                        for param, value in zip(parameters, param_values)
-                        if param.prior is not None
-                        )
+
+        log_prior = 0
+
+        # Gather parameters with the same ScorePrior for parallel evaluation
+        grouped = defaultdict(list) 
+        for param, value in zip(parameters, param_values):
+            if isinstance(param.prior, ScorePrior):
+                grouped[param.prior].append(pad_fwd(value, param.prior._model.shape)[0])
+            elif param.prior is not None:
+                log_prior += param.prior.log_prob(value) 
+
+        if len(grouped) > 0:
+            log_prior += sum(sum(jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0)) for prior, arr_list in grouped.items()))
+
         return -(log_like + log_prior)
 
     if filter_spec is None:
