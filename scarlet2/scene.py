@@ -430,12 +430,12 @@ def _make_step(model, observations, parameters, optim, opt_state, filter_spec=No
         grouped = defaultdict(list) 
         for param, value in zip(parameters, param_values):
             if isinstance(param.prior, ScorePrior):
-                grouped[param.prior].append(pad_fwd(value, param.prior.shape))
+                grouped[param.prior].append(pad_fwd(value, param.prior._model.shape)[0])
             elif param.prior is not None:
                 log_prior += param.prior.log_prob(value) 
 
-        log_prior += sum(jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0)) for prior, arr_list in grouped.items())
-    
+        log_prior += sum(sum(jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0)) for prior, arr_list in grouped.items()))
+
         return -(log_like + log_prior)
 
     if filter_spec is None:
