@@ -434,7 +434,8 @@ def _make_step(model, observations, parameters, optim, opt_state, filter_spec=No
             elif param.prior is not None:
                 log_prior += param.prior.log_prob(value) 
 
-        log_prior += sum(sum(jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0)) for prior, arr_list in grouped.items()))
+        if len(grouped) > 0:
+            log_prior += sum(sum(jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0)) for prior, arr_list in grouped.items()))
 
         return -(log_like + log_prior)
 
