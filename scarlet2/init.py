@@ -90,13 +90,16 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
     return box
 
 
-def compact_morphology(min_value=1e-6):
+def compact_morphology(min_value=1e-6, max_value=1 - 1e-6):
     """Create image of the point source morphology model, i.e. the most compact source possible
 
     Parameters
     ----------
     min_value: float
         Minimum pixel value (needed for positively constrained morphologies)
+    max_value: float
+        minimum pixel value (useful to set to < 1 for unit interval constraints)
+
 
     Returns
     -------
@@ -114,7 +117,7 @@ def compact_morphology(min_value=1e-6):
         raise AttributeError("Compact morphology can only be create with a PSF in the model frame")
 
     morph = frame.psf.morphology()
-    morph = jnp.maximum(morph, min_value)
+    morph = jnp.minimum(jnp.maximum(morph, min_value), max_value)
     return morph
 
 
@@ -203,6 +206,7 @@ def from_gaussian_moments(
         min_snr=20,
         min_corr=0.99,
         min_value=1e-6,
+        max_value=1 - 1e-6,
 ):
     """Create a Gaussian-shaped morphology and associated spectrum from the observation(s).
 
@@ -228,6 +232,8 @@ def from_gaussian_moments(
         minimum correlation coefficient between center and edge color to allow increase of box size
     min_value: float
         minimum pixel value (useful to set to > 0 for positivity constraints)
+    max_value: float
+        minimum pixel value (useful to set to < 1 for unit interval constraints)
 
     Returns
     -------
@@ -272,7 +278,7 @@ def from_gaussian_moments(
     morph = GaussianMorphology.from_moments(g)
     morph = morph()
     spectrum /= morph.sum()
-    morph = jnp.maximum(morph, min_value)
+    morph = jnp.minimum(jnp.maximum(morph, min_value), max_value)
     return spectrum, morph
 
 
