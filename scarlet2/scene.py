@@ -8,7 +8,7 @@ from .frame import Frame
 from .module import Module, Parameters
 from .renderer import ChannelRenderer
 from .spectrum import ArraySpectrum
-from .nn import ScorePrior, pad_fwd, pad_back
+from .nn import ScorePrior, pad_fwd
 
 from collections import defaultdict
 
