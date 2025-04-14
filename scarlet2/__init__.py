@@ -18,13 +18,13 @@ from . import plot
 from .bbox import Box
 from .frame import Frame
 from .module import Parameter, Parameters, Module, relative_step
-from .morphology import Morphology, ArrayMorphology, ProfileMorphology, GaussianMorphology, SersicMorphology, \
+from .morphology import Morphology, ProfileMorphology, GaussianMorphology, SersicMorphology, \
     StarletMorphology
 from .observation import Observation
 from .psf import PSF, ArrayPSF, GaussianPSF
 from .scene import Scene
 from .source import Component, DustComponent, Source, PointSource
-from .spectrum import Spectrum, ArraySpectrum, StaticArraySpectrum, TransientArraySpectrum
+from .spectrum import Spectrum, StaticArraySpectrum, TransientArraySpectrum
 from .wavelets import Starlet
 
 # for * imports and docs
