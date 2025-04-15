@@ -19,8 +19,8 @@ def test_quickstart():
     psf = jnp.asarray(file["psfs"])
 
     frame_psf = GaussianPSF(0.7)
-    model_frame = Frame(Box(data.shape), psf=frame_psf, channels=channels)
-    obs = Observation(data, weights, psf=ArrayPSF(jnp.asarray(psf)), channels=channels).match(model_frame)
+    obs = Observation(data, weights, psf=ArrayPSF(jnp.asarray(psf)), channels=channels)
+    model_frame = Frame.from_observations(obs)
 
     from functools import partial
     spec_step = partial(relative_step, factor=0.05)
@@ -45,7 +45,7 @@ def test_quickstart():
         parameters += Parameter(scene.sources[i].morphology, name=f"morph:{i}", constraint=constraints.positive,
                                 stepsize=0.1)
 
-    maxiter = 200
+    maxiter = 100
     scene.set_spectra_to_match(obs, parameters)
     scene_ = scene.fit(obs, parameters, max_iter=maxiter, progress_bar=False)
 
