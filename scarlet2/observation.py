@@ -19,10 +19,9 @@ class Observation(Module):
     """Observed data"""
     weights: jnp.ndarray
     """Statistical weights (usually inverse variance) for :py:meth:`log_likelihood`"""
-    frame: Frame = eqx.field(static=True)
+    frame: Frame
     """Metadata to describe what view of the sky `data` amounts to"""
-    # TODO: requires static, otherwise quickstart test aborts wiht "TypeError: unhashable type: 'slice'"
-    renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
+    renderer: (Renderer, eqx.nn.Sequential)
     """Renderer to translate from the model frame the observation frame"""
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):

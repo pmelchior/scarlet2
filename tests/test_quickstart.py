@@ -13,7 +13,7 @@ from scarlet_test_data import data_path
 def test_quickstart():
     file = jnp.load(os.path.join(data_path, "hsc_cosmos_35.npz"))
     data = jnp.asarray(file["images"])
-    channels = list(file['filters'])
+    channels = [str(f) for f in file['filters']]
     centers = [(src['y'], src['x']) for src in file["catalog"]]  # Note: y/x convention!
     weights = jnp.asarray(1 / file["variance"])
     psf = jnp.asarray(file["psfs"])

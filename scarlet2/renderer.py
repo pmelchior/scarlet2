@@ -101,6 +101,7 @@ class ConvolutionRenderer(Renderer):
 
     The convolution is performed in Fourier space and applies the difference kernel between model PSF and observed PSF.
     """
+    _diff_kernel_fft: jnp.array = eqx.field(init=False, repr=False)
 
     def __init__(self, model_frame, obs_frame):
         """Initialize convolution renderer with difference kernel between `model_frame` and `obs_frame`
@@ -130,7 +131,7 @@ class ConvolutionRenderer(Renderer):
             fft_shape=fft_shape,
             return_fft=True,
         )
-        object.__setattr__(self, "_diff_kernel_fft", diff_kernel_fft)
+        self._diff_kernel_fft = diff_kernel_fft
 
     def __call__(self, model, key=None):
         return convolve(model, self._diff_kernel_fft, axes=(-2, -1))

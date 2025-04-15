@@ -27,7 +27,7 @@ class ProfileMorphology(Morphology):
     """
     ellipticity: (None, jnp.array)
     """Ellipticity of the profile"""
-    _shape: tuple = eqx.field(static=True, init=False, repr=False)
+    _shape: tuple = eqx.field(init=False, repr=False)
 
     def __init__(self, size, ellipticity=None, shape=None):
         if isinstance(size, u.Quantity):
@@ -207,9 +207,9 @@ class StarletMorphology(Morphology):
     """
     coeffs: jnp.ndarray
     """Starlet coefficients"""
-    l1_thresh: float = eqx.field(default=1e-2, static=True)
+    l1_thresh: float
     """L1 threshold for coefficient to create sparse representation"""
-    positive: bool = eqx.field(default=True, static=True)
+    positive: bool
     """Whether the coefficients are restricted to non-negative values"""
 
     def __call__(self, **kwargs):

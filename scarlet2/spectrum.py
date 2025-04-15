@@ -1,4 +1,3 @@
-import equinox as eqx
 import jax.numpy as jnp
 
 from . import Scenery
@@ -29,7 +28,7 @@ class StaticArraySpectrum(Spectrum):
     """
     bands: list
     """Identifier for the list of unique bands in the model frame channels"""
-    _channelindex: jnp.array = eqx.field(static=True)
+    _channelindex: jnp.array
 
     def __init__(self, data, bands, band_selector=lambda channel: channel[0]):
         """
@@ -91,7 +90,7 @@ class TransientArraySpectrum(Spectrum):
     """
     epochs: list
     """Identifier for the list of active epochs. If set to `None`, all epochs are considered active"""
-    _epochmultiplier: jnp.array = eqx.field(static=True)
+    _epochmultiplier: jnp.array
 
     def __init__(self, data, epochs=None, epoch_selector=lambda channel: channel[1]):
         """

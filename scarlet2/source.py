@@ -25,7 +25,7 @@ class Component(Module):
     """Spectrum model"""
     morphology: (jnp.array, Morphology)
     """Morphology model"""
-    bbox: Box = eqx.field(static=True, init=False)
+    bbox: Box = eqx.field(init=False)
     """Bounding box of the model, in pixel coordinates of the model frame"""
 
     def __init__(self, center, spectrum, morphology):
@@ -88,7 +88,7 @@ class Source(Component):
     """
     components: list
     """List of components in this source"""
-    component_ops: list = eqx.field(static=True)
+    component_ops: list
     """List of operators to combine `components` for the final model"""
 
     def __init__(self, center, spectrum, morphology):
