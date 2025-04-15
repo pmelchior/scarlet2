@@ -63,8 +63,12 @@ def test_save_output():
     loaded = jax.tree_util.tree_leaves(scene_loaded)
     status = True
     for leaf_saved, leaf_loaded in zip(saved, loaded):
-        if (leaf_saved != leaf_loaded).all():
-            status = False
+        if hasattr(leaf_saved, "__iter__"):
+            if (leaf_saved != leaf_loaded).all():
+                status = False
+        else:
+            if leaf_saved != leaf_loaded:
+                status = False
         
     print(f"saved == loaded: {status}")
     assert status == True, "Loaded leaves not identical to original"

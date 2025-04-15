@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,10 +8,9 @@ from . import Scenery
 from .bbox import overlap_slices
 from .frame import Frame
 from .module import Module, Parameters
-from .renderer import ChannelRenderer
 from .nn import ScorePrior, pad_fwd
+from .renderer import ChannelRenderer
 
-from collections import defaultdict
 
 class Scene(Module):
     """Model of the celestial scene
@@ -19,7 +20,7 @@ class Scene(Module):
     any method implemented in jax, but this class provides the :py:func:`fit` and :py:func:`sample` methods as built-in
     solutions.
     """
-    frame: Frame = eqx.field(static=True)
+    frame: Frame
     """Portion of the sky represented by this model"""
     sources: list
     """List of :py:class:`~scarlet2.Source` comprised in this model"""
