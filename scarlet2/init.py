@@ -26,7 +26,7 @@ def _get_edge_pixels(img, box):
     return jnp.concatenate(edge, axis=1)
 
 
-def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0.99, fixed_size=None):
+def make_bbox(obs, center_pix, box_list=[11,21,31,41,51,61], min_snr=20, min_corr=0.99):
     """Make a bounding box for source at center
 
     This method finds small box around the center so that the edge flux has a minimum SNR,
@@ -39,16 +39,12 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
     obs: :py:class:`~scarlet2.Observation`
     center_pix: tuple
         source enter, in pixel coordinates
-    min_size: int
-        smallest box size
-    delta_size: int
-        incremental increase of box size
+    box_list: list[int]
+        a list of box sizes to cycle through
     min_snr: float
         minimum SNR of edge pixels (aggregated over all observation channel) to allow increase of box size
     min_corr: float
         minimum correlation coefficient between center and edge color to allow increase of box size
-    fixed_size: int
-        a fixed box size initializetion
 
     Returns
     -------
@@ -59,20 +55,14 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
 
     peak_spectrum = pixel_spectrum(obs, center_pix, correct_psf=True)
     last_spectrum = peak_spectrum.copy()
-
-    # return fixed box size if set
-    if fixed_size is not None:
-        box2d = Box((fixed_size, fixed_size))
-        box = obs.frame.bbox[0] @ box2d
-        return box
         
-    box2d = Box((min_size, min_size))
+    box2d = Box((box_list[0], box_list[0]))
     if not obs.frame.bbox.spatial.contains(center_pix):
         raise ValueError(f"Pixel coordinate expected, got {center_pix}")
     box2d.set_center(center_pix.astype(int))
 
-    # increase box size until SNR is below threshold or spectrum changes significantly
-    while max(box2d.shape) < max(obs.frame.bbox.spatial.shape):
+    # increase box size from list until SNR is below threshold or spectrum changes significantly
+    for i in range(1,len(box_list)):
         edge_pixels = _get_edge_pixels(obs.data, box2d)
         edge_spectrum = jnp.mean(edge_pixels, axis=-1)
         edge_spectrum /= jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
@@ -89,11 +79,16 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
                     jnp.sqrt(jnp.dot(peak_spectrum, peak_spectrum)) / jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
 
         if spec_corr < min_corr or jnp.any(edge_spectrum > last_spectrum):
-            if min(box2d.shape) > min_size:
-                box2d = box2d.shrink(delta_size)
+            box2d = Box((box_list[i-1], box_list[i-1]))
             break
 
-        box2d = box2d.grow(delta_size)
+        # increase the box size to the next option in the list
+        box2d = Box((box_list[i], box_list[i]))
+        
+        # don't allow boxes larger than the frame
+        if max(box2d.shape) < max(obs.frame.bbox.spatial.shape):
+            box2d = Box((box_list[i-1], box_list[i-1]))
+            break
 
     box = obs.frame.bbox[0] @ box2d
     return box
@@ -210,13 +205,11 @@ def standardized_moments(
 def from_gaussian_moments(
         obs,
         center,
-        min_size=11,
-        delta_size=3,
+        box_list=[11,21,31,41,51,61]
         min_snr=20,
         min_corr=0.99,
         min_value=1e-6,
         max_value=1 - 1e-6,
-        fixed_size=None,
 ):
     """Create a Gaussian-shaped morphology and associated spectrum from the observation(s).
 
@@ -232,10 +225,8 @@ def from_gaussian_moments(
         Observation from which the source is initialized.
     center: tuple
         central pixel of the source
-    min_size: int
-        smallest size (in pixels) for source bounding box
-    delta_size: int
-        increase in pixel size for the source bounding box
+    box_list: list[int]
+        a list of box sizes to cycle through
     min_snr: float
         minimum SNR of edge pixels (aggregated over all observation channel) to allow increase of box size
     min_corr: float
@@ -268,7 +259,7 @@ def from_gaussian_moments(
     else:
         observations = obs
     centers = [obs_.frame.get_pixel(center) for obs_ in observations]
-    boxes = [make_bbox(obs_, center_, min_size=min_size, delta_size=delta_size, min_snr=min_snr, min_corr=min_corr, fixed_size=fixed_size) for
+    boxes = [make_bbox(obs_, center_, box_list=box_list, min_snr=min_snr, min_corr=min_corr) for
              obs_, center_ in zip(observations, centers)]
     moments = [standardized_moments(obs_, center_, bbox=bbox_) for obs_, center_, bbox_ in
                zip(observations, centers, boxes)]
