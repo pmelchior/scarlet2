@@ -205,7 +205,7 @@ def standardized_moments(
 def from_gaussian_moments(
         obs,
         center,
-        box_list=[11,21,31,41,51,61]
+        box_list=[11,21,31,41,51,61],
         min_snr=20,
         min_corr=0.99,
         min_value=1e-6,
