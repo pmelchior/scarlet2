@@ -59,7 +59,7 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
 
     peak_spectrum = pixel_spectrum(obs, center_pix, correct_psf=True)
     last_spectrum = peak_spectrum.copy()
-    if fixed_size not None:
+    if fixed_size is not None:
         box2d = Box((fixed_size, fixed_size))
     else:
         box2d = Box((min_size, min_size))
