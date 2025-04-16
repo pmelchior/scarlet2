@@ -26,7 +26,7 @@ def _get_edge_pixels(img, box):
     return jnp.concatenate(edge, axis=1)
 
 
-def make_bbox(obs, center_pix, box_list=[11,21,31,41,51,61], min_snr=20, min_corr=0.99):
+def make_bbox(obs, center_pix, box_list=[11], min_snr=20, min_corr=0.99):
     """Make a bounding box for source at center
 
     This method finds small box around the center so that the edge flux has a minimum SNR,
@@ -205,7 +205,7 @@ def standardized_moments(
 def from_gaussian_moments(
         obs,
         center,
-        box_list=[11,21,31,41,51,61],
+        box_list=[11],
         min_snr=20,
         min_corr=0.99,
         min_value=1e-6,
