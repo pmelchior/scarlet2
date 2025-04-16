@@ -26,7 +26,7 @@ def _get_edge_pixels(img, box):
     return jnp.concatenate(edge, axis=1)
 
 
-def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0.99):
+def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0.99, fixed_size=None):
     """Make a bounding box for source at center
 
     This method finds small box around the center so that the edge flux has a minimum SNR,
@@ -47,6 +47,8 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
         minimum SNR of edge pixels (aggregated over all observation channel) to allow increase of box size
     min_corr: float
         minimum correlation coefficient between center and edge color to allow increase of box size
+    fixed_size: int
+        a fixed box size initializetion
 
     Returns
     -------
@@ -57,34 +59,38 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
 
     peak_spectrum = pixel_spectrum(obs, center_pix, correct_psf=True)
     last_spectrum = peak_spectrum.copy()
-    box2d = Box((min_size, min_size))
+    if fixed_size not None:
+        box2d = Box((fixed_size, fixed_size))
+    else:
+        box2d = Box((min_size, min_size))
     if not obs.frame.bbox.spatial.contains(center_pix):
         raise ValueError(f"Pixel coordinate expected, got {center_pix}")
     box2d.set_center(center_pix.astype(int))
 
-    # increase box size until SNR is below threshold or spectrum changes significantly
-    while max(box2d.shape) < max(obs.frame.bbox.spatial.shape):
-        edge_pixels = _get_edge_pixels(obs.data, box2d)
-        edge_spectrum = jnp.mean(edge_pixels, axis=-1)
-        edge_spectrum /= jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
+    if fixed_size == None:
+        # increase box size until SNR is below threshold or spectrum changes significantly
+        while max(box2d.shape) < max(obs.frame.bbox.spatial.shape):
+            edge_pixels = _get_edge_pixels(obs.data, box2d)
+            edge_spectrum = jnp.mean(edge_pixels, axis=-1)
+            edge_spectrum /= jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
 
-        weight_edge_pixels = _get_edge_pixels(obs.weights, box2d)
-        snr_edge_pixels = edge_pixels * jnp.sqrt(weight_edge_pixels)
-        valid_edge_pixel = weight_edge_pixels > 0
-        mean_snr = jnp.sum(jnp.sum(snr_edge_pixels, axis=-1) / jnp.sum(valid_edge_pixel, axis=-1))
+            weight_edge_pixels = _get_edge_pixels(obs.weights, box2d)
+            snr_edge_pixels = edge_pixels * jnp.sqrt(weight_edge_pixels)
+            valid_edge_pixel = weight_edge_pixels > 0
+            mean_snr = jnp.sum(jnp.sum(snr_edge_pixels, axis=-1) / jnp.sum(valid_edge_pixel, axis=-1))
 
-        if mean_snr < min_snr:
-            break
+            if mean_snr < min_snr:
+                break
 
-        spec_corr = jnp.dot(edge_spectrum, peak_spectrum) / \
-                    jnp.sqrt(jnp.dot(peak_spectrum, peak_spectrum)) / jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
+            spec_corr = jnp.dot(edge_spectrum, peak_spectrum) / \
+                        jnp.sqrt(jnp.dot(peak_spectrum, peak_spectrum)) / jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
 
-        if spec_corr < min_corr or jnp.any(edge_spectrum > last_spectrum):
-            if min(box2d.shape) > min_size:
-                box2d = box2d.shrink(delta_size)
-            break
+            if spec_corr < min_corr or jnp.any(edge_spectrum > last_spectrum):
+                if min(box2d.shape) > min_size:
+                    box2d = box2d.shrink(delta_size)
+                break
 
-        box2d = box2d.grow(delta_size)
+            box2d = box2d.grow(delta_size)
 
     box = obs.frame.bbox[0] @ box2d
     return box
@@ -207,6 +213,7 @@ def from_gaussian_moments(
         min_corr=0.99,
         min_value=1e-6,
         max_value=1 - 1e-6,
+        fixed_size=None,
 ):
     """Create a Gaussian-shaped morphology and associated spectrum from the observation(s).
 
@@ -258,7 +265,7 @@ def from_gaussian_moments(
     else:
         observations = obs
     centers = [obs_.frame.get_pixel(center) for obs_ in observations]
-    boxes = [make_bbox(obs_, center_, min_size=min_size, delta_size=delta_size, min_snr=min_snr, min_corr=min_corr) for
+    boxes = [make_bbox(obs_, center_, min_size=min_size, delta_size=delta_size, min_snr=min_snr, min_corr=min_corr, fixed_size=fixed_size) for
              obs_, center_ in zip(observations, centers)]
     moments = [standardized_moments(obs_, center_, bbox=bbox_) for obs_, center_, bbox_ in
                zip(observations, centers, boxes)]
