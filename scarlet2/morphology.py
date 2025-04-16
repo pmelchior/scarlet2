@@ -16,26 +16,6 @@ class Morphology(Module):
         """Shape (2D) of the morphology model"""
         raise NotImplementedError
 
-    def normalize(self, x):
-        """Apply max normalization to map values between 0 and 1"""
-        return x / x.max()
-
-
-class ArrayMorphology(Morphology):
-    """Morphology defined by a 2D array"""
-    data: jnp.array
-    """2D image"""
-
-    def __init__(self, data):
-        self.data = data
-
-    def __call__(self, **kwargs):
-        return self.normalize(self.data)
-
-    @property
-    def shape(self):
-        return self.data.shape
-
 
 class ProfileMorphology(Morphology):
     """Base class for morpholgies based on a radial profile"""
@@ -47,7 +27,7 @@ class ProfileMorphology(Morphology):
     """
     ellipticity: (None, jnp.array)
     """Ellipticity of the profile"""
-    _shape: tuple = eqx.field(static=True, init=False, repr=False)
+    _shape: tuple = eqx.field(init=False, repr=False)
 
     def __init__(self, size, ellipticity=None, shape=None):
         if isinstance(size, u.Quantity):
@@ -111,7 +91,7 @@ class ProfileMorphology(Morphology):
 
         R2 /= self.size ** 2
         R2 = jnp.maximum(R2, 1e-3)  # prevents infs at R2 = 0
-        morph = self.normalize(self.f(R2))
+        morph = self.f(R2)
         return morph
 
 
@@ -135,7 +115,7 @@ class GaussianMorphology(ProfileMorphology):
             # # without pixel integration
             # f = lambda x, s: jnp.exp(-(x ** 2) / (2 * s ** 2)) / (jnp.sqrt(2 * jnp.pi) * s)
 
-            return self.normalize(jnp.outer(f(_Y, self.size), f(_X, self.size)))
+            return jnp.outer(f(_Y, self.size), f(_X, self.size))
 
         else:
             return super().__call__(delta_center)
@@ -227,9 +207,9 @@ class StarletMorphology(Morphology):
     """
     coeffs: jnp.ndarray
     """Starlet coefficients"""
-    l1_thresh: float = eqx.field(default=1e-2, static=True)
+    l1_thresh: float
     """L1 threshold for coefficient to create sparse representation"""
-    positive: bool = eqx.field(default=True, static=True)
+    positive: bool
     """Whether the coefficients are restricted to non-negative values"""
 
     def __call__(self, **kwargs):
@@ -237,7 +217,7 @@ class StarletMorphology(Morphology):
             f = prox_soft_plus
         else:
             f = prox_soft
-        return self.normalize(starlet_reconstruction(f(self.coeffs, self.l1_thresh)))
+        return starlet_reconstruction(f(self.coeffs, self.l1_thresh))
 
     @property
     def shape(self):

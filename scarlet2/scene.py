@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,8 +8,8 @@ from . import Scenery
 from .bbox import overlap_slices
 from .frame import Frame
 from .module import Module, Parameters
+from .nn import ScorePrior, pad_fwd
 from .renderer import ChannelRenderer
-from .spectrum import ArraySpectrum
 
 
 class Scene(Module):
@@ -18,7 +20,7 @@ class Scene(Module):
     any method implemented in jax, but this class provides the :py:func:`fit` and :py:func:`sample` methods as built-in
     solutions.
     """
-    frame: Frame = eqx.field(static=True)
+    frame: Frame
     """Portion of the sky represented by this model"""
     sources: list
     """List of :py:class:`~scarlet2.Source` comprised in this model"""
@@ -316,7 +318,7 @@ class Scene(Module):
         ----------
         observations: :py:class:`~scarlet2.Observation` or list
         parameters: :py:class:`~scarlet2.Parameters`
-            Parameters to adjust. This method will ignore all parameters that are not :py:class:`~scarlet.ArraySpectrum`
+            Parameters to adjust. This method will ignore all spectrum parameters that are not arrays
             or not included in this list.
 
         Returns
@@ -331,13 +333,13 @@ class Scene(Module):
         spectrum_parameters = []
         models = []
         for i, src in enumerate(self.sources):
-            if isinstance(src.spectrum, ArraySpectrum):
-                # search for spectrum.data in parameters
+            # search for spectrum in parameters: only works for standard arrays
+            if isinstance(src.spectrum, jnp.ndarray):
                 for p in parameters:
-                    if p.node is src.spectrum.data:
+                    if p.node is src.spectrum:
                         spectrum_parameters.append(i)
                         # update source to have flat spectrum
-                        src = eqx.tree_at(lambda src: src.spectrum.data, src, jnp.ones_like(p.node))
+                        src = eqx.tree_at(lambda src: src.spectrum, src, jnp.ones_like(p.node))
                         break
 
             # evaluate the model for any source so that fit includes it even if its spectrum is not updated
@@ -390,8 +392,8 @@ class Scene(Module):
             for i in spectrum_parameters:
                 src_ = self.sources[i]
                 # faint galaxy can have erratic solution, bound from below by noise_bg
-                v = src_.spectrum.data.at[channel_map].set(jnp.maximum(spectra[i], noise_bg))
-                self.sources[i] = eqx.tree_at(lambda src: src.spectrum.data, src_, v)
+                v = src_.spectrum.at[channel_map].set(jnp.maximum(spectra[i], noise_bg))
+                self.sources[i] = eqx.tree_at(lambda src: src.spectrum, src_, v)
 
 def _constraint_replace(self, parameters, inv=False):
     # replace any parameter with constraint into unconstrained ones by calling its constraint bijector
@@ -421,10 +423,20 @@ def _make_step(model, observations, parameters, optim, opt_state, filter_spec=No
         log_like = sum(obs.log_likelihood(pred) for obs in observations)
 
         param_values = model.get(parameters)
-        log_prior = sum(param.prior.log_prob(value)
-                        for param, value in zip(parameters, param_values)
-                        if param.prior is not None
-                        )
+
+        log_prior = 0
+
+        # Gather parameters with the same ScorePrior for parallel evaluation
+        grouped = defaultdict(list) 
+        for param, value in zip(parameters, param_values):
+            if isinstance(param.prior, ScorePrior):
+                grouped[param.prior].append(pad_fwd(value, param.prior._model.shape)[0])
+            elif param.prior is not None:
+                log_prior += param.prior.log_prob(value) 
+
+        if len(grouped) > 0:
+            log_prior += sum(sum(jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0)) for prior, arr_list in grouped.items()))
+
         return -(log_like + log_prior)
 
     if filter_spec is None:
