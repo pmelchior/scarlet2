@@ -59,38 +59,41 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
 
     peak_spectrum = pixel_spectrum(obs, center_pix, correct_psf=True)
     last_spectrum = peak_spectrum.copy()
+
+    # return fixed box size if set
     if fixed_size is not None:
         box2d = Box((fixed_size, fixed_size))
-    else:
-        box2d = Box((min_size, min_size))
+        box = obs.frame.bbox[0] @ box2d
+        return box
+        
+    box2d = Box((min_size, min_size))
     if not obs.frame.bbox.spatial.contains(center_pix):
         raise ValueError(f"Pixel coordinate expected, got {center_pix}")
     box2d.set_center(center_pix.astype(int))
 
-    if fixed_size == None:
-        # increase box size until SNR is below threshold or spectrum changes significantly
-        while max(box2d.shape) < max(obs.frame.bbox.spatial.shape):
-            edge_pixels = _get_edge_pixels(obs.data, box2d)
-            edge_spectrum = jnp.mean(edge_pixels, axis=-1)
-            edge_spectrum /= jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
+    # increase box size until SNR is below threshold or spectrum changes significantly
+    while max(box2d.shape) < max(obs.frame.bbox.spatial.shape):
+        edge_pixels = _get_edge_pixels(obs.data, box2d)
+        edge_spectrum = jnp.mean(edge_pixels, axis=-1)
+        edge_spectrum /= jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
 
-            weight_edge_pixels = _get_edge_pixels(obs.weights, box2d)
-            snr_edge_pixels = edge_pixels * jnp.sqrt(weight_edge_pixels)
-            valid_edge_pixel = weight_edge_pixels > 0
-            mean_snr = jnp.sum(jnp.sum(snr_edge_pixels, axis=-1) / jnp.sum(valid_edge_pixel, axis=-1))
+        weight_edge_pixels = _get_edge_pixels(obs.weights, box2d)
+        snr_edge_pixels = edge_pixels * jnp.sqrt(weight_edge_pixels)
+        valid_edge_pixel = weight_edge_pixels > 0
+        mean_snr = jnp.sum(jnp.sum(snr_edge_pixels, axis=-1) / jnp.sum(valid_edge_pixel, axis=-1))
 
-            if mean_snr < min_snr:
-                break
+        if mean_snr < min_snr:
+            break
 
-            spec_corr = jnp.dot(edge_spectrum, peak_spectrum) / \
-                        jnp.sqrt(jnp.dot(peak_spectrum, peak_spectrum)) / jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
+        spec_corr = jnp.dot(edge_spectrum, peak_spectrum) / \
+                    jnp.sqrt(jnp.dot(peak_spectrum, peak_spectrum)) / jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
 
-            if spec_corr < min_corr or jnp.any(edge_spectrum > last_spectrum):
-                if min(box2d.shape) > min_size:
-                    box2d = box2d.shrink(delta_size)
-                break
+        if spec_corr < min_corr or jnp.any(edge_spectrum > last_spectrum):
+            if min(box2d.shape) > min_size:
+                box2d = box2d.shrink(delta_size)
+            break
 
-            box2d = box2d.grow(delta_size)
+        box2d = box2d.grow(delta_size)
 
     box = obs.frame.bbox[0] @ box2d
     return box
