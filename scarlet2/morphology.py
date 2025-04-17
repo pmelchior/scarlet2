@@ -137,16 +137,18 @@ class GaussianMorphology(ProfileMorphology):
         center = measure.centroid(image)
         # compute moments and create Gaussian from it
         g = measure.moments(image, center=center, N=2)
-        return GaussianMorphology.from_moments(g)
+        return GaussianMorphology.from_moments(g, shape=image.shape)
 
     @staticmethod
-    def from_moments(g):
+    def from_moments(g, shape=None):
         """Create Gaussian radial profile from the moments `g`
 
         Parameters
         ----------
         g: :py:class:`~scarlet2.measure.Moments`
             Moments, order >= 2
+        shape: tuple
+            Shape of the bounding box
 
         Returns
         -------
@@ -157,7 +159,7 @@ class GaussianMorphology(ProfileMorphology):
 
         # create image of Gaussian with these 2nd moments
         if jnp.isfinite(T) and jnp.isfinite(ellipticity).all():
-            morph = GaussianMorphology(T, ellipticity)
+            morph = GaussianMorphology(T, ellipticity, shape=shape)
         else:
             raise ValueError(
                 f"Gaussian morphology not possible with size={T}, and ellipticity={ellipticity}!")
@@ -169,9 +171,9 @@ class SersicMorphology(ProfileMorphology):
     n: float
     """Sersic index"""
 
-    def __init__(self, n, size, ellipticity=None):
+    def __init__(self, n, size, ellipticity=None, shape=None):
         self.n = n
-        super().__init__(size, ellipticity=ellipticity)
+        super().__init__(size, ellipticity=ellipticity, shape=shape)
 
     def f(self, R2):
         n = self.n
