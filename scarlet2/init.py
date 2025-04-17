@@ -56,6 +56,7 @@ def make_bbox(obs, center_pix, sizes=[11, 17, 25, 35, 47, 61, 77], min_snr=20, m
 
     # increase box size from list until SNR is below threshold or spectrum changes significantly
     peak_spectrum = pixel_spectrum(obs, center_pix, correct_psf=True)
+    last_spectrum = jnp.empty(len(peak_spectrum))
     for i in range(len(sizes)):
 
         box2d = Box((sizes[i], sizes[i]))
