@@ -3,6 +3,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from .bbox import overlap_slices
 from .fft import _wrap_hermitian_x
 from .fft import convolve, deconvolve, _get_fast_shape, transform, good_fft_size, _trim
 from .interpolation import resample_ops
@@ -135,6 +136,24 @@ class ConvolutionRenderer(Renderer):
 
     def __call__(self, model, key=None):
         return convolve(model, self._diff_kernel_fft, axes=(-2, -1))
+
+class AdjustToFrame(Renderer):
+    """Extract cutout the observation box from the model frame box
+    """
+    im_slices: slice
+    sub_slices: slice
+    sub_shape: (int,int,int)
+
+    def __init__(self, model_frame, obs_frame):
+        im_slices, sub_slices = overlap_slices(model_frame.bbox, obs_frame.bbox)
+        self.im_slices = im_slices
+        self.sub_slices = sub_slices
+        self.sub_shape = obs_frame.bbox.shape
+
+    def __call__(self, model, key=None):
+        sub = jnp.zeros(self.sub_shape)
+        sub =  sub.at[self.sub_slices].set(model[self.im_slices])
+        return sub
 
 class MultiresolutionRenderer(Renderer):
     """Renderer to resample image to different image placing or resolution

@@ -9,9 +9,9 @@ from .renderer import (
     NoRenderer,
     ConvolutionRenderer,
     ChannelRenderer,
-    MultiresolutionRenderer
+    MultiresolutionRenderer,
+    AdjustToFrame,
 )
-
 
 class Observation(Module):
     """Content and definition of an observation"""
@@ -112,6 +112,8 @@ class Observation(Module):
 
                 else:
                     renderers.append(ConvolutionRenderer(frame, self.frame))
+                    if self.frame.bbox != frame.bbox:
+                        renderers.append(AdjustToFrame(frame, self.frame))
 
             if len(renderers) == 0:
                 renderer = NoRenderer()

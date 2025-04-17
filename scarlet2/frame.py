@@ -228,16 +228,14 @@ class Frame(eqx.Module):
         # Determine overlap of all observations in pixel coordinates of the model frame
         for c, obs in enumerate(observations):
 
-            if model_frame.wcs is obs.frame.wcs:
-                this_box = obs_ref.frame.bbox[-2:]
-            else:
-                obs_coord = obs.frame.convert_pixel_to(model_frame)
-                y_min = jnp.floor(jnp.min(obs_coord[:, 0])).astype("int")
-                x_min = jnp.floor(jnp.min(obs_coord[:, 1])).astype("int")
-                y_max = jnp.ceil(jnp.max(obs_coord[:, 0])).astype("int")
-                x_max = jnp.ceil(jnp.max(obs_coord[:, 1])).astype("int")
-                this_box = Box.from_bounds((y_min, y_max + 1), (x_min, x_max + 1))
+            obs_coord = obs.frame.convert_pixel_to(model_frame)
+            y_min = jnp.floor(jnp.min(obs_coord[:, 0]))
+            x_min = jnp.floor(jnp.min(obs_coord[:, 1]))
+            y_max = jnp.ceil(jnp.max(obs_coord[:, 0]))
+            x_max = jnp.ceil(jnp.max(obs_coord[:, 1]))
 
+            this_box = Box.from_bounds((int(y_min), int(y_max) + 1), (int(x_min), int(x_max) + 1))
+            
             if c == 0:
                 model_box = this_box
             else:
@@ -245,25 +243,14 @@ class Frame(eqx.Module):
                     model_box |= this_box
                 else:
                     model_box &= this_box
-
-        # # pad by the size of the widest psf to prevent leakage across the frame edge
-        # ny, nx = model_box.shape
-        # pad_size = fat_psf_size / h / 2
-        # offset = (jnp.round(pad_size).astype("int"), jnp.round(pad_size).astype("int"))
-        # model_box -= offset
-        # model_box_shape = tuple(int(s + 2 * o) for s, o in zip(model_box.shape, offset))
-        #
-        # # move the reference pixel of the model wcs to the 0/0 pixel of the new shape
-        # model_wcs = model_wcs.deepcopy()
-        # model_wcs.wcs.crpix -= model_box.origin
-        # model_wcs.array_shape = model_box.shape
-
-        # recreate the model frame with the correct shape
-        # frame_shape = (len(channels), model_box_shape)
+                    
         frame_shape = (len(channels),) + model_box.shape
-
+        frame_origin = (0, ) + model_box.origin
         model_frame = Frame(
-            Box(frame_shape), channels=channels, psf=model_psf, wcs=model_wcs
+            Box(shape=frame_shape, origin=frame_origin),
+            channels=channels,
+            psf=model_psf,
+            wcs=model_wcs
         )
 
         # Match observations to this frame
