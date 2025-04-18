@@ -924,16 +924,10 @@ def scene(
 
     if show_rendered or show_residual:
         model = observation.render(model)
-        extent = scene.frame.bbox.get_extent()
-        if scene.frame.wcs is not None:
-            extent = observation.frame.get_pixel(
-                scene.frame.get_sky_coord(np.array([[extent[0], extent[1]], [extent[2], extent[3]]]))
-                ).flatten()
 
     if show_rendered:
         rendered_img = ax[panel].imshow(
             img_to_rgb(model, norm=norm, channel_map=channel_map, mask=mask),
-            extent=extent,
             origin="lower",
         )
         ax[panel].set_title("Model Rendered", **title_kwargs)
@@ -942,7 +936,6 @@ def scene(
     if show_observed:
         observed_img = ax[panel].imshow(
             img_to_rgb(observation.data, norm=norm, channel_map=channel_map, mask=mask),
-            extent=extent,
             origin="lower",
         )
         ax[panel].set_title("Observation", **title_kwargs)
@@ -953,7 +946,6 @@ def scene(
         norm_ = LinearPercentileNorm(residual)
         residual_img = ax[panel].imshow(
             img_to_rgb(residual, norm=norm_, channel_map=channel_map, mask=mask),
-            extent=extent,
             origin="lower",
         )
         ax[panel].set_title("Residual", **title_kwargs)
