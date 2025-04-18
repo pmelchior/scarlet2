@@ -279,7 +279,8 @@ def from_gaussian_moments(
             box_sizes = [frame.pixel_to_angle(size) for size in box_sizes]
     else:
         if u.get_physical_type(box_sizes[0]) == "angle":
-            raise AttributeError("Scene frame has no WCS, box_sizes in from_gaussian_moments needs to be explicitly defined, e.g. box_sizes=[11, 17, 25, 35, 47, 61, 77] pixels")
+            box_sizes = [11, 17, 25, 35, 47, 61, 77]
+            print("Scene frame has no WCS, box_sizes in from_gaussian_moments needs to be explicitly defined, using by default box_sizes=[11, 17, 25, 35, 47, 61, 77] pixels")
     
     boxes = [make_bbox(obs_, center_, sizes=box_sizes, min_snr=min_snr, min_corr=min_corr) for
              obs_, center_ in zip(observations, centers)]
