@@ -136,6 +136,24 @@ class Frame(eqx.Module):
         pixel_size = get_pixel_size(self.wcs.celestial) * 60 * 60  # in arcsec/pixel
 
         return distance.to(u.arcsec).value / pixel_size
+    
+    def pixel_to_angle(self, size):
+        """Converts pixel size to celestial distance according to this frame WCS
+
+            Parameters
+            ----------
+            size: float
+
+            Returns
+            -------
+            distance: :py:class:`astropy.units.Quantity`
+                Physical size, must be `PhysicalType("angle")`
+        """
+        # first computer the pixel size
+        pixel_size = get_pixel_size(self.wcs.celestial) * 60 * 60  # in arcsec/pixel
+
+        distance = size * pixel_size * u.arcsec
+        return distance
 
     @staticmethod
     def from_observations(
