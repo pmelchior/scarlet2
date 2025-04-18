@@ -101,6 +101,9 @@ class Observation(Module):
             if self.frame.channels != frame.channels:
                 renderers.append(ChannelRenderer(frame, self.frame))
 
+            if self.frame.bbox != frame.bbox:
+                renderers.append(AdjustToFrame(frame, self.frame))
+
             if self.frame.psf != frame.psf:
                 if frame.wcs != self.frame.wcs:
                     # 2) Pad model, model psf and obs psf and Fourier transform
@@ -112,8 +115,6 @@ class Observation(Module):
 
                 else:
                     renderers.append(ConvolutionRenderer(frame, self.frame))
-                    if self.frame.bbox != frame.bbox:
-                        renderers.append(AdjustToFrame(frame, self.frame))
 
             if len(renderers) == 0:
                 renderer = NoRenderer()

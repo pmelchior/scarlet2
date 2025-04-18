@@ -3,7 +3,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from .bbox import overlap_slices
+from .bbox import Box, overlap_slices
 from .fft import _wrap_hermitian_x
 from .fft import convolve, deconvolve, _get_fast_shape, transform, good_fft_size, _trim
 from .interpolation import resample_ops
@@ -141,18 +141,20 @@ class AdjustToFrame(Renderer):
     """Extract cutout the observation box from the model frame box
     """
     im_slices: slice
-    sub_slices: slice
-    sub_shape: (int,int,int)
-
     def __init__(self, model_frame, obs_frame):
-        im_slices, sub_slices = overlap_slices(model_frame.bbox, obs_frame.bbox)
+        obs_coord = obs_frame.convert_pixel_to(model_frame)
+        y_min = jnp.floor(jnp.min(obs_coord[:, 0]))
+        x_min = jnp.floor(jnp.min(obs_coord[:, 1]))
+        y_max = jnp.ceil(jnp.max(obs_coord[:, 0]))
+        x_max = jnp.ceil(jnp.max(obs_coord[:, 1]))
+        num_channels = obs_frame.bbox.shape[0]
+        this_box = Box.from_bounds((0, num_channels), (int(y_min)+1, int(y_max)+1), (int(x_min)+1, int(x_max)+1))
+        
+        im_slices, sub_slices = overlap_slices(model_frame.bbox, this_box)
         self.im_slices = im_slices
-        self.sub_slices = sub_slices
-        self.sub_shape = obs_frame.bbox.shape
 
     def __call__(self, model, key=None):
-        sub = jnp.zeros(self.sub_shape)
-        sub =  sub.at[self.sub_slices].set(model[self.im_slices])
+        sub = model[self.im_slices]
         return sub
 
 class MultiresolutionRenderer(Renderer):
