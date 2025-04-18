@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from astropy.coordinates import SkyCoord
 
 from .bbox import Box
-from .psf import PSF, ArrayPSF
+from .psf import PSF, GaussianPSF
 
 
 class Frame(eqx.Module):
@@ -133,11 +133,27 @@ class Frame(eqx.Module):
         assert u.get_physical_type(distance) == "angle"
 
         # first computer the pixel size
-        pixel_size = get_pixel_size(
-            get_affine(self.wcs.celestial) # only use celestial portion
-        ) * 60 * 60 # in arcsec/pixel
+        pixel_size = get_pixel_size(self.wcs.celestial) * 60 * 60  # in arcsec/pixel
 
         return distance.to(u.arcsec).value / pixel_size
+    
+    def pixel_to_angle(self, size):
+        """Converts pixel size to celestial distance according to this frame WCS
+
+            Parameters
+            ----------
+            size: float
+
+            Returns
+            -------
+            distance: :py:class:`astropy.units.Quantity`
+                Physical size, must be `PhysicalType("angle")`
+        """
+        # first computer the pixel size
+        pixel_size = get_pixel_size(self.wcs.celestial) * 60 * 60  # in arcsec/pixel
+
+        distance = size * pixel_size * u.arcsec
+        return distance
 
     @staticmethod
     def from_observations(
@@ -182,13 +198,13 @@ class Frame(eqx.Module):
             channels = channels + obs.frame.channels
 
             # concatenate all pixel sizes
-            h_temp = get_pixel_size(get_affine(obs.frame.wcs))
+            h_temp = get_pixel_size(obs.frame.wcs)
 
             pix_tab.append(h_temp)
             # Looking for the sharpest and the fatest psf
             psf = obs.frame.psf.morphology
-            for psf in psf:
-                psf_size = get_psf_size(psf) * h_temp
+            for psf_channel in psf:
+                psf_size = get_psf_size(psf_channel) * h_temp
                 if (fat_psf_size is None) or (psf_size > fat_psf_size):
                     fat_psf_size = psf_size
                 if (obs_id is None) or (c == obs_id):
@@ -196,8 +212,6 @@ class Frame(eqx.Module):
                         (small_psf_size is None) or (psf_size < small_psf_size)
                     ):
                         small_psf_size = psf_size
-                        model_psf_temp = ArrayPSF(psf[jnp.newaxis, :, :])
-                        psf_h = h_temp
 
         # Find a reference observation. Either provided by obs_id or as the observation with the smallest pixel
         if obs_id is None:
@@ -212,19 +226,15 @@ class Frame(eqx.Module):
             model_wcs = obs_ref.frame.wcs
 
         # Scale of the smallest pixel
-        h = get_pixel_size(get_affine(model_wcs))
+        h = get_pixel_size(model_wcs)
 
-        # TODO:
-        # # If needed and psf is not provided: interpolate psf to smallest pixel
-        # if model_psf is None:
-        #     # If the reference PSF is not at the highest pixel resolution, make it!
-        #     if psf_h > h:
-        #         angle, h = interpolation.get_angles(model_wcs, obs.wcs)
-        #         model_psf = PSF(
-        #             interpolation.sinc_interp_inplace(model_psf_temp, psf_h, h, angle)
-        #         )
-        #     else:
-        #         model_psf = model_psf_temp
+        # If needed and psf is not provided: interpolate psf to smallest pixel
+        if model_psf is None:
+            # create Gaussian PSF with a sigma smaller than the smallest observed PSF
+            sigma = 0.7
+            assert small_psf_size / h > sigma, \
+                f"Default model PSF width ({sigma} pixel) too large for best-seeing observation"
+            model_psf = GaussianPSF(sigma=sigma)
 
         # Dummy frame for WCS computations
         model_shape = (len(channels), 0, 0)
@@ -236,16 +246,14 @@ class Frame(eqx.Module):
         # Determine overlap of all observations in pixel coordinates of the model frame
         for c, obs in enumerate(observations):
 
-            if model_frame.wcs is obs.frame.wcs:
-                this_box = obs_ref.frame.bbox[-2:]
-            else:
-                obs_coord = obs.frame.convert_pixel_to(model_frame)
-                y_min = jnp.floor(jnp.min(obs_coord[:, 0])).astype("int")
-                x_min = jnp.floor(jnp.min(obs_coord[:, 1])).astype("int")
-                y_max = jnp.ceil(jnp.max(obs_coord[:, 0])).astype("int")
-                x_max = jnp.ceil(jnp.max(obs_coord[:, 1])).astype("int")
-                this_box = Box.from_bounds((y_min, y_max + 1), (x_min, x_max + 1))
+            obs_coord = obs.frame.convert_pixel_to(model_frame)
+            y_min = jnp.floor(jnp.min(obs_coord[:, 0]))
+            x_min = jnp.floor(jnp.min(obs_coord[:, 1]))
+            y_max = jnp.ceil(jnp.max(obs_coord[:, 0]))
+            x_max = jnp.ceil(jnp.max(obs_coord[:, 1]))
 
+            this_box = Box.from_bounds((int(y_min), int(y_max) + 1), (int(x_min), int(x_max) + 1))
+            
             if c == 0:
                 model_box = this_box
             else:
@@ -253,26 +261,14 @@ class Frame(eqx.Module):
                     model_box |= this_box
                 else:
                     model_box &= this_box
-
-        # pad by the size of the widest psf to prevent leakage across the frame edge
-        ny, nx = model_box.shape
-        pad_size = fat_psf_size / h / 2
-        offset = (jnp.round(pad_size).astype("int"), jnp.round(pad_size).astype("int"))
-        model_box -= offset
-
-        model_box_shape = tuple(int(s + 2 * o) for s, o in zip(model_box.shape, offset))
-
-        # move the reference pixel of the model wcs to the 0/0 pixel of the new shape
-        model_wcs = model_wcs.deepcopy()
-        model_wcs.wcs.crpix -= model_box.origin
-        model_wcs.array_shape = model_box.shape
-
-        # recreate the model frame with the correct shape
-        # frame_shape = (len(channels), model_box_shape)
-        frame_shape = (len(channels),) + model_box_shape
-
+                    
+        frame_shape = (len(channels),) + model_box.shape
+        frame_origin = (0, ) + model_box.origin
         model_frame = Frame(
-            Box(frame_shape), channels=channels, psf=model_psf, wcs=model_wcs
+            Box(shape=frame_shape, origin=frame_origin),
+            channels=channels,
+            psf=model_psf,
+            wcs=model_wcs
         )
 
         # Match observations to this frame
@@ -325,8 +321,11 @@ def get_affine(wcs):
     return model_affine
 
 
-def get_pixel_size(model_affine):
+def get_pixel_size(wcs):
     """Extracts the pixel size from a wcs, and returns it in deg/pixel"""
+    if wcs is None:
+        return 1
+    model_affine = get_affine(wcs)
     pix = jnp.sqrt(
         jnp.abs(model_affine[0, 0])
         * jnp.abs(model_affine[1, 1] - model_affine[0, 1] * model_affine[1, 0])
@@ -337,6 +336,8 @@ def get_scale(wcs):
     """
     Return WCS axis scales in deg/pixel
     """
+    if wcs is None:
+        return 1
     model_affine = get_affine(wcs)
     c1 = (model_affine[0,:2]**2).sum()**0.5
     c2 = (model_affine[1,:2]**2).sum()**0.5
@@ -346,6 +347,8 @@ def get_angle(wcs):
     """
     Return WCS rotation angle in rad
     """
+    if wcs is None:
+        return 0
     model_affine = get_affine(wcs)
     c = get_scale(wcs)
     c = c.reshape([c.shape[-1],1])

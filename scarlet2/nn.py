@@ -6,9 +6,11 @@ try:
 except ImportError:
     raise ImportError("scarlet2.nn requires numpyro.")
 
+import equinox as eqx
 import jax.numpy as jnp
 from jax import custom_vjp
 from jax import vjp
+
 
 def pad_fwd(x, model_shape):
     """Zero-pads the input image to the model size
@@ -85,7 +87,7 @@ def calc_grad(x, model):
     # run score model, expects (batch, shape)
     if jnp.ndim(x) == len(model.shape):
         x_ = jnp.expand_dims(x_, axis=0)
-    score_func = model(x_)
+    score_func = model.func(x_)
     if jnp.ndim(x) == len(model.shape):
         score_func = jnp.squeeze(score_func, axis=0)
 
@@ -124,10 +126,14 @@ _log_prob.defvjp(_log_prob_fwd, _log_prob_bwd)
 
 
 class ScorePrior(dist.Distribution):
-    support = constraints.real_vector
-    model = callable
+    class ScoreWrapper(eqx.Module):
+        func: callable
+        shape: tuple
 
-    def __init__(self, model, temp=0.02, validate_args=None):
+    support = constraints.real_vector
+    _model = ScoreWrapper
+
+    def __init__(self, model, shape, *args, **kwargs):
         """Score-matching neural network to represent the prior distribution
 
         This class is used to calculate the gradient of the log-probability of the prior distribution.
@@ -136,22 +142,27 @@ class ScorePrior(dist.Distribution):
         Parameters
         ----------
         model: callable
-            Returns the score value given parameter and the temperature: `model(x, temp)`
-        temp: float
-            Temperature for the evaluation of the score model
-        validate_args: bool
-            Whether to enable validation of distribution parameters and arguments to `.log_prob` method.
+            Returns the score value given parameter: `model(x) -> score`
+        shape: tuple
+            Shape of the parameter the model can accept
+        *args: tuple
+            List of unnamed parameter for model, e.g. `model(x, *args) -> score`
+        **kwargs: dict
+            List of named parameter for model, e.g. `model(x, **kwargs) -> score`
         """
-        self.model = model
-        self.temp = temp
+        # helper class that ensures the model function binds the args/kwargs and has a shape
+        wrapper = ScorePrior.ScoreWrapper(
+            partial(model.__call__, *args, **kwargs),
+            shape
+        )
+        self._model = wrapper
 
         super().__init__(
-            event_shape=model.shape,
-            validate_args=validate_args,
+            validate_args=None,
         )
 
     def __call__(self, x):
-        return self.model(x, t=self.temp)
+        return self._model.func(x)
 
     def sample(self, key, sample_shape=()):
         # TODO: add ability to draw samples from the prior, if desired
@@ -161,5 +172,4 @@ class ScorePrior(dist.Distribution):
         raise NotImplementedError
     
     def log_prob(self, x):
-        return _log_prob(self.model, x)  
-
+        return _log_prob(self._model, x)

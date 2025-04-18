@@ -9,9 +9,9 @@ from .renderer import (
     NoRenderer,
     ConvolutionRenderer,
     ChannelRenderer,
-    MultiresolutionRenderer
+    MultiresolutionRenderer,
+    AdjustToFrame,
 )
-
 
 class Observation(Module):
     """Content and definition of an observation"""
@@ -19,9 +19,8 @@ class Observation(Module):
     """Observed data"""
     weights: jnp.ndarray
     """Statistical weights (usually inverse variance) for :py:meth:`log_likelihood`"""
-    frame: Frame = eqx.field(static=True)
+    frame: Frame
     """Metadata to describe what view of the sky `data` amounts to"""
-    # TODO: requires static, otherwise quickstart test aborts wiht "TypeError: unhashable type: 'slice'"
     renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
     """Renderer to translate from the model frame the observation frame"""
 
@@ -41,7 +40,7 @@ class Observation(Module):
         Parameters
         ----------
         model: array
-            The (pre-rendered) predicted data cube, typically from evaluateing :py:class:`~scarlet2.Scene`
+            The (pre-rendered) predicted data cube, typically from evaluating :py:class:`~scarlet2.Scene`
 
         Returns
         -------
@@ -56,7 +55,7 @@ class Observation(Module):
         Parameters
         ----------
         model: array
-            The (pre-rendered) predicted data cube, typically from evaluateing :py:class:`~scarlet2.Scene`
+            The (pre-rendered) predicted data cube, typically from evaluating :py:class:`~scarlet2.Scene`
 
         Returns
         -------
@@ -101,6 +100,9 @@ class Observation(Module):
             # 1) collapse channels that are not needed
             if self.frame.channels != frame.channels:
                 renderers.append(ChannelRenderer(frame, self.frame))
+
+            if self.frame.bbox != frame.bbox:
+                renderers.append(AdjustToFrame(frame, self.frame))
 
             if self.frame.psf != frame.psf:
                 if frame.wcs != self.frame.wcs:

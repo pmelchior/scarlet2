@@ -8,10 +8,11 @@ import jax.numpy as jnp
 from . import Scenery
 from . import measure
 from .bbox import Box
-from .morphology import ArrayMorphology, GaussianMorphology
+from .morphology import GaussianMorphology
 from .observation import Observation
-from .spectrum import ArraySpectrum
 
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 
 # function to calculate values of perimeter pixels
 def _get_edge_pixels(img, box):
@@ -27,7 +28,7 @@ def _get_edge_pixels(img, box):
     return jnp.concatenate(edge, axis=1)
 
 
-def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0.99):
+def make_bbox(obs, center_pix, sizes=[11, 17, 25, 35, 47, 61, 77], min_snr=20, min_corr=0.99):
     """Make a bounding box for source at center
 
     This method finds small box around the center so that the edge flux has a minimum SNR,
@@ -40,10 +41,8 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
     obs: :py:class:`~scarlet2.Observation`
     center_pix: tuple
         source enter, in pixel coordinates
-    min_size: int
-        smallest box size
-    delta_size: int
-        incremental increase of box size
+    sizes: list[int]
+        a list of box sizes to cycle through
     min_snr: float
         minimum SNR of edge pixels (aggregated over all observation channel) to allow increase of box size
     min_corr: float
@@ -55,56 +54,58 @@ def make_bbox(obs, center_pix, min_size=11, delta_size=3, min_snr=20, min_corr=0
     """
     assert isinstance(obs, Observation)
     assert obs.weights is not None, "Observation weights are required"
+    assert obs.frame.bbox.spatial.contains(center_pix), f"Center pixel {center_pix} not contained in observation"
 
-    peak_spectrum = pixel_spectrum(obs, center_pix, correct_psf=True, return_array=True)
-    last_spectrum = peak_spectrum.copy()
-    box2d = Box((min_size, min_size))
-    if not obs.frame.bbox.spatial.contains(center_pix):
-        raise ValueError(f"Pixel coordinate expected, got {center_pix}")
-    box2d.set_center(center_pix.astype(int))
+    assert len(sizes) > 0
+    if u.get_physical_type(sizes[0]) == "angle":
+        sizes = [int(obs.frame.u_to_pixel(s)) // 2 * 2 + 1 for s in sizes]
 
-    # increase box size until SNR is below threshold or spectrum changes significantly
-    while max(box2d.shape) < max(obs.frame.bbox.spatial.shape):
+    # increase box size from list until SNR is below threshold or spectrum changes significantly
+    peak_spectrum = pixel_spectrum(obs, center_pix, correct_psf=True)
+    last_spectrum = jnp.empty(len(peak_spectrum))
+    for i in range(len(sizes)):
+
+        box2d = Box((sizes[i], sizes[i]))
+        box2d.set_center(center_pix.astype(int))
+
         edge_pixels = _get_edge_pixels(obs.data, box2d)
-        edge_spectrum = jnp.mean(edge_pixels, axis=-1)
-        edge_spectrum /= jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
-
+        valid_edge_pixel = edge_pixels != 0
+        edge_spectrum = jnp.sum(edge_pixels, axis=-1) / jnp.sum(valid_edge_pixel, axis=-1)
         weight_edge_pixels = _get_edge_pixels(obs.weights, box2d)
         snr_edge_pixels = edge_pixels * jnp.sqrt(weight_edge_pixels)
-        valid_edge_pixel = weight_edge_pixels > 0
         mean_snr = jnp.sum(jnp.sum(snr_edge_pixels, axis=-1) / jnp.sum(valid_edge_pixel, axis=-1))
-
-        if mean_snr < min_snr:
-            break
-
         spec_corr = jnp.dot(edge_spectrum, peak_spectrum) / \
                     jnp.sqrt(jnp.dot(peak_spectrum, peak_spectrum)) / jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
 
-        if spec_corr < min_corr or jnp.any(edge_spectrum > last_spectrum):
-            if min(box2d.shape) > min_size:
-                box2d = box2d.shrink(delta_size)
+        if mean_snr < min_snr or max(box2d.shape) > max(obs.frame.bbox.spatial.shape):
             break
 
-        box2d = box2d.grow(delta_size)
+        if i > 0 and (spec_corr < min_corr or jnp.any(edge_spectrum > last_spectrum)):
+            box2d = Box((sizes[i - 1], sizes[i - 1]))
+            box2d.set_center(center_pix.astype(int))
+            break
+
+        last_spectrum = edge_spectrum
 
     box = obs.frame.bbox[0] @ box2d
     return box
 
 
-def compact_morphology(min_value=1e-6, return_array=False):
+def compact_morphology(min_value=1e-6, max_value=1 - 1e-6):
     """Create image of the point source morphology model, i.e. the most compact source possible
 
     Parameters
     ----------
     min_value: float
         Minimum pixel value (needed for positively constrained morphologies)
-    return_array: bool
-        Whether to return the array or an ArrayMorphology
+    max_value: float
+        minimum pixel value (useful to set to < 1 for unit interval constraints)
+
 
     Returns
     -------
-    array or :py:class:`~scarlet2.ArrayMorphology`
-        2D array, normalized to the range [0,1], or :py:class:`~scarlet2.ArrayMorphology` made from this image
+    array
+        2D array, normalized to the range [0,1]
 
     """
     try:
@@ -117,10 +118,8 @@ def compact_morphology(min_value=1e-6, return_array=False):
         raise AttributeError("Compact morphology can only be create with a PSF in the model frame")
 
     morph = frame.psf.morphology()
-    morph = jnp.maximum(morph, min_value)
-    if return_array:
-        return morph
-    return ArrayMorphology(morph)
+    morph = jnp.minimum(jnp.maximum(morph, min_value), max_value)
+    return morph
 
 
 def standardized_moments(
@@ -203,12 +202,17 @@ def standardized_moments(
 def from_gaussian_moments(
         obs,
         center,
-        min_size=11,
-        delta_size=3,
+        box_sizes = [1.848*u.arcsec,
+                     2.856*u.arcsec,
+                     4.200*u.arcsec,
+                     5.880*u.arcsec,
+                     7.896*u.arcsec,
+                     10.24*u.arcsec,
+                     12.93*u.arcsec],
         min_snr=20,
         min_corr=0.99,
         min_value=1e-6,
-        return_array=False,
+        max_value=1 - 1e-6,
 ):
     """Create a Gaussian-shaped morphology and associated spectrum from the observation(s).
 
@@ -224,24 +228,21 @@ def from_gaussian_moments(
         Observation from which the source is initialized.
     center: tuple
         central pixel of the source
-    min_size: int
-        smallest size (in pixels) for source bounding box
-    delta_size: int
-        increase in pixel size for the source bounding box
+    box_sizes: list[int] or list[SkyCoord]
+        a list of box sizes to choose from
     min_snr: float
         minimum SNR of edge pixels (aggregated over all observation channel) to allow increase of box size
     min_corr: float
         minimum correlation coefficient between center and edge color to allow increase of box size
     min_value: float
         minimum pixel value (useful to set to > 0 for positivity constraints)
-    return_array: bool
-        Whether to return arrays or :py:class:`~scarlet2.ArraySpectrum` and :py:class:`~scarlet2.ArrayMorphology`
+    max_value: float
+        minimum pixel value (useful to set to < 1 for unit interval constraints)
 
     Returns
     -------
-    (array,array) or (ArraySpectrum, ArrayMorphology)
-         Spectrum and morphology, either as simple arrays or as :py:class:`~scarlet2.ArraySpectrum` and
-         :py:class:`~scarlet2.ArrayMorphology`
+    (array,array)
+         Spectrum and morphology arrays
 
     Warnings
     --------
@@ -260,12 +261,31 @@ def from_gaussian_moments(
         observations = (obs,)
     else:
         observations = obs
+
+    # box_sizes are defined in pixel in the model frame
+    # therefore need to convert back to skycoord and converte to pixel in obs frames
     centers = [obs_.frame.get_pixel(center) for obs_ in observations]
-    boxes = [make_bbox(obs_, center_, min_size=min_size, delta_size=delta_size, min_snr=min_snr, min_corr=min_corr) for
+
+    try:
+        frame = Scenery.scene.frame
+    except AttributeError:
+        print("Compact morphology can only be created within the context of a Scene")
+        print("Use 'with Scene(frame) as scene: Source(...)'")
+        raise
+    
+    assert len(box_sizes) > 0
+    if frame.wcs is not None:
+        if not u.get_physical_type(box_sizes[0]) == "angle":
+            box_sizes = [frame.pixel_to_angle(size) for size in box_sizes]
+    else:
+        if u.get_physical_type(box_sizes[0]) == "angle":
+            box_sizes = [11, 17, 25, 35, 47, 61, 77]
+            print("Scene frame has no WCS, box_sizes in from_gaussian_moments needs to be explicitly defined, using by default box_sizes=[11, 17, 25, 35, 47, 61, 77] pixels")
+    
+    boxes = [make_bbox(obs_, center_, sizes=box_sizes, min_snr=min_snr, min_corr=min_corr) for
              obs_, center_ in zip(observations, centers)]
     moments = [standardized_moments(obs_, center_, bbox=bbox_) for obs_, center_, bbox_ in
                zip(observations, centers, boxes)]
-
     # flat lists of spectra, sorted as model frame channels
     spectra = jnp.concatenate([g[0, 0] for g in moments])
     channels = reduce(operator.add, [obs_.frame.channels for obs_ in observations])
@@ -277,19 +297,26 @@ def from_gaussian_moments(
         g[key] = jnp.concatenate([g[key] for g in moments])  # combine all observations
         g[key] = jnp.median(g[key])  # this is not SNR weighted nor consistent aross different moments, but works(?)
 
+    # average box size across observations
+    if frame.wcs is not None:
+        size = jnp.median(
+            jnp.array(
+                [frame.u_to_pixel(obs.frame.pixel_to_angle(max(box.spatial.shape)))//2*2+1 
+                for box, obs in zip(boxes, observations)
+                ]))
+    else:
+        size = jnp.median(jnp.array([max(box.spatial.shape) for box in boxes]))
+    
     # create morphology and evaluate at center
-    morph = GaussianMorphology.from_moments(g)
+    morph = GaussianMorphology.from_moments(g, shape=(size, size))
     morph = morph()
     spectrum /= morph.sum()
-    morph = jnp.maximum(morph, min_value)
-
-    if return_array:
-        return spectrum, morph
-    return ArraySpectrum(spectrum), ArrayMorphology(morph)
+    morph = jnp.minimum(jnp.maximum(morph, min_value), max_value)
+    return spectrum, morph
 
 
 # initialise the spectrum
-def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
+def pixel_spectrum(obs, pos, correct_psf=False):
     """Get the spectrum at a given position in the observation(s).
 
     Yields the spectrum of a single-pixel source with flux 1 in every channel,
@@ -305,12 +332,10 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
     correct_psf: bool, optional
         Whether PSF shape variations in the observations should be corrected. If `True`, this method homogenizes the
         PSFs of the observations, which yields the correct spectrum for a flux=1 point source.
-    return_array: bool, optional
-        Whether to return the array or an :py:class:`~scarlet2.ArraySpectrum`
 
     Returns
     -------
-    array or ArraySpectrum or list
+    array or list
         If `obs` is a list, the method returns the associate list of spectra.
     """
 
@@ -319,13 +344,11 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
 
         # flat lists of spectra and channels in order of observations
         spectra = jnp.concatenate(
-            [pixel_spectrum(obs_, pos, correct_psf=correct_psf, return_array=True) for obs_ in obs])
+            [pixel_spectrum(obs_, pos, correct_psf=correct_psf) for obs_ in obs])
         channels = reduce(operator.add, [obs_.frame.channels for obs_ in obs])
         spectrum = _sort_spectra(spectra, channels)
 
-        if return_array:
-            return spectrum
-        return ArraySpectrum(spectrum)
+        return spectrum
 
     assert isinstance(obs, Observation)
 
@@ -366,9 +389,7 @@ def pixel_spectrum(obs, pos, correct_psf=False, return_array=False):
             spectrum = jnp.ones_like(spectrum)
         print(msg)
 
-    if return_array:
-        return spectrum
-    return ArraySpectrum(spectrum)
+    return spectrum
 
 
 def _sort_spectra(spectra, channels):

@@ -21,11 +21,11 @@ class Component(Module):
     """
     center: jnp.ndarray
     """Center position, in pixel coordinates of the model frame"""
-    spectrum: Spectrum
+    spectrum: (jnp.array, Spectrum)
     """Spectrum model"""
-    morphology: Morphology
+    morphology: (jnp.array, Morphology)
     """Morphology model"""
-    bbox: Box = eqx.field(static=True, init=False)
+    bbox: Box = eqx.field(init=False)
     """Bounding box of the model, in pixel coordinates of the model frame"""
 
     def __init__(self, center, spectrum, morphology):
@@ -45,9 +45,7 @@ class Component(Module):
         >>> with Scene(model_frame) as scene:
         >>>    component = Component(center, spectrum, morphology)
         """
-        assert isinstance(spectrum, Spectrum)
         self.spectrum = spectrum
-        assert isinstance(morphology, Morphology)
         self.morphology = morphology
 
         if isinstance(center, SkyCoord):
@@ -67,7 +65,9 @@ class Component(Module):
     def __call__(self):
         # Boxed and centered model
         delta_center = (self.bbox.center[-2] - self.center[-2], self.bbox.center[-1] - self.center[-1])
-        return self.spectrum()[:, None, None] * self.morphology(delta_center=delta_center)[None, :, :]
+        spectrum = self.spectrum() if isinstance(self.spectrum, Module) else self.spectrum
+        morph = self.morphology(delta_center=delta_center) if isinstance(self.morphology, Module) else self.morphology
+        return spectrum[:, None, None] * morph[None, :, :]
 
 
 class DustComponent(Component):
@@ -88,7 +88,7 @@ class Source(Component):
     """
     components: list
     """List of components in this source"""
-    component_ops: list = eqx.field(static=True)
+    component_ops: list
     """List of operators to combine `components` for the final model"""
 
     def __init__(self, center, spectrum, morphology):
@@ -97,8 +97,8 @@ class Source(Component):
         ----------
         center: array, :py:class:`astropy.coordinates.SkyCoord`
             Center position. If given as astropy sky coordinate, it will be transformed with the WCS of the model frame.
-        spectrum: :py:class:`~scarlet2.Spectrum`
-        morphology: :py:class:`~scarlet2.Morphology`
+        spectrum: array, :py:class:`~scarlet2.Spectrum`
+        morphology: array, :py:class:`~scarlet2.Morphology`
 
         Examples
         --------
@@ -190,9 +190,9 @@ class PointSource(Source):
 
         Parameters
         ----------
-        center: jnp.array, :py:class:`astropy.coordinates.SkyCoord`
+        center: array, :py:class:`astropy.coordinates.SkyCoord`
             Center position. If given as astropy sky coordinate, it will be transformed with the WCS of the model frame.
-        spectrum: :py:class:`~scarlet2.Spectrum`
+        spectrum: array, :py:class:`~scarlet2.Spectrum`
 
         Examples
         --------

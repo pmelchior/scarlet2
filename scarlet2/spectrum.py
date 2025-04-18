@@ -1,4 +1,3 @@
-import equinox as eqx
 import jax.numpy as jnp
 
 from . import Scenery
@@ -13,23 +12,8 @@ class Spectrum(Module):
         raise NotImplementedError
 
 
-class ArraySpectrum(Spectrum):
-    data: jnp.array
-    """1D spectrum"""
 
-    def __init__(self, data):
-        """Spectrum defined by a 1D array"""
-        self.data = data
-
-    def __call__(self):
-        return self.data
-
-    @property
-    def shape(self):
-        return self.data.shape
-
-
-class StaticArraySpectrum(ArraySpectrum):
+class StaticArraySpectrum(Spectrum):
     """Static (non-variable) source in a transient scene
 
     In the frames of transient scenes, the attribute :py:attr:`~scarlet2.Frame.channels` are overloaded and defined
@@ -44,7 +28,7 @@ class StaticArraySpectrum(ArraySpectrum):
     """
     bands: list
     """Identifier for the list of unique bands in the model frame channels"""
-    _channelindex: jnp.array = eqx.field(static=True)
+    _channelindex: jnp.array
 
     def __init__(self, data, bands, band_selector=lambda channel: channel[0]):
         """
@@ -90,7 +74,7 @@ class StaticArraySpectrum(ArraySpectrum):
         return len(self.channelindex),
 
 
-class TransientArraySpectrum(ArraySpectrum):
+class TransientArraySpectrum(Spectrum):
     """Variable source in a transient scene with possible quiescent periods
 
     In the frames of transient scenes, the attribute :py:attr:`~scarlet2.Frame.channels` are overloaded and defined
@@ -106,7 +90,7 @@ class TransientArraySpectrum(ArraySpectrum):
     """
     epochs: list
     """Identifier for the list of active epochs. If set to `None`, all epochs are considered active"""
-    _epochmultiplier: jnp.array = eqx.field(static=True)
+    _epochmultiplier: jnp.array
 
     def __init__(self, data, epochs=None, epoch_selector=lambda channel: channel[1]):
         """

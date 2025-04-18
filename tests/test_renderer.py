@@ -82,44 +82,78 @@ def test_hst_to_hsc_against_galsim():
     # Perform the same operations with galsim 
     out_galsim = jnp.load(os.path.join(tests_path, "galsim_hst_to_hsc_resolution.npy"))
 
-    jnp.allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
+    assert jnp.allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
 
-def test_hst_to_hsc_against_galsim_rotated_wcs():
-    # Remember images coordinates are [y, x]
-    # Update CRPIX for the 90-degree clockwise rotation
-    crpix1_new = n1 - wcs_hst.wcs.crpix[1]
-    crpix2_new = wcs_hst.wcs.crpix[0]
-    wcs_hst.wcs.crpix = [crpix1_new, crpix2_new]
+# Rotate WCS
+# Remember images coordinates are [y, x]
+# Update CRPIX for the 90-degree clockwise rotation
+wcs_hst_rot = wcs_hst.deepcopy()
+crpix1_new = n1 - wcs_hst.wcs.crpix[1]
+crpix2_new = wcs_hst.wcs.crpix[0]
 
-    # # Mock a rotation of 90 deg clockwise of the HST WCS 
-    phi = -90 / 180 * jnp.pi # in rad
-    R = jnp.array([[jnp.cos(phi), jnp.sin(phi)],
-                    [-jnp.sin(phi), jnp.cos(phi)]])
+wcs_hst_rot.wcs.crpix = [crpix1_new, crpix2_new]
 
-    data_hst_ = jax.vmap(jnp.rot90)(data_hst)
-    psf_hst = jax.vmap(jnp.rot90)(psf_hst_)
-    psf_hst = scarlet2.ArrayPSF(psf_hst)
+# # Mock a rotation of 90 deg clockwise of the HST WCS 
+phi = -90 / 180 * jnp.pi # in rad
+R = jnp.array([[jnp.cos(phi), jnp.sin(phi)],
+                [-jnp.sin(phi), jnp.cos(phi)]])
 
-    wcs_hst.wcs.pc = R @ wcs_hst.wcs.pc    
+data_hst_rot = jax.vmap(jnp.rot90)(data_hst)
+psf_hst_rot = jax.vmap(jnp.rot90)(psf_hst_)
+psf_hst_rot = scarlet2.ArrayPSF(psf_hst_rot)
 
-    hst_frame = scarlet2.Frame(
-                bbox=scarlet2.Box(shape=data_hst_.shape),
+wcs_hst_rot.wcs.pc = R @ wcs_hst.wcs.pc
+
+hst_frame_rot = scarlet2.Frame(
+                bbox=scarlet2.Box(shape=data_hst_rot.shape),
                 channels=['channel'],
-                psf=psf_hst,
-                wcs=wcs_hst
+                psf=psf_hst_rot,
+                wcs=wcs_hst_rot
     )
 
+assert wcs_hst_rot != wcs_hst
+
+def test_hst_to_hsc_against_galsim_rotated_wcs():
+
+    obs_hsc = scarlet2.Observation(data_hsc[:1,...],
+                              wcs=wcs_hsc,
+                              psf=psf_hsc,
+                              channels=['channel'],
+                              weights=None)
+    
     # Automatically find the difference between observation and model WCSs
-    obs_hsc.match(hst_frame)
+    obs_hsc.match(hst_frame_rot)
     
     # Deconvolution, Resampling and Reconvolution
-    hst_resampled = obs_hsc.render(data_hst_)
+    hst_resampled = obs_hsc.render(data_hst_rot)
 
     # Perform the same operations with galsim 
     out_galsim = jnp.load(os.path.join(tests_path, "galsim_hst_to_hsc_resolution.npy"))
 
-    jnp.allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
+    assert jnp.allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
+
+
+def test_no_channel_axis_in_obs_psf():
+
+    assert len(psf_hsc_data[0].shape) == 2
+    obs_hsc = scarlet2.Observation(data_hsc[:1,...],
+                              wcs=wcs_hsc,
+                              psf=scarlet2.ArrayPSF(psf_hsc_data[0]),
+                              channels=['channel'],
+                              weights=None)
+
+    # Initializing renderers
+    obs_hsc.match(hst_frame)
+
+    # Deconvolution, Resampling and Reconvolution
+    hst_resampled = obs_hsc.render(data_hst)
+
+    # Perform the same operations with galsim 
+    out_galsim = jnp.load(os.path.join(tests_path, "galsim_hst_to_hsc_resolution.npy"))
+    assert jnp.allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
+
 
 if __name__=="__main__":
     test_hst_to_hsc_against_galsim()
     test_hst_to_hsc_against_galsim_rotated_wcs()
+    test_no_channel_axis_in_obs_psf()
