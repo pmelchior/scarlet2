@@ -110,6 +110,8 @@ class Box(eqx.Module):
         image[im_slices] = sub[sub_slices]
         return image
 
+    def get_extent(self):
+        return [self.start[-1], self.stop[-1], self.start[-2], self.stop[-2]]
 
     @property
     def D(self):

@@ -11,6 +11,8 @@ from .bbox import Box
 from .morphology import GaussianMorphology
 from .observation import Observation
 
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 
 # function to calculate values of perimeter pixels
 def _get_edge_pixels(img, box):
@@ -53,6 +55,10 @@ def make_bbox(obs, center_pix, sizes=[11, 17, 25, 35, 47, 61, 77], min_snr=20, m
     assert isinstance(obs, Observation)
     assert obs.weights is not None, "Observation weights are required"
     assert obs.frame.bbox.spatial.contains(center_pix), f"Center pixel {center_pix} not contained in observation"
+
+    assert len(sizes) > 0
+    if u.get_physical_type(sizes[0]) == "angle":
+        sizes = [int(obs.frame.u_to_pixel(s)) // 2 * 2 + 1 for s in sizes]
 
     # increase box size from list until SNR is below threshold or spectrum changes significantly
     peak_spectrum = pixel_spectrum(obs, center_pix, correct_psf=True)
@@ -196,7 +202,13 @@ def standardized_moments(
 def from_gaussian_moments(
         obs,
         center,
-        box_sizes=[11, 17, 25, 35, 47, 61, 77],
+        box_sizes = [1.848*u.arcsec,
+                     2.856*u.arcsec,
+                     4.200*u.arcsec,
+                     5.880*u.arcsec,
+                     7.896*u.arcsec,
+                     10.24*u.arcsec,
+                     12.93*u.arcsec],
         min_snr=20,
         min_corr=0.99,
         min_value=1e-6,
@@ -216,7 +228,7 @@ def from_gaussian_moments(
         Observation from which the source is initialized.
     center: tuple
         central pixel of the source
-    box_sizes: list[int]
+    box_sizes: list[int] or list[SkyCoord]
         a list of box sizes to choose from
     min_snr: float
         minimum SNR of edge pixels (aggregated over all observation channel) to allow increase of box size
@@ -249,12 +261,31 @@ def from_gaussian_moments(
         observations = (obs,)
     else:
         observations = obs
+
+    # box_sizes are defined in pixel in the model frame
+    # therefore need to convert back to skycoord and converte to pixel in obs frames
     centers = [obs_.frame.get_pixel(center) for obs_ in observations]
+
+    try:
+        frame = Scenery.scene.frame
+    except AttributeError:
+        print("Compact morphology can only be created within the context of a Scene")
+        print("Use 'with Scene(frame) as scene: Source(...)'")
+        raise
+    
+    assert len(box_sizes) > 0
+    if frame.wcs is not None:
+        if not u.get_physical_type(box_sizes[0]) == "angle":
+            box_sizes = [frame.pixel_to_angle(size) for size in box_sizes]
+    else:
+        if u.get_physical_type(box_sizes[0]) == "angle":
+            box_sizes = [11, 17, 25, 35, 47, 61, 77]
+            print("Scene frame has no WCS, box_sizes in from_gaussian_moments needs to be explicitly defined, using by default box_sizes=[11, 17, 25, 35, 47, 61, 77] pixels")
+    
     boxes = [make_bbox(obs_, center_, sizes=box_sizes, min_snr=min_snr, min_corr=min_corr) for
              obs_, center_ in zip(observations, centers)]
     moments = [standardized_moments(obs_, center_, bbox=bbox_) for obs_, center_, bbox_ in
                zip(observations, centers, boxes)]
-
     # flat lists of spectra, sorted as model frame channels
     spectra = jnp.concatenate([g[0, 0] for g in moments])
     channels = reduce(operator.add, [obs_.frame.channels for obs_ in observations])
@@ -267,8 +298,15 @@ def from_gaussian_moments(
         g[key] = jnp.median(g[key])  # this is not SNR weighted nor consistent aross different moments, but works(?)
 
     # average box size across observations
-    size = jnp.median(jnp.array([max(box.spatial.shape) for box in boxes]))
-
+    if frame.wcs is not None:
+        size = jnp.median(
+            jnp.array(
+                [frame.u_to_pixel(obs.frame.pixel_to_angle(max(box.spatial.shape)))//2*2+1 
+                for box, obs in zip(boxes, observations)
+                ]))
+    else:
+        size = jnp.median(jnp.array([max(box.spatial.shape) for box in boxes]))
+    
     # create morphology and evaluate at center
     morph = GaussianMorphology.from_moments(g, shape=(size, size))
     morph = morph()

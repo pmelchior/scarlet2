@@ -427,7 +427,7 @@ def observation(
         mask = None
 
     panel = 0
-    extent = get_extent(observation.frame.bbox)
+    extent = observation.frame.bbox.get_extent()
     ax[panel].imshow(
         img_to_rgb(observation.data, norm=norm, channel_map=channel_map, mask=mask),
         extent=extent,
@@ -470,10 +470,6 @@ def observation(
     fig.tight_layout()
     return fig
 
-
-
-def get_extent(bbox):
-    return [bbox.start[-1], bbox.stop[-1], bbox.start[-2], bbox.stop[-2]]
 
 # ------------------------------------------------------ #
 # include a routine to calculate the hallucination score #
@@ -723,7 +719,7 @@ def sources(
         model = src()
         if show_model:
             # Show the unrendered model in it's bbox
-            extent = get_extent(src.bbox)
+            extent = src.bbox.get_extent()
             ax[k - skipped][panel].imshow(
                 img_to_rgb(model, norm=norm, channel_map=channel_map, mask=model_mask),
                 extent=extent,
@@ -745,7 +741,7 @@ def sources(
 
             # Show the unrendered model in it's bbox
             hallucination, metric = hallucination_score(scene, observation, k)
-            extent = get_extent(src.bbox)
+            extent = src.bbox.get_extent()
             true_max = np.max(np.abs(hallucination))
             im = ax[k - skipped][panel].imshow(hallucination,
                 norm=colors.SymLogNorm(linthresh=1, linscale=1,
@@ -761,7 +757,7 @@ def sources(
             panel += 1
 
         # model in observation frame
-        extent = get_extent(observation.frame.bbox)
+        extent = observation.frame.bbox.get_extent()
         if show_rendered:
             model = scene.evaluate_source(src)
             model_ = observation.render(model)
@@ -905,8 +901,14 @@ def scene(
 
     panel = 0
     model = scene()
+
     if show_model:
-        extent = get_extent(observation.frame.bbox)
+        extent = scene.frame.bbox.get_extent()
+        if scene.frame.wcs is not None:
+            extent = observation.frame.get_pixel(
+                scene.frame.get_sky_coord(np.array([[extent[0], extent[1]], [extent[2], extent[3]]]))
+                ).flatten()
+
         if observation is not None:
             c = ChannelRenderer(scene.frame, observation.frame)
             model_ = c(model)
@@ -922,12 +924,10 @@ def scene(
 
     if show_rendered or show_residual:
         model = observation.render(model)
-        extent = get_extent(observation.frame.bbox)
 
     if show_rendered:
         rendered_img = ax[panel].imshow(
             img_to_rgb(model, norm=norm, channel_map=channel_map, mask=mask),
-            extent=extent,
             origin="lower",
         )
         ax[panel].set_title("Model Rendered", **title_kwargs)
@@ -936,7 +936,6 @@ def scene(
     if show_observed:
         observed_img = ax[panel].imshow(
             img_to_rgb(observation.data, norm=norm, channel_map=channel_map, mask=mask),
-            extent=extent,
             origin="lower",
         )
         ax[panel].set_title("Observation", **title_kwargs)
@@ -947,15 +946,16 @@ def scene(
         norm_ = LinearPercentileNorm(residual)
         residual_img = ax[panel].imshow(
             img_to_rgb(residual, norm=norm_, channel_map=channel_map, mask=mask),
-            extent=extent,
             origin="lower",
         )
         ax[panel].set_title("Residual", **title_kwargs)
         panel += 1
 
     for k, src in enumerate(scene.sources):
-        
         start, stop = src.bbox.start[-2:][::-1], src.bbox.stop[-2:][::-1]
+        if scene.frame.wcs is not None:
+            start = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(start)))[0]
+            stop = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(stop)))[0]
         points = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
         box_coords = [
             p for p in points
@@ -964,7 +964,7 @@ def scene(
         if add_boxes:
             panel = 0
             if show_model:
-                extent = get_extent(src.bbox)
+                extent = [start[0], stop[0], start[1], stop[1]]
                 rect = Rectangle(
                     (extent[0], extent[2]),
                     extent[1] - extent[0],
@@ -980,6 +980,8 @@ def scene(
 
         if add_labels:
             center = np.array(src.center)[::-1]
+            if scene.frame.wcs is not None:
+                center = observation.frame.get_pixel(scene.frame.get_sky_coord(center))[0]
             panel = 0
             if show_model:
                 ax[panel].text(*center, k, **label_kwargs)
