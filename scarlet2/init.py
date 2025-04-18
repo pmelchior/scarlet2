@@ -57,7 +57,7 @@ def make_bbox(obs, center_pix, sizes=[11, 17, 25, 35, 47, 61, 77], min_snr=20, m
     assert obs.frame.bbox.spatial.contains(center_pix), f"Center pixel {center_pix} not contained in observation"
 
     assert len(sizes) > 0
-    if isinstance(sizes[0], SkyCoord): 
+    if u.get_physical_type(sizes[0]) == "angle":
         sizes = [int(obs.frame.u_to_pixel(s)) // 2 * 2 + 1 for s in sizes]
 
     # increase box size from list until SNR is below threshold or spectrum changes significantly
@@ -228,7 +228,7 @@ def from_gaussian_moments(
         Observation from which the source is initialized.
     center: tuple
         central pixel of the source
-    box_sizes: list[int] or list[]
+    box_sizes: list[int] or list[SkyCoord]
         a list of box sizes to choose from
     min_snr: float
         minimum SNR of edge pixels (aggregated over all observation channel) to allow increase of box size
@@ -264,7 +264,6 @@ def from_gaussian_moments(
 
     # box_sizes are defined in pixel in the model frame
     # therefore need to convert back to skycoord and converte to pixel in obs frames
-
     centers = [obs_.frame.get_pixel(center) for obs_ in observations]
 
     try:
@@ -276,14 +275,13 @@ def from_gaussian_moments(
     
     assert len(box_sizes) > 0
     if frame.wcs is not None:
-        if not isinstance(box_sizes[0], SkyCoord):
+        if not u.get_physical_type(box_sizes[0]) == "angle":
             box_sizes = [frame.pixel_to_angle(size) for size in box_sizes]
 
     boxes = [make_bbox(obs_, center_, sizes=box_sizes, min_snr=min_snr, min_corr=min_corr) for
              obs_, center_ in zip(observations, centers)]
     moments = [standardized_moments(obs_, center_, bbox=bbox_) for obs_, center_, bbox_ in
                zip(observations, centers, boxes)]
-
     # flat lists of spectra, sorted as model frame channels
     spectra = jnp.concatenate([g[0, 0] for g in moments])
     channels = reduce(operator.add, [obs_.frame.channels for obs_ in observations])
