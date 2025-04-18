@@ -71,7 +71,7 @@ class StaticArraySpectrum(Spectrum):
 
     @property
     def shape(self):
-        return len(self.channelindex),
+        return len(self._channelindex),
 
 
 class TransientArraySpectrum(Spectrum):
