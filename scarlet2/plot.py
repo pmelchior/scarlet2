@@ -439,10 +439,7 @@ def observation(
         assert sky_coords is not None, "Provide sky_coords for labeled objects"
 
         for k, center in enumerate(sky_coords):
-            if hasattr(observation, "get_pixel"):
-                center_ = observation.get_pixel(center)
-            else:
-                center_ = center
+            center_ = observation.frame.get_pixel(center)
             ax[panel].text(*center_[::-1], k, **label_kwargs)
 
     panel += 1
@@ -904,10 +901,10 @@ def scene(
 
     if show_model:
         extent = scene.frame.bbox.get_extent()
-        if scene.frame.wcs is not None:
-            extent = observation.frame.get_pixel(
-                scene.frame.get_sky_coord(np.array([[extent[0], extent[1]], [extent[2], extent[3]]]))
-                ).flatten()
+        # if scene.frame.wcs is not None:
+        #     extent = scene.frame.get_pixel(
+        #         scene.frame.get_sky_coord(np.array([[extent[0], extent[1]], [extent[2], extent[3]]]))
+        #     ).flatten()
 
         if observation is not None:
             c = ChannelRenderer(scene.frame, observation.frame)
@@ -948,19 +945,12 @@ def scene(
             img_to_rgb(residual, norm=norm_, channel_map=channel_map, mask=mask),
             origin="lower",
         )
-        ax[panel].set_title("Residual", **title_kwargs)
+        ax[panel].set_title("Data - Model", **title_kwargs)
         panel += 1
 
     for k, src in enumerate(scene.sources):
-        start, stop = src.bbox.start[-2:][::-1], src.bbox.stop[-2:][::-1]
-        if scene.frame.wcs is not None:
-            start = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(start)))[0]
-            stop = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(stop)))[0]
-        points = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
-        box_coords = [
-            p for p in points
-        ]
-        
+        start, stop = src.bbox.spatial.start[::-1], src.bbox.spatial.stop[::-1]
+
         if add_boxes:
             panel = 0
             if show_model:
@@ -974,19 +964,21 @@ def scene(
                 ax[panel].add_artist(rect)
                 panel = 1
             if observation is not None:
+                start = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(start)))[0]
+                stop = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(stop)))[0]
+                box_coords = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
                 for panel in range(panel, panels):
                     poly = Polygon(box_coords, closed=True, **box_kwargs)
                     ax[panel].add_artist(poly)
 
         if add_labels:
             center = np.array(src.center)[::-1]
-            if scene.frame.wcs is not None:
-                center = observation.frame.get_pixel(scene.frame.get_sky_coord(center))[0]
             panel = 0
             if show_model:
                 ax[panel].text(*center, k, **label_kwargs)
                 panel = 1
             if observation is not None:
+                center = observation.frame.get_pixel(scene.frame.get_sky_coord(center))[0]
                 for panel in range(panel, panels):
                     ax[panel].text(
                         *center, k, **label_kwargs
