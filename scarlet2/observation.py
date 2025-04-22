@@ -9,9 +9,9 @@ from .renderer import (
     NoRenderer,
     ConvolutionRenderer,
     ChannelRenderer,
-    MultiresolutionRenderer
+    MultiresolutionRenderer,
+    AdjustToFrame,
 )
-
 
 class Observation(Module):
     """Content and definition of an observation"""
@@ -21,7 +21,7 @@ class Observation(Module):
     """Statistical weights (usually inverse variance) for :py:meth:`log_likelihood`"""
     frame: Frame
     """Metadata to describe what view of the sky `data` amounts to"""
-    renderer: (Renderer, eqx.nn.Sequential)
+    renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
     """Renderer to translate from the model frame the observation frame"""
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
@@ -100,6 +100,9 @@ class Observation(Module):
             # 1) collapse channels that are not needed
             if self.frame.channels != frame.channels:
                 renderers.append(ChannelRenderer(frame, self.frame))
+
+            if self.frame.bbox != frame.bbox:
+                renderers.append(AdjustToFrame(frame, self.frame))
 
             if self.frame.psf != frame.psf:
                 if frame.wcs != self.frame.wcs:
