@@ -1,18 +1,25 @@
+import astropy.io.fits as fits
 import astropy.units as u
 import jax.numpy as jnp
+from astropy.wcs import WCS
+from huggingface_hub import hf_hub_download
 from jax import vmap
 from numpy.testing import assert_allclose
 
 import scarlet2
 from scarlet2 import *
 from scarlet2.measure import get_scale
-from scarlet2.utils import import_scarlet_test_data
 
-import_scarlet_test_data()
-from scarlet_test_data import data_path
-import os
-import astropy.io.fits as fits
-from astropy.wcs import WCS
+# load test data from HSC and HST
+filename_hsc = hf_hub_download(repo_id="astro-data-lab/scarlet-test-data", filename="test_resampling/Cut_HSC1.fits.gz",
+                               repo_type="dataset")
+hsc_hdu = fits.open(filename_hsc)
+wcs_hsc = WCS(hsc_hdu[0].header)
+
+filename_hst = hf_hub_download(repo_id="astro-data-lab/scarlet-test-data", filename="test_resampling/Cut_HST1.fits.gz",
+                               repo_type="dataset")
+hst_hdu = fits.open(filename_hst)
+wcs_hst = WCS(hst_hdu[0].header)
 
 T0 = 30
 ellipticity = jnp.array((0.3,0.5))
@@ -52,7 +59,6 @@ def test_rotate_moments():
 
     # rotate moments computed on the original image
     g.rotate(a)
-    g.ellipticity
 
     assert_allclose(g.ellipticity, g2.ellipticity, rtol=1e-6)
 
@@ -73,19 +79,12 @@ def test_resize_moments():
 
 def test_wcs_transfer_moments():
 
-    # Load the HSC image WCS
-    obs_hdu = fits.open(os.path.join(data_path, "test_resampling", "Cut_HSC1.fits"))
-    wcs_hsc = WCS(obs_hdu[0].header)
-
-    # Load the HST image WCS
-    hst_hdu = fits.open(os.path.join(data_path, "test_resampling", "Cut_HST1.fits"))
-    wcs_hst = WCS(hst_hdu[0].header)
-
     # Mock a rotation of 90 deg counter-clockwise of the HST WCS 
     phi = 90 / 180 * jnp.pi # in rad
     R = jnp.array([[jnp.cos(phi), jnp.sin(phi)],
                    [-jnp.sin(phi), jnp.cos(phi)]])
 
+    wcs_hst = WCS(hst_hdu[0].header)  # need to recreate to change in the next step
     wcs_hst.wcs.pc = R @ wcs_hst.wcs.pc
     im_hst = jnp.rot90(morph())
 
@@ -110,21 +109,12 @@ def test_wcs_transfer_moments():
     assert_allclose(g1.ellipticity, g0.ellipticity, rtol=1e-2)
 
 def test_wcs_transfer_w_flip_moments():
-
-    # same as above with RA W->E instead of E->W convention in HST WCS
-    # Load the HSC image WCS
-    obs_hdu = fits.open(os.path.join(data_path, "test_resampling", "Cut_HSC1.fits"))
-    wcs_hsc = WCS(obs_hdu[0].header)
-
-    # Load the HST image WCS
-    hst_hdu = fits.open(os.path.join(data_path, "test_resampling", "Cut_HST1.fits"))
-    wcs_hst = WCS(hst_hdu[0].header)
-
-    # Mock a rotation of 90 deg counter-clockwise of the HST WCS 
+    # Mock a rotation of 90 deg counter-clockwise of the HST WCS
     phi = 90 / 180 * jnp.pi # in rad
     R = jnp.array([[jnp.cos(phi), jnp.sin(phi)],
                    [-jnp.sin(phi), jnp.cos(phi)]])
 
+    wcs_hst = WCS(hst_hdu[0].header)  # need to recreate to change in the next step
     wcs_hst.wcs.pc = R @ wcs_hst.wcs.pc
     wcs_hst.wcs.pc *= jnp.array([[-1], [1]])
     
@@ -152,20 +142,12 @@ def test_wcs_transfer_w_flip_moments():
     assert_allclose(g1.ellipticity, g0.ellipticity, rtol=1e-2)
 
 def test_wcs_transfer_moments_multichannels():
-
-    # Load the HSC image WCS
-    obs_hdu = fits.open(os.path.join(data_path, "test_resampling", "Cut_HSC1.fits"))
-    wcs_hsc = WCS(obs_hdu[0].header)
-
-    # Load the HST image WCS
-    hst_hdu = fits.open(os.path.join(data_path, "test_resampling", "Cut_HST1.fits"))
-    wcs_hst = WCS(hst_hdu[0].header)
-
-    # Mock a rotation of 90 deg counter-clockwise of the HST WCS 
+    # Mock a rotation of 90 deg counter-clockwise of the HST WCS
     phi = 90 / 180 * jnp.pi # in rad
     R = jnp.array([[jnp.cos(phi), jnp.sin(phi)],
                    [-jnp.sin(phi), jnp.cos(phi)]])
 
+    wcs_hst = WCS(hst_hdu[0].header)  # need to recreate to change in the next step
     wcs_hst.wcs.pc = R @ wcs_hst.wcs.pc
 
     nc = 5

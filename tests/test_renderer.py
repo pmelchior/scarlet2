@@ -1,45 +1,48 @@
-import os
 import warnings
 warnings.filterwarnings('ignore')
 
 import scarlet2
-from scarlet2.utils import import_scarlet_test_data
-import_scarlet_test_data()
-from scarlet_test_data import data_path, tests_path
-
 import astropy.io.fits as fits
 from astropy.wcs import WCS
 
 import jax
 import jax.numpy as jnp
+from huggingface_hub import hf_hub_download
 
 # Load the HSC image data
-obs_hdu = fits.open(os.path.join(data_path, "test_resampling", "Cut_HSC1.fits"))
-                    
+# load test data from HSC and HST
+filename = hf_hub_download(repo_id="astro-data-lab/scarlet-test-data", filename="test_resampling/Cut_HSC1.fits.gz",
+                           repo_type="dataset")
+obs_hdu = fits.open(filename)
 data_hsc = jnp.array(obs_hdu[0].data, jnp.float32)
 wcs_hsc = WCS(obs_hdu[0].header)
 channels_hsc = ['g','r','i','z','y']
+obs_hdu.close()
 
 # Load the HSC PSF data
-psf_hsc_data  = fits.open(os.path.join(data_path, "test_resampling", "PSF_HSC.fits"))[0].data.astype('float32')
-                    
+filename = hf_hub_download(repo_id="astro-data-lab/scarlet-test-data", filename="test_resampling/PSF_HSC.fits.gz",
+                           repo_type="dataset")
+psf_hsc_data = jnp.array(fits.open(filename)[0].data, jnp.float32)
 Np1, Np2 = psf_hsc_data[0].shape
 psf_hsc_data = jnp.pad(psf_hsc_data, ((0,0), (1,0), (1,0)))
 psf_hsc = scarlet2.ArrayPSF(psf_hsc_data)
 
 # Load the HST image data
-hst_hdu = fits.open(os.path.join(data_path, "test_resampling", "Cut_HST1.fits"))
-
-data_hst = jnp.array(hst_hdu[0].data, jnp.float32)
-wcs_hst = WCS(hst_hdu[0].header)
+filename = hf_hub_download(repo_id="astro-data-lab/scarlet-test-data", filename="test_resampling/Cut_HST1.fits.gz",
+                           repo_type="dataset")
+obs_hdu = fits.open(filename)
+data_hst = jnp.array(obs_hdu[0].data, jnp.float32)
+wcs_hst = WCS(obs_hdu[0].header)
 channels_hst = ['F814W']
+obs_hdu.close()
 
 # Load the HST PSF data
-psf_hst = fits.open(os.path.join(data_path, "test_resampling", "PSF_HST.fits"))[0].data
-psf_hst = jnp.array(psf_hst[None, :, :], jnp.float32)
+filename = hf_hub_download(repo_id="astro-data-lab/scarlet-test-data", filename="test_resampling/PSF_HST.fits.gz",
+                           repo_type="dataset")
+psf_hst = jnp.array(fits.open(filename)[0].data, jnp.float32)
+psf_hst = psf_hst[None, :, :]
 psf_hst = jnp.pad(psf_hst, ((0, 0), (1, 0), (1, 0)))
 psf_hst_ = jnp.repeat(psf_hst, 5, 0)
-
 psf_hst = scarlet2.ArrayPSF(psf_hst_)
 
 # Scale the HST data
@@ -71,6 +74,14 @@ hst_frame = scarlet2.Frame(
                 wcs=wcs_hst
 )
 
+# compare to galsim
+# Perform the same operations with galsim
+filename = hf_hub_download(repo_id="astro-data-lab/scarlet-test-data",
+                           filename="test_resampling/galsim_hst_to_hsc_resolution.npy",
+                           repo_type="dataset")
+out_galsim = jnp.load(filename)
+
+
 def test_hst_to_hsc_against_galsim():
 
     # Initializing renderers
@@ -78,9 +89,6 @@ def test_hst_to_hsc_against_galsim():
 
     # Deconvolution, Resampling and Reconvolution
     hst_resampled = obs_hsc.render(data_hst)
-
-    # Perform the same operations with galsim 
-    out_galsim = jnp.load(os.path.join(tests_path, "galsim_hst_to_hsc_resolution.npy"))
 
     assert jnp.allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
 
@@ -127,9 +135,6 @@ def test_hst_to_hsc_against_galsim_rotated_wcs():
     # Deconvolution, Resampling and Reconvolution
     hst_resampled = obs_hsc.render(data_hst_rot)
 
-    # Perform the same operations with galsim 
-    out_galsim = jnp.load(os.path.join(tests_path, "galsim_hst_to_hsc_resolution.npy"))
-
     assert jnp.allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
 
 
@@ -148,8 +153,6 @@ def test_no_channel_axis_in_obs_psf():
     # Deconvolution, Resampling and Reconvolution
     hst_resampled = obs_hsc.render(data_hst)
 
-    # Perform the same operations with galsim 
-    out_galsim = jnp.load(os.path.join(tests_path, "galsim_hst_to_hsc_resolution.npy"))
     assert jnp.allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
 
 

@@ -1,4 +1,4 @@
-scarlet-test-data @ git+https://github.com/astro-data-lab/scarlet-test-data@main
+huggingface_hub
 sphinx-issues
 myst-nb
 sphinx-book-theme
