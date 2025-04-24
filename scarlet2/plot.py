@@ -964,8 +964,8 @@ def scene(
                 ax[panel].add_artist(rect)
                 panel = 1
             if observation is not None:
-                start = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(start)))[0]
-                stop = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(stop)))[0]
+                start = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(start))).flatten()
+                stop = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(stop))).flatten()
                 box_coords = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
                 for panel in range(panel, panels):
                     poly = Polygon(box_coords, closed=True, **box_kwargs)
@@ -978,7 +978,7 @@ def scene(
                 ax[panel].text(*center, k, **label_kwargs)
                 panel = 1
             if observation is not None:
-                center = observation.frame.get_pixel(scene.frame.get_sky_coord(center))[0]
+                center = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
                 for panel in range(panel, panels):
                     ax[panel].text(
                         *center, k, **label_kwargs

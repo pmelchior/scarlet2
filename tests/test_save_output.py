@@ -3,17 +3,16 @@ import os
 import h5py
 import jax
 import jax.numpy as jnp
+from huggingface_hub import hf_hub_download
 
 from scarlet2 import *
-from scarlet2.utils import import_scarlet_test_data
-
-import_scarlet_test_data()
-from scarlet_test_data import data_path
 from scarlet2.io import model_to_h5, model_from_h5
 
 
 def test_save_output():
-    file = jnp.load(os.path.join(data_path, "hsc_cosmos_35.npz"))
+    filename = hf_hub_download(repo_id="astro-data-lab/scarlet-test-data", filename="hsc_cosmos_35.npz",
+                               repo_type="dataset")
+    file = jnp.load(filename)
     data = jnp.asarray(file["images"])
     centers = [(src["y"], src["x"]) for src in file["catalog"]]  # Note: y/x convention!
     weights = jnp.asarray(1 / file["variance"])
