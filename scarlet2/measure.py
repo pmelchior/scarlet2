@@ -82,6 +82,29 @@ def centroid(component):
     return jnp.array(c)
 
 
+def fwhm(component):
+    """Determine the Full-width at half maximum in pixels
+
+    Parameters
+    ----------
+    component: py:class:`~scarlet2.Component` or array
+        Component to analyze or its hyperspectral model
+
+    Returns
+    -------
+    float
+    """
+    if isinstance(component, Component):
+        model = component()
+    else:
+        model = component
+    peak_pixel = max_pixel(model)[-2:]  # only spatial location
+    peak_value = model[:, peak_pixel[0], peak_pixel[1]]
+    half_value = peak_value / 2
+    num_pixels = jnp.count_nonzero(model >= half_value[:, None, None], axis=(1, 2))
+    diameter = 2 * jnp.sqrt(num_pixels) / jnp.pi
+    return diameter
+
 def snr(component, observations):
     """Determine SNR with `component` as weight function
 
