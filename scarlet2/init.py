@@ -3,6 +3,7 @@
 import operator
 from functools import reduce
 
+import astropy.units as u
 import jax.numpy as jnp
 
 from . import Scenery
@@ -11,8 +12,6 @@ from .bbox import Box
 from .morphology import GaussianMorphology
 from .observation import Observation
 
-from astropy.coordinates import SkyCoord
-import astropy.units as u
 
 # function to calculate values of perimeter pixels
 def _get_edge_pixels(img, box):
@@ -55,10 +54,7 @@ def make_bbox(obs, center_pix, sizes=[11, 17, 25, 35, 47, 61, 77], min_snr=20, m
     assert isinstance(obs, Observation)
     assert obs.weights is not None, "Observation weights are required"
     assert obs.frame.bbox.spatial.contains(center_pix), f"Center pixel {center_pix} not contained in observation"
-
     assert len(sizes) > 0
-    if u.get_physical_type(sizes[0]) == "angle":
-        sizes = [int(obs.frame.u_to_pixel(s)) // 2 * 2 + 1 for s in sizes]
 
     # increase box size from list until SNR is below threshold or spectrum changes significantly
     peak_spectrum = pixel_spectrum(obs, center_pix, correct_psf=True)
@@ -202,13 +198,7 @@ def standardized_moments(
 def from_gaussian_moments(
         obs,
         center,
-        box_sizes = [1.848*u.arcsec,
-                     2.856*u.arcsec,
-                     4.200*u.arcsec,
-                     5.880*u.arcsec,
-                     7.896*u.arcsec,
-                     10.24*u.arcsec,
-                     12.93*u.arcsec],
+        box_sizes=None,
         min_snr=20,
         min_corr=0.99,
         min_value=1e-6,
@@ -227,17 +217,17 @@ def from_gaussian_moments(
     obs: :py:class:`~scarlet2.Observation` or list
         Observation from which the source is initialized.
     center: tuple
-        central pixel of the source
-    box_sizes: list[int] or list[SkyCoord]
-        a list of box sizes to choose from
+        Central pixel of the source
+    box_sizes: None, list[int] or list[SkyCoord]
+        A list of box sizes to choose from. If `None`, chooses multiples of the PSF FWHM from `obs`.
     min_snr: float
-        minimum SNR of edge pixels (aggregated over all observation channel) to allow increase of box size
+        Minimum SNR of edge pixels (aggregated over all observation channel) to allow increase of box size
     min_corr: float
-        minimum correlation coefficient between center and edge color to allow increase of box size
+        Minimum correlation coefficient between center and edge color to allow increase of box size
     min_value: float
-        minimum pixel value (useful to set to > 0 for positivity constraints)
+        Minimum pixel value (useful to set to > 0 for positivity constraints)
     max_value: float
-        minimum pixel value (useful to set to < 1 for unit interval constraints)
+        Minimum pixel value (useful to set to < 1 for unit interval constraints)
 
     Returns
     -------
@@ -255,6 +245,13 @@ def from_gaussian_moments(
     standardized_moments: Computes 2nd moments for source in bounding box
     """
 
+    try:
+        frame = Scenery.scene.frame
+    except AttributeError:
+        print("from_gaussian_moments() can only be called within the context of a Scene")
+        print("Use 'with Scene(frame) as scene: Source(...)'")
+        raise
+
     # TODO: implement with source footprints given for each observation
     # get moments from all channels in all observations
     if not isinstance(obs, (list, tuple)):
@@ -262,51 +259,49 @@ def from_gaussian_moments(
     else:
         observations = obs
 
-    # box_sizes are defined in pixel in the model frame
-    # therefore need to convert back to skycoord and converte to pixel in obs frames
+    # centers and box_sizes are defined in pixel in the model frame
+    # therefore need to convert back to skycoord and convert to pixel in obs frames
     centers = [obs_.frame.get_pixel(center) for obs_ in observations]
-
-    try:
-        frame = Scenery.scene.frame
-    except AttributeError:
-        print("Compact morphology can only be created within the context of a Scene")
-        print("Use 'with Scene(frame) as scene: Source(...)'")
-        raise
-    
-    assert len(box_sizes) > 0
-    if frame.wcs is not None:
-        if not u.get_physical_type(box_sizes[0]) == "angle":
-            box_sizes = [frame.pixel_to_angle(size) for size in box_sizes]
+    if box_sizes is None:
+        # growing sizes in units of the observed PSF
+        psf_sizes = [measure.fwhm(obs.frame.psf()).min() for obs in observations]  # in obs pixels
+        magic_number = lambda i: 6. if i == 0 else 1.5 * magic_number(i - 1)
+        # NOTE: Not forced to be odd
+        box_sizes = [[int(psf_size * magic_number(i)) for i in range(10)] for psf_size in psf_sizes]
     else:
+        assert len(box_sizes) > 0
         if u.get_physical_type(box_sizes[0]) == "angle":
-            box_sizes = [11, 17, 25, 35, 47, 61, 77]
-            print("Scene frame has no WCS, box_sizes in from_gaussian_moments needs to be explicitly defined, using by default box_sizes=[11, 17, 25, 35, 47, 61, 77] pixels")
-    
-    boxes = [make_bbox(obs_, center_, sizes=box_sizes, min_snr=min_snr, min_corr=min_corr) for
-             obs_, center_ in zip(observations, centers)]
+            assert frame.wcs is not None, "Boxsizes are given as angle, but model frame does not have WCS"
+            box_sizes = [[obs.frame.pixel_to_angle(size) for size in box_sizes] for obs in observations]
+
+    boxes = [make_bbox(obs_, center_, sizes=sizes_, min_snr=min_snr, min_corr=min_corr) for
+             obs_, center_, sizes_ in zip(observations, centers, box_sizes)]
     moments = [standardized_moments(obs_, center_, bbox=bbox_) for obs_, center_, bbox_ in
                zip(observations, centers, boxes)]
+
     # flat lists of spectra, sorted as model frame channels
     spectra = jnp.concatenate([g[0, 0] for g in moments])
     channels = reduce(operator.add, [obs_.frame.channels for obs_ in observations])
     spectrum = _sort_spectra(spectra, channels)
 
     # average over all channels
-    g = moments[0]
+    g = moments[0]  # moments from first observation
     for key in g.keys():
         g[key] = jnp.concatenate([g[key] for g in moments])  # combine all observations
         g[key] = jnp.median(g[key])  # this is not SNR weighted nor consistent aross different moments, but works(?)
 
     # average box size across observations
     if frame.wcs is not None:
-        size = jnp.median(
+        size = jnp.mean(
             jnp.array(
-                [frame.u_to_pixel(obs.frame.pixel_to_angle(max(box.spatial.shape)))//2*2+1 
+                [frame.u_to_pixel(obs.frame.pixel_to_angle(max(box.spatial.shape)))
                 for box, obs in zip(boxes, observations)
-                ]))
+                 ]
+            )
+        ).astype(int)
     else:
-        size = jnp.median(jnp.array([max(box.spatial.shape) for box in boxes]))
-    
+        size = jnp.mean(jnp.array([max(box.spatial.shape) for box in boxes])).astype(int)
+
     # create morphology and evaluate at center
     morph = GaussianMorphology.from_moments(g, shape=(size, size))
     morph = morph()
