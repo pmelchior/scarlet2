@@ -1,4 +1,3 @@
-huggingface_hub
 sphinx-issues
 myst-nb
 sphinx-book-theme
