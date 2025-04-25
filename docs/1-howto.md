@@ -6,4 +6,5 @@
 howto/sampling
 howto/priors
 howto/multiresolution
+howto/timedomain
 ```
