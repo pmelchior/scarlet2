@@ -272,7 +272,10 @@ def from_gaussian_moments(
         assert len(box_sizes) > 0
         if u.get_physical_type(box_sizes[0]) == "angle":
             assert frame.wcs is not None, "Boxsizes are given as angle, but model frame does not have WCS"
-            box_sizes = [[obs.frame.pixel_to_angle(size) for size in box_sizes] for obs in observations]
+            box_sizes = [[obs.frame.u_to_pixel(size) for size in box_sizes] for obs in observations]
+        else:
+            # assume that all pixels are in proper observed frame
+            box_sizes = [box_sizes for obs in observations]
 
     boxes = [make_bbox(obs_, center_, sizes=sizes_, min_snr=min_snr, min_corr=min_corr) for
              obs_, center_, sizes_ in zip(observations, centers, box_sizes)]
