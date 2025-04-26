@@ -379,6 +379,7 @@ def observation(
         sky_coords=None,
         show_psf=False,
         add_labels=True,
+        split_channels=False,
         fig_kwargs=dict(),
         title_kwargs=dict(),
         label_kwargs={"color": "w", "ha": "center", "va": "center"},
@@ -401,6 +402,8 @@ def observation(
         Whether to plot a panel with the PSF model of `observation` centered in the middle
     add_labels: bool, optional
         Whether to plot a text label with the running number for each of the sources in `sky_coords`
+    split_channels: bool, optional
+        Whether to split the observation into separate channels
     fig_kwargs: dict, optional
         Additional arguments for `mpl.subplots`
     title_kwargs: dict, optional
@@ -412,57 +415,71 @@ def observation(
     -------
     mpl.Figure
     """
+    if show_psf:
+        assert observation.frame.psf is not None, "show_psf requires observation.frame.psf to be set"
+        psf_model = observation.frame.psf()
+
+    rows = len(observation.frame.channels) if split_channels else 1
     panels = 1 if show_psf is False else 2
     figsize = fig_kwargs.pop("figsize", None)
     if figsize is None:
-        figsize = (panel_size * panels, panel_size)
-    fig, ax = plt.subplots(1, panels, figsize=figsize, **fig_kwargs)
+        figsize = (panel_size * panels, panel_size * rows)
+    fig, ax = plt.subplots(rows, panels, figsize=figsize, squeeze=False, **fig_kwargs)
     if not hasattr(ax, "__iter__"):
         ax = (ax,)
 
-    # Mask any pixels with zero weight in all bands
-    mask = np.sum(observation.weights, axis=0) == 0
-    # if there are no masked pixels, do not use a mask
-    if np.all(mask == 0):
-        mask = None
-
-    panel = 0
     extent = observation.frame.bbox.get_extent()
-    ax[panel].imshow(
-        img_to_rgb(observation.data, norm=norm, channel_map=channel_map, mask=mask),
-        extent=extent,
-        origin="lower",
-    )
-    ax[panel].set_title("Observation", **title_kwargs)
 
-    if add_labels:
-        assert sky_coords is not None, "Provide sky_coords for labeled objects"
+    for row in range(rows):
+        if split_channels:
+            data = observation.data[row]
+            mask = observation.weights[row] == 0
+            name = observation.frame.channels[row]
+            if show_psf:
+                psf = psf_model[row]
+                # make PSF as bright as the brightest pixel of the observation
+                psf *= data.max() / psf.max()
+        else:
+            data = observation.data
+            # Mask any pixels with zero weight in all channels
+            mask = np.sum(observation.weights, axis=0) == 0
+            name = ""
+            if show_psf:
+                psf = psf_model
+                # make PSF as bright as the brightest pixel of the observation
+                psf *= observation.data.mean(axis=0).max() / psf_model.mean(axis=0).max()
 
-        for k, center in enumerate(sky_coords):
-            center_ = observation.frame.get_pixel(center)
-            ax[panel].text(*center_[::-1], k, **label_kwargs)
+        # if there are no masked pixels, do not use a mask
+        if np.all(mask == 0):
+            mask = None
 
-    panel += 1
-    if show_psf:
-        psf_image = np.zeros(observation.data.shape)
+        panel = 0
+        ax[row, panel].imshow(
+            img_to_rgb(data, norm=norm, channel_map=channel_map, mask=mask),
+            extent=extent,
+            origin="lower",
+        )
+        ax[row, panel].set_title(f"Observation {name}", **title_kwargs)
 
-        if observation.frame.psf is not None:
-            psf_model = observation.frame.psf.morphology
-            # make PSF as bright as the brightest pixel of the observation
-            psf_model *= (
-                observation.data.mean(axis=0).max() / psf_model.mean(axis=0).max()
-            )
+        if add_labels and sky_coords is not None:
+            for k, center in enumerate(sky_coords):
+                center_ = observation.frame.get_pixel(center)
+                ax[row, panel].text(*center_[::-1], k, **label_kwargs)
+
+        if show_psf:
+            panel = 1
+            psf_image = np.zeros(data.shape)
             # insert into middle of "blank" observation
             full_box = Box(psf_image.shape)
             shift = tuple(
-                psf_image.shape[c] // 2 - psf_model.shape[c] // 2
-                for c in range(full_box.D)
+                psf_image.shape[d] // 2 - psf.shape[d] // 2
+                for d in range(full_box.D)
             )
-            model_box = Box(psf_model.shape) + shift
-            model_box.insert_into(psf_image, psf_model)
+            model_box = Box(psf.shape) + shift
+            model_box.insert_into(psf_image, psf)
             # slices = scarlet.box.overlapped_slices
-        ax[panel].imshow(img_to_rgb(psf_image, norm=norm), origin="lower")
-        ax[panel].set_title("PSF", **title_kwargs)
+            ax[row, panel].imshow(img_to_rgb(psf_image, norm=norm), origin="lower")
+            ax[row, panel].set_title("PSF", **title_kwargs)
 
     fig.tight_layout()
     return fig
@@ -753,8 +770,10 @@ def sources(
                 ax[k - skipped][panel].plot(*center, **marker_kwargs)
             panel += 1
 
+        if show_rendered or show_observed:
+            extent = observation.frame.bbox.get_extent()
+
         # model in observation frame
-        extent = observation.frame.bbox.get_extent()
         if show_rendered:
             model = scene.evaluate_source(src)
             model_ = observation.render(model)
@@ -817,7 +836,7 @@ def scene(
         show_residual=False,
         add_labels=True,
         add_boxes=False,
-        linear=True,
+        split_channels=False,
         fig_kwargs=dict(),
         title_kwargs=dict(),
         label_kwargs={"color": "w", "ha": "center", "va": "center"},
@@ -847,9 +866,8 @@ def scene(
         Whether each source is labeled with its numerical index in the source list
     add_boxes: bool
         Whether each source box is shown
-    linear: bool
-        Whether to display the scene in a single line (`True`) or
-        on multiple lines (`False`).
+    split_channels: bool
+        Whether to split the observation into separate channels
     fig_kwargs: dict
         kwargs for plt.figure()
     title_kwargs: dict
@@ -874,115 +892,118 @@ def scene(
                 observation is not None
         ), "Provide matched observation to show observed frame"
 
+    rows = len(observation.frame.channels) if split_channels else 1
     panels = sum((show_model, show_observed, show_rendered, show_residual))
     figsize = fig_kwargs.pop("figsize", None)
-    if linear:
-        if figsize is None:
-            figsize = (panel_size * panels, panel_size)
-        fig, ax = plt.subplots(1, panels, figsize=figsize, **fig_kwargs)
-    else:
-        columns = int(np.ceil(panels / 2))
-        if figsize is None:
-            figsize = (panel_size * columns, panel_size * 2)
-        fig = plt.figure(figsize=figsize, **fig_kwargs)
-        ax = [fig.add_subplot(2, columns, n + 1) for n in range(panels)]
-    if not hasattr(ax, "__iter__"):
-        ax = (ax,)
+    if figsize is None:
+        figsize = (panel_size * panels, panel_size * rows)
+    fig, ax = plt.subplots(rows, panels, figsize=figsize, squeeze=False, **fig_kwargs)
 
-    # Mask any pixels with zero weight in all bands
-    if observation is not None:
-        mask = np.sum(observation.weights, axis=0) == 0
-        # if there are no masked pixels, do not use a mask
-        if np.all(mask == 0):
-            mask = None
-
-    panel = 0
     model = scene()
-
-    if show_model:
-        extent = scene.frame.bbox.get_extent()
-        # if scene.frame.wcs is not None:
-        #     extent = scene.frame.get_pixel(
-        #         scene.frame.get_sky_coord(np.array([[extent[0], extent[1]], [extent[2], extent[3]]]))
-        #     ).flatten()
-
-        if observation is not None:
-            c = ChannelRenderer(scene.frame, observation.frame)
-            model_ = c(model)
-        else:
-            model_ = model
-        model_img = ax[panel].imshow(
-            img_to_rgb(model_, norm=norm, channel_map=channel_map),
-            extent=extent,
-            origin="lower",
-        )
-        ax[panel].set_title("Model", **title_kwargs)
-        panel += 1
-
     if show_rendered or show_residual:
-        model = observation.render(model)
+        model_rendered = observation.render(model)
+    if show_model and observation is not None:
+        c = ChannelRenderer(scene.frame, observation.frame)
+        model = c(model)
+    if show_observed or show_residual:
+        data = observation.data
+        mask = observation.weights == 0
 
-    if show_rendered:
-        rendered_img = ax[panel].imshow(
-            img_to_rgb(model, norm=norm, channel_map=channel_map, mask=mask),
-            origin="lower",
-        )
-        ax[panel].set_title("Model Rendered", **title_kwargs)
-        panel += 1
+    for row in range(rows):
+        if split_channels:
+            sel = row
+            name = observation.frame.channels[row]
+            channel_map = None
+        else:
+            sel = slice(None)
+            name = ""
 
-    if show_observed:
-        observed_img = ax[panel].imshow(
-            img_to_rgb(observation.data, norm=norm, channel_map=channel_map, mask=mask),
-            origin="lower",
-        )
-        ax[panel].set_title("Observation", **title_kwargs)
-        panel += 1
+        panel = 0
+        if show_model:
+            extent = scene.frame.bbox.get_extent()
+            # if scene.frame.wcs is not None:
+            #     extent = scene.frame.get_pixel(
+            #         scene.frame.get_sky_coord(np.array([[extent[0], extent[1]], [extent[2], extent[3]]]))
+            #     ).flatten()
 
-    if show_residual:
-        residual = observation.data - model
-        norm_ = LinearPercentileNorm(residual)
-        residual_img = ax[panel].imshow(
-            img_to_rgb(residual, norm=norm_, channel_map=channel_map, mask=mask),
-            origin="lower",
-        )
-        ax[panel].set_title("Data - Model", **title_kwargs)
-        panel += 1
+            model_img = ax[row, panel].imshow(
+                img_to_rgb(model[sel], norm=norm, channel_map=channel_map),
+                extent=extent,
+                origin="lower",
+            )
+            ax[row, panel].set_title(f"Model {name}", **title_kwargs)
+            panel += 1
 
-    for k, src in enumerate(scene.sources):
-        start, stop = src.bbox.spatial.start[::-1], src.bbox.spatial.stop[::-1]
+        if show_rendered:
+            rendered_img = ax[row, panel].imshow(
+                img_to_rgb(model_rendered[sel], norm=norm, channel_map=channel_map),
+                origin="lower",
+            )
+            ax[row, panel].set_title("Model Rendered", **title_kwargs)
+            panel += 1
 
-        if add_boxes:
-            panel = 0
-            if show_model:
-                extent = [start[0], stop[0], start[1], stop[1]]
-                rect = Rectangle(
-                    (extent[0], extent[2]),
-                    extent[1] - extent[0],
-                    extent[3] - extent[2],
-                    **box_kwargs
-                )
-                ax[panel].add_artist(rect)
-                panel = 1
-            if observation is not None:
-                start = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(start))).flatten()
-                stop = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(stop))).flatten()
-                box_coords = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
-                for panel in range(panel, panels):
-                    poly = Polygon(box_coords, closed=True, **box_kwargs)
-                    ax[panel].add_artist(poly)
+        if show_observed or show_rendered:
+            if split_channels:
+                mask_ = mask[sel]
+            else:
+                # Mask any pixels with zero weight in all channels
+                mask_ = np.sum(mask, axis=0) > 0
+            if np.all(mask_ == 0):
+                mask_ = None
 
-        if add_labels:
-            center = np.array(src.center)[::-1]
-            panel = 0
-            if show_model:
-                ax[panel].text(*center, k, **label_kwargs)
-                panel = 1
-            if observation is not None:
-                center = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
-                for panel in range(panel, panels):
-                    ax[panel].text(
-                        *center, k, **label_kwargs
+        if show_observed:
+            observed_img = ax[row, panel].imshow(
+                img_to_rgb(data[sel], norm=norm, channel_map=channel_map, mask=mask_),
+                origin="lower",
+            )
+            ax[row, panel].set_title("Observation", **title_kwargs)
+            panel += 1
+
+        if show_residual:
+            residual = data[sel] - model_rendered[sel]
+            norm_ = LinearPercentileNorm(residual)
+            residual_img = ax[row, panel].imshow(
+                img_to_rgb(residual, norm=norm_, channel_map=channel_map, mask=mask_),
+                origin="lower",
+            )
+            ax[row, panel].set_title("Data - Model", **title_kwargs)
+            panel += 1
+
+        for k, src in enumerate(scene.sources):
+            start, stop = src.bbox.spatial.start[::-1], src.bbox.spatial.stop[::-1]
+
+            if add_boxes:
+                panel = 0
+                if show_model:
+                    extent = [start[0], stop[0], start[1], stop[1]]
+                    rect = Rectangle(
+                        (extent[0], extent[2]),
+                        extent[1] - extent[0],
+                        extent[3] - extent[2],
+                        **box_kwargs
                     )
+                    ax[row, panel].add_artist(rect)
+                    panel = 1
+                if observation is not None:
+                    start = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(start))).flatten()
+                    stop = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(stop))).flatten()
+                    box_coords = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
+                    for panel in range(panel, panels):
+                        poly = Polygon(box_coords, closed=True, **box_kwargs)
+                        ax[row, panel].add_artist(poly)
+
+            if add_labels:
+                center = np.array(src.center)[::-1]
+                panel = 0
+                if show_model:
+                    ax[row, panel].text(*center, k, **label_kwargs)
+                    panel = 1
+                if observation is not None:
+                    center = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
+                    for panel in range(panel, panels):
+                        ax[row, panel].text(
+                            *center, k, **label_kwargs
+                        )
 
     fig.tight_layout()
 

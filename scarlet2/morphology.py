@@ -209,9 +209,9 @@ class StarletMorphology(Morphology):
     """
     coeffs: jnp.ndarray
     """Starlet coefficients"""
-    l1_thresh: float
+    l1_thresh: float = eqx.field(default=0)
     """L1 threshold for coefficient to create sparse representation"""
-    positive: bool
+    positive: bool = eqx.field(default=True)
     """Whether the coefficients are restricted to non-negative values"""
 
     def __call__(self, **kwargs):
