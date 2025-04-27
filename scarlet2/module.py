@@ -141,8 +141,7 @@ class Parameter:
         chunks = []
         for name in ["name", "node", "constraint", "prior", "stepsize"]:
             field = getattr(self, name)
-            if name == "node" and isinstance(field, jax.Array):
-                field = eqx._pretty_print._pformat_array(field, short_arrays=True)
+            field = eqx.tree_pformat(field)
             chunks.append(f"  {name}={field}")
         inner = ",\n".join(chunks)
         mess = f"{self.__class__.__name__}(\n{inner}\n)"
