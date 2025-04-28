@@ -111,7 +111,7 @@ class Frame(eqx.Module):
         """
 
         if pixel is None:
-            y, x = jnp.indices(self.bbox.shape[-2:], dtype="float32")
+            y, x = jnp.indices(self.bbox.spatial.shape, dtype="float32")
             pixel = jnp.stack((y.flatten(), x.flatten()), axis=1)
 
         ra_dec = self.get_sky_coord(pixel)
@@ -247,13 +247,13 @@ class Frame(eqx.Module):
         for c, obs in enumerate(observations):
 
             obs_coord = obs.frame.convert_pixel_to(model_frame)
-            y_min = jnp.floor(jnp.min(obs_coord[:, 0]))
-            x_min = jnp.floor(jnp.min(obs_coord[:, 1]))
-            y_max = jnp.ceil(jnp.max(obs_coord[:, 0]))
-            x_max = jnp.ceil(jnp.max(obs_coord[:, 1]))
+            # round coordinate to nearest integer (use python, not jnp)
+            minmax_int = lambda x: (int(f) for f in jnp.round(jnp.sort(x)[jnp.array([0, -1])]))
+            y_min, y_max = minmax_int(obs_coord[:, 0])
+            x_min, x_max = minmax_int(obs_coord[:, 1])
 
-            this_box = Box.from_bounds((int(y_min), int(y_max) + 1), (int(x_min), int(x_max) + 1))
-            
+            # +1 because Box.shape is a length, not a coordinate
+            this_box = Box.from_bounds((y_min, y_max + 1), (x_min, x_max + 1))
             if c == 0:
                 model_box = this_box
             else:
@@ -261,7 +261,7 @@ class Frame(eqx.Module):
                     model_box |= this_box
                 else:
                     model_box &= this_box
-                    
+
         frame_shape = (len(channels),) + model_box.shape
         frame_origin = (0, ) + model_box.origin
         model_frame = Frame(
