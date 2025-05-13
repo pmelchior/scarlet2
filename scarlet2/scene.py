@@ -230,7 +230,7 @@ class Scene(Module):
             The scene model with updated parameters
         """
         try:
-            import tqdm
+            from tqdm.auto import trange
             import optax
             import optax._src.base as base
             from numpyro.distributions.transforms import biject_to
@@ -285,7 +285,7 @@ class Scene(Module):
         else:
             opt_state = optim.init(eqx.filter(scene, filter_spec))
 
-        with tqdm.trange(max_iter, disable=not progress_bar) as t:
+        with trange(max_iter, disable=not progress_bar) as t:
             for step in t:
                 # optimizer step
                 scene, loss, opt_state, convergence = _make_step(scene, observations, parameters, optim, opt_state,
