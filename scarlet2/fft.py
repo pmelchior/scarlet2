@@ -157,7 +157,6 @@ def _kspace_op(
                 image.shape, kernel.shape, padding=padding, axes=axes
             )
         kernel_fft = transform(kernel, fft_shape, axes=axes)
-
     image_fft = transform(image, fft_shape, axes=axes)
     image_fft_ = f(image_fft, kernel_fft)
     if return_fft:

@@ -1,6 +1,7 @@
 import astropy.units as u
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 import jax.scipy
 
 from . import Scenery
@@ -19,7 +20,7 @@ class Morphology(Module):
 
 class ProfileMorphology(Morphology):
     """Base class for morpholgies based on a radial profile"""
-    size: float
+    size: jnp.ndarray
     """Size of the profile
     
     Can be given as an astropy angle, which will be transformed with the WCS of the current
@@ -37,18 +38,29 @@ class ProfileMorphology(Morphology):
                 print("`size` defined in astropy units can only be used within the context of a Scene")
                 print("Use 'with Scene(frame) as scene: (...)'")
                 raise
-
-        self.size = size
+        if isinstance(size, (float, int)):
+            self.size = jnp.array([size])
+        else:
+            self.size = size
         self.ellipticity = ellipticity
 
+        
         # default shape: square 10x size
         if shape is None:
             # explicit call to int() to avoid bbox sizes being jax-traced
-            size = int(jnp.ceil(10 * self.size))
+            if isinstance(self.size, (list, tuple, np.ndarray, jnp.ndarray)):
+                size = int(max(jnp.ceil(10 * self.size)))
+            else:
+                size = int(jnp.ceil(10 * self.size))
+            
             # odd shapes for unique center pixel
             if size % 2 == 0:
                 size += 1
-            shape = (size, size)
+            if isinstance(self.size, (list, tuple, np.ndarray, jnp.ndarray)):
+                shape = (len(self.size), size, size)
+            else:
+                shape = (1, size, size)
+            
         self._shape = shape
 
     @property
@@ -101,12 +113,13 @@ class GaussianMorphology(ProfileMorphology):
         return jnp.exp(-R2 / 2)
 
     def __call__(self, delta_center=jnp.zeros(2)):
-
         # faster circular 2D Gaussian: instead of N^2 evaluations, use outer product of 2 1D Gaussian evals
         if self.ellipticity is None:
             _Y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) + delta_center[-2]
             _X = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) + delta_center[-1]
 
+            _Y = jnp.repeat(_Y[None,...], len(self.size), 0)
+            _X = jnp.repeat(_X[None,...], len(self.size), 0)
             # with pixel integration
             f = lambda x, s: 0.5 * (
                     1 - jax.scipy.special.erfc((0.5 - x) / jnp.sqrt(2) / s) +
@@ -115,7 +128,7 @@ class GaussianMorphology(ProfileMorphology):
             # # without pixel integration
             # f = lambda x, s: jnp.exp(-(x ** 2) / (2 * s ** 2)) / (jnp.sqrt(2 * jnp.pi) * s)
 
-            return jnp.outer(f(_Y, self.size), f(_X, self.size))
+            return jax.vmap(jnp.outer)(f(_Y, self.size[...,None]), f(_X, self.size[...,None]))
 
         else:
             return super().__call__(delta_center)
