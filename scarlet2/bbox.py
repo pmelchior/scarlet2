@@ -47,7 +47,7 @@ class Box(eqx.Module):
         bbox: Box
             A new box bounded by the input bounds.
         """
-        shape = tuple(jnp.max(jnp.stack([jnp.zeros(()), cmax - cmin])) for cmin, cmax in bounds)
+        shape = tuple(max(0., cmax - cmin) for cmin, cmax in bounds)
         origin = (cmin for cmin, cmax in bounds)
         return Box(shape, origin=origin)
 
@@ -224,10 +224,9 @@ class Box(eqx.Module):
         assert other.D == self.D
         bounds = []
         for d in range(self.D):
-            bounds.append(
-                (jnp.max(jnp.stack([self.start[d], other.start[d]])), 
-                 jnp.min(jnp.stack([self.stop[d], other.stop[d]]))
-            ))
+             bounds.append(
+                (max(self.start[d], other.start[d]), min(self.stop[d], other.stop[d]))
+            )
         return Box.from_bounds(*bounds)
 
     def __getitem__(self, i):

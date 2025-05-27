@@ -48,18 +48,17 @@ class ProfileMorphology(Morphology):
         # default shape: square 10x size
         if shape is None:
             # explicit call to int() to avoid bbox sizes being jax-traced
-            if isinstance(self.size, (list, tuple, np.ndarray, jnp.ndarray)):
-                size = int(max(jnp.ceil(10 * self.size)))
-            else:
-                size = int(jnp.ceil(10 * self.size))
-            
+            size = jnp.asarray(self.size)
+            size_ = jnp.ceil(jnp.max(jnp.ceil(10 * self.size)))
+            size = int(size_)
+
             # odd shapes for unique center pixel
             if size % 2 == 0:
                 size += 1
-            if isinstance(self.size, (list, tuple, np.ndarray, jnp.ndarray)):
-                shape = (len(self.size), size, size)
-            else:
+            if size_.size==1:
                 shape = (1, size, size)
+            else:
+                shape = (len(self.size), size, size)
             
         self._shape = shape
 
@@ -118,8 +117,9 @@ class GaussianMorphology(ProfileMorphology):
             _Y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) + delta_center[-2]
             _X = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) + delta_center[-1]
 
-            _Y = jnp.repeat(_Y[None,...], len(self.size), 0)
-            _X = jnp.repeat(_X[None,...], len(self.size), 0)
+            if len(self.size) > 1:
+                _Y = jnp.repeat(_Y[None,...], len(self.size), 0)
+                _X = jnp.repeat(_X[None,...], len(self.size), 0)
             # with pixel integration
             f = lambda x, s: 0.5 * (
                     1 - jax.scipy.special.erfc((0.5 - x) / jnp.sqrt(2) / s) +
@@ -128,7 +128,10 @@ class GaussianMorphology(ProfileMorphology):
             # # without pixel integration
             # f = lambda x, s: jnp.exp(-(x ** 2) / (2 * s ** 2)) / (jnp.sqrt(2 * jnp.pi) * s)
 
-            return jax.vmap(jnp.outer)(f(_Y, self.size[...,None]), f(_X, self.size[...,None]))
+            if len(self.size) > 1:
+                return jax.vmap(jnp.outer)(f(_Y, self.size[...,None]), f(_X, self.size[...,None]))
+            else:
+                return jnp.outer(f(_Y, self.size), f(_X, self.size))
 
         else:
             return super().__call__(delta_center)
