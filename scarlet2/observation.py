@@ -1,6 +1,7 @@
 import equinox as eqx
 import jax.numpy as jnp
 
+from .fft import make_ps_map
 from .bbox import Box
 from .frame import Frame
 from .module import Module
@@ -19,14 +20,18 @@ class Observation(Module):
     """Observed data"""
     weights: jnp.ndarray
     """Statistical weights (usually inverse variance) for :py:meth:`log_likelihood`"""
+    fourier_noise_var: jnp.ndarray = None
+    """Noise power spectrum for :py:meth:`log_likelihood`"""
     frame: Frame
     """Metadata to describe what view of the sky `data` amounts to"""
     renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
     """Renderer to translate from the model frame the observation frame"""
 
-    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
+    def __init__(self, data, weights, noise_ps=None, psf=None, wcs=None, channels=None, renderer=None):
         self.data = data
         self.weights = weights
+        if noise_ps is not None:
+            self.fourier_noise_var = make_ps_map(noise_ps, data.shape[-1])
         if channels is None:
             channels = range(data.shape[0])
         self.frame = Frame(Box(data.shape), psf, wcs, channels)
@@ -68,14 +73,22 @@ class Observation(Module):
         # rendered model
         model_ = self.render(model)
 
-        # normalization of the single-pixel likelihood:
-        # 1 / [(2pi)^1/2 (sigma^2)^1/2]
-        # with inverse variance weights: sigma^2 = 1/weight
-        # full likelihood is sum over all (unmasked) pixels in data
-        D = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
-        log_norm = D / 2 * jnp.log(2 * jnp.pi)
-        log_like = -jnp.sum(self.weights * (model_ - data) ** 2) / 2
-        return log_like - log_norm
+        if self.fourier_noise_var is None:
+            print("I am in real space")
+            # normalization of the single-pixel likelihood:
+            # 1 / [(2pi)^1/2 (sigma^2)^1/2]
+            # with inverse variance weights: sigma^2 = 1/weight
+            # full likelihood is sum over all (unmasked) pixels in data
+            D = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
+            log_norm = D / 2 * jnp.log(2 * jnp.pi)
+            log_like = -jnp.sum(self.weights * (model_ - data) ** 2) / 2
+
+        else:
+            print("I am in Fourier")
+            res_fft = jnp.fft.fft2(model_ - data)
+            log_like = - 0.5 * jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.fourier_noise_var)
+        
+        return log_like #- log_norm
 
     def match(self, frame, renderer=None):
         """Construct the mapping between `frame` (from the model) and this observation frame
