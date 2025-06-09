@@ -8,7 +8,6 @@ from . import Scenery
 from .bbox import overlap_slices
 from .frame import Frame
 from .module import Module, Parameters
-from .nn import ScorePrior, pad_fwd
 from .renderer import ChannelRenderer
 
 
@@ -412,6 +411,7 @@ def _constraint_replace(self, parameters, inv=False):
 # update step for optax optimizer
 @eqx.filter_jit
 def _make_step(model, observations, parameters, optim, opt_state, filter_spec=None):
+    from .nn import ScorePrior, pad_fwd
     def loss_fn(model):
         if any(param.constraint is not None for param in parameters):
             # parameters now obey constraints
