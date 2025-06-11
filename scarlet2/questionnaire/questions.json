@@ -1,49 +1,52 @@
-[
-  {
-    "question": "What type of analysis do you want to perform?",
-    "answers": [
-      {
-        "answer": "Time Series",
-        "tooltip": "Analyze data points indexed over time.",
-        "template": {
-          "code": "import pandas as pd\npd.read_csv('data.csv', parse_dates=['timestamp'])",
-          "tooltip": "This loads a CSV with time-indexed data."
+{
+  "initial_template": "{{code}}",
+  "questions": [
+    {
+      "question": "Single resolution data or multi-resolution imaging data?",
+      "answers": [
+        {
+          "answer": "Single resolution",
+          "tooltip": "All images the same resolution",
+          "template": {
+            "replacement": "code",
+            "code": "obs = scarlet2.Observation(data,\n                               wcs=wcs,\n                               psf=scarlet2.ArrayPSF(psf_data),\n                               channels=channels,\n                               weights=obs_weights)"
+          },
+          "followups": []
         },
-        "followups": [
-          {
-            "question": "What kind of time series model?",
-            "answers": [
-              {
-                "answer": "ARIMA",
-                "tooltip": "AutoRegressive Integrated Moving Average",
-                "template": {
-                  "code": "from statsmodels.tsa.arima.model import ARIMA\nmodel = ARIMA(data, order=(1,1,1)).fit()",
-                  "tooltip": "Fit an ARIMA model to your data."
+        {
+          "answer": "Multiple resolution",
+          "tooltip": "Images with different resolutions",
+          "template": {
+            "replacement": "code",
+            "code": "observations = []\nfor i, data in enumerate(datasets):\n\tobservations.append(\n\t\tscarlet2.Observation(data,\n                               wcs={{wcs}},\n                               psf=scarlet2.ArrayPSF(psf_data),\n                               channels=channels,\n                               weights=obs_weights)\n             )"
+          },
+          "followups": [
+            {
+              "question": "Are images pre-aligned to the same wcs",
+              "answers": [
+                {
+                  "answer": "Yes",
+                  "tooltip": "All images the same WCS",
+                  "template": {
+                    "replacement": "wcs",
+                    "code": "wcs"
+                  },
+                  "followups": []
                 },
-                "followups": []
-              },
-              {
-                "answer": "Exponential Smoothing",
-                "tooltip": "Model with smoothing techniques",
-                "template": {
-                  "code": "from statsmodels.tsa.holtwinters import ExponentialSmoothing\nmodel = ExponentialSmoothing(data).fit()",
-                  "tooltip": "Apply exponential smoothing to your time series."
-                },
-                "followups": []
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "answer": "Classification",
-        "tooltip": "Predict categories from features.",
-        "template": {
-          "code": "from sklearn.ensemble import RandomForestClassifier\nmodel = RandomForestClassifier().fit(X_train, y_train)",
-          "tooltip": "Train a classifier using labeled training data."
-        },
-        "followups": []
-      }
-    ]
-  }
-]
+                {
+                  "answer": "No",
+                  "tooltip": "Images different WCS",
+                  "template": {
+                    "replacement": "wcs",
+                    "code": "wcs_list[i]"
+                  },
+                  "followups": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
