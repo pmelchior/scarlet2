@@ -143,9 +143,11 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):
     warp: array
         Coordinates on which to resample the signal.
         Shape:[nx, ny, 2]
-        [ [[0,  0], [0,  1], ...,  [0,  N-1]],
-                           [ ... ],
-          [[N-1,0], [N-1,1], ...,  [N-1,N  ]] ]
+        [
+        [[0,  0], [0,  1], ...,  [0,  N-1]],
+        [ ... ],
+        [[N-1,0], [N-1,1], ...,  [N-1,N  ]]
+        ]
     interpolant: Interpolant
         Instance of interpolant
 
@@ -217,9 +219,11 @@ def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):
         Coordinates on which to resample the signal, in the grid of signal
         coordinates [[0 ... signal.shape[0]], [0 ... signal.shape[1]]
         shape:[nx, ny, 2]
-        [ [[0,  0], [0,  1], ...,  [0,  N-1]],
-                           [ ... ],
-          [[N-1,0], [N-1,1], ...,  [N-1,N  ]] ]
+        [
+        [[0,  0], [0,  1], ...,  [0,  N-1]],
+        [ ... ],
+        [[N-1,0], [N-1,1], ...,  [N-1,N  ]]
+        ]
     x_min: float
         Left coordinate of corner of bounding box that defines the location of `signal`
     y_min: float

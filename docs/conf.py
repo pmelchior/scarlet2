@@ -77,6 +77,9 @@ intersphinx_mapping = {'astropy': ('https://docs.astropy.org/en/stable/', None),
 
 issues_github_path = "pmelchior/scarlet2"
 
+nb_execution_timeout = 60
+nb_execution_excludepatterns = ["_build", "jupyter_execute"]
+
 # Napoleon settings
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True
