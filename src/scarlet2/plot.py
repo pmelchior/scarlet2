@@ -1,4 +1,5 @@
 """Plotting functions"""
+
 from abc import ABC, abstractmethod
 
 import jax
@@ -8,8 +9,8 @@ import matplotlib.animation as animation
 import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 import numpy as np
-from jax import jvp, grad, jit
-from matplotlib.patches import Rectangle, Polygon
+from jax import grad, jit, jvp
+from matplotlib.patches import Polygon, Rectangle
 
 from . import measure
 from .bbox import Box
@@ -33,9 +34,7 @@ def channels_to_rgb(channels):
     array
      (3, channels) to map onto RGB
     """
-    assert channels in range(
-        0, 8
-    ), "No mapping has been implemented for more than {} channels".format(channels)
+    assert channels in range(0, 8), f"No mapping has been implemented for more than {channels} channels"
 
     channel_map = np.zeros((3, channels))
     if channels == 1:
@@ -80,7 +79,7 @@ def channels_to_rgb(channels):
         channel_map[2, 0] = 1
         channel_map /= 2
     elif channels == 7:
-        channel_map[:, 6] = 2/3.
+        channel_map[:, 6] = 2 / 3.0
         channel_map[0, 5] = 1
         channel_map[0, 4] = 0.667
         channel_map[0, 3] = 0.333
@@ -97,6 +96,7 @@ def channels_to_rgb(channels):
 
 class Norm(ABC):
     """Base class to normalize the color values of RGB images"""
+
     def __init__(self):
         self._uint8Max = float(np.iinfo(np.uint8).max)
 
@@ -108,7 +108,6 @@ class Norm(ABC):
         """Clip image between m and M"""
         return jnp.maximum(0, jnp.minimum(im - m, M - m))
 
-
     def convert_to_uint8(self, im):
         """Convert three-channel image to RGB image with uint8 dtype"""
         im_clipped = self.clip(im, 0, 1)
@@ -116,12 +115,10 @@ class Norm(ABC):
         im_flipped = uint_im.transpose().swapaxes(0, 1)  # 3 x Ny x Nx -> Ny x Nx x 3
         return im_flipped
 
-
     def make_rgb_image(self, *im):
         """Compute RGB image from three-channel image"""
         # backwards compatible to astropy Mapping Call
         return self.convert_to_uint8(self.__call__(jnp.stack(im, axis=0)))
-
 
     @abstractmethod
     def __call__(self, im):
@@ -132,7 +129,7 @@ class Norm(ABC):
 class LinearNorm(Norm):
     def __init__(self, minimum, maximum):
         """Linear norm, mapping the interval [`minimum`, `maximum`] to [0,1]
-        
+
         Parameters
         ----------
         minimum: float
@@ -200,9 +197,7 @@ class AsinhNorm(Norm):
         m = self.m
         M = self.M
         I = self.get_intensity(img)
-        with np.errstate(
-            invalid="ignore", divide="ignore"
-        ):  # n.b. np.where can't and doesn't short-circuit
+        with np.errstate(invalid="ignore", divide="ignore"):  # n.b. np.where can't and doesn't short-circuit
             # clip between m and M
             I_ = self.clip(I - m, 0, M - m)
 
@@ -370,19 +365,21 @@ def img_to_rgb(img, channel_map=None, fill_value=0, norm=None, mask=None):
         RGB = jnp.dstack([RGB, ~mask * 255])
     return RGB
 
-panel_size = 4.0 
+
+panel_size = 4.0
+
 
 def observation(
-        observation,
-        norm=None,
-        channel_map=None,
-        sky_coords=None,
-        show_psf=False,
-        add_labels=True,
-        split_channels=False,
-        fig_kwargs=dict(),
-        title_kwargs=dict(),
-        label_kwargs={"color": "w", "ha": "center", "va": "center"},
+    observation,
+    norm=None,
+    channel_map=None,
+    sky_coords=None,
+    show_psf=False,
+    add_labels=True,
+    split_channels=False,
+    fig_kwargs=dict(),
+    title_kwargs=dict(),
+    label_kwargs={"color": "w", "ha": "center", "va": "center"},
 ):
     """Plot observation
 
@@ -471,10 +468,7 @@ def observation(
             psf_image = np.zeros(data.shape)
             # insert into middle of "blank" observation
             full_box = Box(psf_image.shape)
-            shift = tuple(
-                psf_image.shape[d] // 2 - psf.shape[d] // 2
-                for d in range(full_box.D)
-            )
+            shift = tuple(psf_image.shape[d] // 2 - psf.shape[d] // 2 for d in range(full_box.D))
             model_box = Box(psf.shape) + shift
             model_box.insert_into(psf_image, psf)
             # slices = scarlet.box.overlapped_slices
@@ -501,11 +495,11 @@ def cut_square_box(arr, center, size):
     numpy.ndarray: The square box extracted from the input array.
     """
 
-    # get the dimensions of the data 
-    obsDim = arr.ndim 
+    # get the dimensions of the data
+    obsDim = arr.ndim
 
     row_center, col_center = center
-    #col_center, row_center = center
+    # col_center, row_center = center
     half_size = size // 2
 
     # Calculate the indices for slicing
@@ -517,7 +511,7 @@ def cut_square_box(arr, center, size):
     # Ensure the indices are within the array bounds
     start_row = max(0, start_row)
     start_col = max(0, start_col)
-    if obsDim==2:
+    if obsDim == 2:
         end_row = min(arr.shape[0], end_row)
         end_col = min(arr.shape[1], end_col)
     else:
@@ -525,14 +519,14 @@ def cut_square_box(arr, center, size):
         end_col = min(arr.shape[2], end_col)
 
     # Cut out the square box
-    if obsDim==2:
+    if obsDim == 2:
         square_box = arr[start_row:end_row, start_col:end_col]
     else:
         square_box = arr[:, start_row:end_row, start_col:end_col]
 
     # pad array up if needed (ie box outside array bounds)
     pad = False
-    if obsDim==2:
+    if obsDim == 2:
         if square_box.shape[0] < size or square_box.shape[1] < size:
             pad_low = size - square_box.shape[0]
             pad_high = size - square_box.shape[1]
@@ -551,31 +545,33 @@ def cut_square_box(arr, center, size):
         if pad_high < 0:
             pad_high = 0
         if obsDim <= 2:
-            square_box = np.pad(square_box, ((pad_low, 0), (pad_high, 0)), 
-                            mode="constant", constant_values=0)
+            square_box = np.pad(square_box, ((pad_low, 0), (pad_high, 0)), mode="constant", constant_values=0)
         else:
-                # Get the original array shape
+            # Get the original array shape
             original_height, original_width, num_channels = square_box.shape
 
             # Create a new zero-padded array
-            padded_rgb_array = np.zeros((original_height + 2 * pad_high,
-                                 original_width + 2 * pad_low,
-                                 num_channels), dtype=square_box.dtype)
+            padded_rgb_array = np.zeros(
+                (original_height + 2 * pad_high, original_width + 2 * pad_low, num_channels),
+                dtype=square_box.dtype,
+            )
 
             # Place the original RGB array in the center of the padded array
-            padded_rgb_array[pad_high:pad_high + original_height,
-                      pad_low:pad_low + original_width, :] = square_box
+            padded_rgb_array[
+                pad_high : pad_high + original_height, pad_low : pad_low + original_width, :
+            ] = square_box
 
     return square_box
+
 
 @jax.grad
 def neural_grad(galaxy, src):
     parameters = src.get_parameters(return_info=True)
-    prior = 2 * sum(info["prior"].log_prob(galaxy)
-                        for name, (p, info) in parameters.items()
-                        if info["prior"] is not None
-                        )
+    prior = 2 * sum(
+        info["prior"].log_prob(galaxy) for name, (p, info) in parameters.items() if info["prior"] is not None
+    )
     return prior
+
 
 def log_like(morph, spectrum, data, weights):
     model = morph[None, :, :] * spectrum[:, None, None]
@@ -584,36 +580,41 @@ def log_like(morph, spectrum, data, weights):
     log_like = -jnp.sum(weights * (model - data) ** 2) / 2
     return log_like - log_norm
 
+
 # --------------------- #
 # Hessian approximation #
 # --------------------- #
 # https://arxiv.org/pdf/2006.00719.pdf
 
+
 # for regular functions f
 def hvp(f, primals, tangents):
     return jvp(grad(f), primals, tangents)[1]
+
 
 # for score functions
 def hvp_grad(grad_f, primals, tangents):
     return jvp(grad_f, primals, tangents)[1]
 
+
 # diagonals of Hessian from HVPs
 def hvp_rad(hvp, shape):
-    max_iters = 100 # maximum number of iterations
+    max_iters = 100  # maximum number of iterations
     H = jnp.zeros(shape, dtype=jnp.float32)
     H_ = jnp.zeros(shape, dtype=jnp.float32)
     for i in range(max_iters):
         key = random.PRNGKey(i)
-        z = random.rademacher(key, shape , dtype=jnp.float32)
+        z = random.rademacher(key, shape, dtype=jnp.float32)
         H += jnp.multiply(z, hvp(z))
         if i > 0:
-            norm = jnp.linalg.norm(H/(i+1) - H_/i, ord=2)
-            if norm < 1e-6 * jnp.linalg.norm(H/(i+1), ord=2): # gets reasonable results with 1e-2
+            norm = jnp.linalg.norm(H / (i + 1) - H_ / i, ord=2)
+            if norm < 1e-6 * jnp.linalg.norm(H / (i + 1), ord=2):  # gets reasonable results with 1e-2
                 break
         H_ = H
-    return H/(i+1) 
+    return H / (i + 1)
 
-#TODO: fix the jit compilation errors here
+
+# TODO: fix the jit compilation errors here
 def hallucination_score(scene, obs, src_num):
     src = scene.sources[src_num]
     center = np.array(src.morphology.bbox.center)[::-1]
@@ -624,7 +625,7 @@ def hallucination_score(scene, obs, src_num):
     hvp_nn = np.array(hvp_nn)
 
     model_scene = scene()
-    morph = model_scene[src_num] 
+    morph = model_scene[src_num]
     spectrum = jnp.array((1,))
     data = obs.data
     weights = obs.weights
@@ -633,13 +634,14 @@ def hallucination_score(scene, obs, src_num):
     f = lambda morph: log_like(morph, spectrum, data, weights)
     jit_hvp_x = jit(lambda z: hvp(f, (morph,), (z,)))
     hvp_ll = hvp_rad(jit_hvp_x, morph.shape)
-    
-    box_size = hvp_nn.shape[1] 
+
+    box_size = hvp_nn.shape[1]
     # Cut out the square box
     hvp_ll_cut = cut_square_box(hvp_ll, center, box_size)
     hallucination = -hvp_nn + hvp_ll_cut
-    
-    return -hallucination * src.morphology() , jnp.sum(-hallucination * src.morphology())
+
+    return -hallucination * src.morphology(), jnp.sum(-hallucination * src.morphology())
+
 
 def confidence(scene, observation):
     sources = scene.sources
@@ -652,22 +654,22 @@ def confidence(scene, observation):
 
 
 def sources(
-        scene,
-        observation=None,
-        norm=None,
-        channel_map=None,
-        show_model=True,
-        show_hallucination=False,
-        show_observed=False,
-        show_rendered=False,
-        show_spectrum=True,
-        model_mask=None,
-        add_markers=True,
-        add_boxes=False,
-        fig_kwargs=dict(),
-        title_kwargs=dict(),
-        marker_kwargs={"color": "w", "marker": "x", "mew": 1, "ms": 10},
-        box_kwargs={"facecolor": "none", "edgecolor": "w", "lw": 0.5},
+    scene,
+    observation=None,
+    norm=None,
+    channel_map=None,
+    show_model=True,
+    show_hallucination=False,
+    show_observed=False,
+    show_rendered=False,
+    show_spectrum=True,
+    model_mask=None,
+    add_markers=True,
+    add_boxes=False,
+    fig_kwargs=dict(),
+    title_kwargs=dict(),
+    marker_kwargs={"color": "w", "marker": "x", "mew": 1, "ms": 10},
+    box_kwargs={"facecolor": "none", "edgecolor": "w", "lw": 0.5},
 ):
     """Plot all sources in `scene`
 
@@ -713,7 +715,7 @@ def sources(
     """
     sources = scene.sources
     n_sources = len(sources)
-    panels = sum((show_model, show_hallucination,show_observed, show_rendered, show_spectrum))
+    panels = sum((show_model, show_hallucination, show_observed, show_rendered, show_spectrum))
 
     figsize = fig_kwargs.pop("figsize", None)
     if figsize is None:
@@ -723,7 +725,6 @@ def sources(
 
     skipped = 0
     for k, src in enumerate(sources):
-
         center = np.array(src.center)[::-1]
         start, stop = src.bbox.start[-2:][::-1], src.bbox.stop[-2:][::-1]
         box_coords = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
@@ -739,7 +740,7 @@ def sources(
                 extent=extent,
                 origin="lower",
             )
-            ax[k - skipped][panel].set_title("Model Source {}".format(k), **title_kwargs)
+            ax[k - skipped][panel].set_title(f"Model Source {k}", **title_kwargs)
             if center is not None and add_markers:
                 ax[k - skipped][panel].plot(*center, **marker_kwargs)
             panel += 1
@@ -750,21 +751,21 @@ def sources(
             # Better to create separate plot.hallucination() only on sources with priors
 
             # must use a prior to get a hallucination score
-            _, info = src.get_parameters(return_info=True)['morphology.data']
-            assert (info["prior"] is not None), "Must use a prior to get a hallucination score"
+            _, info = src.get_parameters(return_info=True)["morphology.data"]
+            assert info["prior"] is not None, "Must use a prior to get a hallucination score"
 
             # Show the unrendered model in it's bbox
             hallucination, metric = hallucination_score(scene, observation, k)
             extent = src.bbox.get_extent()
             true_max = np.max(np.abs(hallucination))
-            im = ax[k - skipped][panel].imshow(hallucination,
-                norm=colors.SymLogNorm(linthresh=1, linscale=1,
-                        vmin=-true_max, vmax=true_max, base=10),
+            im = ax[k - skipped][panel].imshow(
+                hallucination,
+                norm=colors.SymLogNorm(linthresh=1, linscale=1, vmin=-true_max, vmax=true_max, base=10),
                 cmap="RdBu",
                 extent=extent,
                 origin="lower",
             )
-            title = 'Confidence: ' + str(jnp.round(metric,3))
+            title = "Confidence: " + str(jnp.round(metric, 3))
             ax[k - skipped][panel].set_title(title, **title_kwargs)
             if center is not None and add_markers:
                 ax[k - skipped][panel].plot(*center, **marker_kwargs)
@@ -783,7 +784,7 @@ def sources(
                 extent=extent,
                 origin="lower",
             )
-            ax[k - skipped][panel].set_title("Model Source {} Rendered".format(k), **title_kwargs)
+            ax[k - skipped][panel].set_title(f"Model Source {k} Rendered", **title_kwargs)
             if add_markers:
                 ax[k - skipped][panel].plot(*center, **marker_kwargs)
             if add_boxes:
@@ -799,7 +800,7 @@ def sources(
                 extent=extent,
                 origin="lower",
             )
-            ax[k - skipped][panel].set_title("Observation".format(k), **title_kwargs)
+            ax[k - skipped][panel].set_title("Observation".format(), **title_kwargs)
             if add_markers:
                 ax[k - skipped][panel].plot(*center, **marker_kwargs)
             if add_boxes:
@@ -809,38 +810,43 @@ def sources(
 
         if show_spectrum:
             # needs to be evaluated in the source box to prevent truncation
-            spectra = [measure.flux(src), ] + [measure.flux(component) for component in src.components]
-            
+            spectra = [
+                measure.flux(src),
+            ] + [measure.flux(component) for component in src.components]
+
             for spectrum in spectra:
-                ax[k-skipped][panel].plot(spectrum)
-            ax[k-skipped][panel].set_xticks(range(len(spectrum)))
-            if observation is not None and hasattr(observation.frame,
-                                                   "channels") and observation.frame.channels is not None:
+                ax[k - skipped][panel].plot(spectrum)
+            ax[k - skipped][panel].set_xticks(range(len(spectrum)))
+            if (
+                observation is not None
+                and hasattr(observation.frame, "channels")
+                and observation.frame.channels is not None
+            ):
                 ax[k - skipped][panel].set_xticklabels(observation.frame.channels)
             ax[k - skipped][panel].set_title("Spectrum", **title_kwargs)
             ax[k - skipped][panel].set_xlabel("Channel")
-            ax[k-skipped][panel].set_ylabel("Intensity")
+            ax[k - skipped][panel].set_ylabel("Intensity")
 
     fig.tight_layout()
     return fig
 
 
 def scene(
-        scene,
-        observation=None,
-        norm=None,
-        channel_map=None,
-        show_model=True,
-        show_observed=False,
-        show_rendered=False,
-        show_residual=False,
-        add_labels=True,
-        add_boxes=False,
-        split_channels=False,
-        fig_kwargs=dict(),
-        title_kwargs=dict(),
-        label_kwargs={"color": "w", "ha": "center", "va": "center"},
-        box_kwargs={"facecolor": "none", "edgecolor": "w", "lw": 0.5},
+    scene,
+    observation=None,
+    norm=None,
+    channel_map=None,
+    show_model=True,
+    show_observed=False,
+    show_rendered=False,
+    show_residual=False,
+    add_labels=True,
+    add_boxes=False,
+    split_channels=False,
+    fig_kwargs=dict(),
+    title_kwargs=dict(),
+    label_kwargs={"color": "w", "ha": "center", "va": "center"},
+    box_kwargs={"facecolor": "none", "edgecolor": "w", "lw": 0.5},
 ):
     """Plot all sources to recreate the scence.
     The functions provide a fast way of evaluating the quality of the entire model,
@@ -883,14 +889,12 @@ def scene(
     """
 
     # for animations with multiple scenes
-    if hasattr(scene, '__iter__'):
+    if hasattr(scene, "__iter__"):
         scenes = scene
         scene = scenes[0]
 
     if show_observed or show_rendered or show_residual:
-        assert (
-                observation is not None
-        ), "Provide matched observation to show observed frame"
+        assert observation is not None, "Provide matched observation to show observed frame"
 
     rows = len(observation.frame.channels) if split_channels else 1
     panels = sum((show_model, show_observed, show_rendered, show_residual))
@@ -977,10 +981,7 @@ def scene(
                 if show_model:
                     extent = [start[0], stop[0], start[1], stop[1]]
                     rect = Rectangle(
-                        (extent[0], extent[2]),
-                        extent[1] - extent[0],
-                        extent[3] - extent[2],
-                        **box_kwargs
+                        (extent[0], extent[2]), extent[1] - extent[0], extent[3] - extent[2], **box_kwargs
                     )
                     ax[row, panel].add_artist(rect)
                     panel = 1
@@ -1001,9 +1002,7 @@ def scene(
                 if observation is not None:
                     center = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
                     for panel in range(panel, panels):
-                        ax[row, panel].text(
-                            *center, k, **label_kwargs
-                        )
+                        ax[row, panel].text(*center, k, **label_kwargs)
 
     fig.tight_layout()
 

@@ -3,14 +3,14 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy
 
-from . import Scenery
-from . import measure
+from . import Scenery, measure
 from .module import Module
-from .wavelets import starlet_transform, starlet_reconstruction
+from .wavelets import starlet_reconstruction, starlet_transform
 
 
 class Morphology(Module):
     """Morphology base class"""
+
     @property
     def shape(self):
         """Shape (2D) of the morphology model"""
@@ -19,9 +19,10 @@ class Morphology(Module):
 
 class ProfileMorphology(Morphology):
     """Base class for morpholgies based on a radial profile"""
+
     size: float
     """Size of the profile
-    
+
     Can be given as an astropy angle, which will be transformed with the WCS of the current
     :py:class:`~scarlet2.Scene`.
     """
@@ -71,7 +72,6 @@ class ProfileMorphology(Morphology):
         raise NotImplementedError
 
     def __call__(self, delta_center=jnp.zeros(2)):
-
         _Y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) + delta_center[-2]
         _X = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) + delta_center[-1]
 
@@ -79,17 +79,13 @@ class ProfileMorphology(Morphology):
             R2 = _Y[:, None] ** 2 + _X[None, :] ** 2
         else:
             e1, e2 = self.ellipticity
-            g_factor = 1 / (1. + jnp.sqrt(1. - (e1 ** 2 + e2 ** 2)))
+            g_factor = 1 / (1.0 + jnp.sqrt(1.0 - (e1**2 + e2**2)))
             g1, g2 = self.ellipticity * g_factor
-            __X = ((1 - g1) * _X[None, :] - g2 * _Y[:, None]) / jnp.sqrt(
-                1 - (g1 ** 2 + g2 ** 2)
-            )
-            __Y = (-g2 * _X[None, :] + (1 + g1) * _Y[:, None]) / jnp.sqrt(
-                1 - (g1 ** 2 + g2 ** 2)
-            )
-            R2 = __Y ** 2 + __X ** 2
+            __X = ((1 - g1) * _X[None, :] - g2 * _Y[:, None]) / jnp.sqrt(1 - (g1**2 + g2**2))
+            __Y = (-g2 * _X[None, :] + (1 + g1) * _Y[:, None]) / jnp.sqrt(1 - (g1**2 + g2**2))
+            R2 = __Y**2 + __X**2
 
-        R2 /= self.size ** 2
+        R2 /= self.size**2
         R2 = jnp.maximum(R2, 1e-3)  # prevents infs at R2 = 0
         morph = self.f(R2)
         return morph
@@ -97,11 +93,11 @@ class ProfileMorphology(Morphology):
 
 class GaussianMorphology(ProfileMorphology):
     """Gaussian radial profile"""
+
     def f(self, R2):
         return jnp.exp(-R2 / 2)
 
     def __call__(self, delta_center=jnp.zeros(2)):
-
         # faster circular 2D Gaussian: instead of N^2 evaluations, use outer product of 2 1D Gaussian evals
         if self.ellipticity is None:
             _Y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) + delta_center[-2]
@@ -109,8 +105,10 @@ class GaussianMorphology(ProfileMorphology):
 
             # with pixel integration
             f = lambda x, s: 0.5 * (
-                    1 - jax.scipy.special.erfc((0.5 - x) / jnp.sqrt(2) / s) +
-                    1 - jax.scipy.special.erfc((0.5 + x) / jnp.sqrt(2) / s)
+                1
+                - jax.scipy.special.erfc((0.5 - x) / jnp.sqrt(2) / s)
+                + 1
+                - jax.scipy.special.erfc((0.5 + x) / jnp.sqrt(2) / s)
             )
             # # without pixel integration
             # f = lambda x, s: jnp.exp(-(x ** 2) / (2 * s ** 2)) / (jnp.sqrt(2 * jnp.pi) * s)
@@ -162,12 +160,14 @@ class GaussianMorphology(ProfileMorphology):
             morph = GaussianMorphology(T, ellipticity, shape=shape)
         else:
             raise ValueError(
-                f"Gaussian morphology not possible with size={T}, and ellipticity={ellipticity}!")
+                f"Gaussian morphology not possible with size={T}, and ellipticity={ellipticity}!"
+            )
         return morph
 
 
 class SersicMorphology(ProfileMorphology):
     """Sersic radial profile"""
+
     n: float
     """Sersic index"""
 
@@ -207,6 +207,7 @@ class StarletMorphology(Morphology):
     --------
     scarlet2.wavelets.Starlet
     """
+
     coeffs: jnp.ndarray
     """Starlet coefficients"""
     l1_thresh: float = eqx.field(default=0)

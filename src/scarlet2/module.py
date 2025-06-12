@@ -13,13 +13,13 @@ class Module(eqx.Module):
     Derives directly from :py:class:`equinox.Module`, i.e. from python dataclasses, and adds extra functionality to deal
     with optimizable parameters.
     """
+
     def __call__(self):
         """Evaluate the model"""
         raise NotImplementedError
 
     def make_parameters(self):
-        """Construct :py:class:`Parameters` for this module
-        """
+        """Construct :py:class:`Parameters` for this module"""
         return Parameters(self)
 
     def get(self, parameters):
@@ -80,7 +80,6 @@ class Module(eqx.Module):
 
 
 class Parameter:
-
     def __init__(self, node, name=None, constraint=None, prior=None, stepsize=0):
         """Definition of optimizable parameter
 
@@ -106,7 +105,7 @@ class Parameter:
         :py:class:`~scarlet2.Parameters`,
         """
         if name is None:
-            self.name = varname.argname('node', vars_only=False)
+            self.name = varname.argname("node", vars_only=False)
         else:
             self.name = name
         self.node = node
@@ -134,7 +133,9 @@ class Parameter:
             # check if parameter is valid under transform
             unconstrained = self.constraint_transform.inv(self.node)
             if not jnp.isfinite(unconstrained).all():
-                raise ValueError(f"Parameter {self.name} has infeasible values for constraint {self.constraint}!")
+                raise ValueError(
+                    f"Parameter {self.name} has infeasible values for constraint {self.constraint}!"
+                )
 
     def __repr__(self):
         # equinox-like formatting
@@ -190,7 +191,7 @@ class Parameters:
         # equinox-like formatting
         mess = f"{self.__class__.__name__}(\n"
         mess += f"  base={self.base.__class__.__name__},\n"
-        mess += f"  parameters=[\n"
+        mess += "  parameters=[\n"
         chunks = []
         for p in self._params:
             mess_ = p.__repr__()
@@ -296,7 +297,7 @@ class Parameters:
         frame = self.base.frame
         used_sky_coords_prior = False
 
-        for fieldname in ['node', 'constraint', 'prior', 'stepsize']:
+        for fieldname in ["node", "constraint", "prior", "stepsize"]:
             field = getattr(parameter, fieldname)
             if isinstance(field, u.Quantity):
                 setattr(parameter, fieldname, frame.u_to_pixel(field))
@@ -309,7 +310,7 @@ class Parameters:
                         setattr(field, name, frame.u_to_pixel(attrib))
                     if isinstance(attrib, SkyCoord):
                         setattr(field, name, frame.get_pixel(attrib))
-                        used_sky_coords_prior = (fieldname == 'prior')
+                        used_sky_coords_prior = fieldname == "prior"
                 except:
                     pass
 
@@ -318,14 +319,13 @@ class Parameters:
                     import numpyro.distributions as dist
                 except ImportError:
                     raise ImportError("scarlet2.Parameter requires numpyro.")
-                
+
                 # converting SkyCoord to Array in numpyro distributions requires
-                # to update batch and event shape 
-                batch_shape = max([getattr(field, name).shape 
-                                   for name in field.reparametrized_params])
-                setattr(field, '_batch_shape', batch_shape)
+                # to update batch and event shape
+                batch_shape = max([getattr(field, name).shape for name in field.reparametrized_params])
+                field._batch_shape = batch_shape
                 setattr(parameter, fieldname, dist.Independent(field, 1))
-                
+
             used_sky_coords_prior = False
 
         return parameter

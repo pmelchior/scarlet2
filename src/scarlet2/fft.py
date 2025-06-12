@@ -32,9 +32,7 @@ def transform(image, fft_shape, axes=None):
             axes = (axes,)
 
     if len(fft_shape) != len(axes):
-        msg = (
-            "fft_shape self.axes must have the same number of dimensions, got {0}, {1}"
-        )
+        msg = "fft_shape self.axes must have the same number of dimensions, got {0}, {1}"
         raise ValueError(msg.format(fft_shape, axes))
 
     image = _pad(image, fft_shape, axes)
@@ -92,6 +90,13 @@ def convolve(image, kernel, padding=3, axes=None, fft_shape=None, return_fft=Fal
         to supress artifacts.
     axes: tuple or None
         Axes that contain the spatial information for the PSFs.
+    fft_shape: tuple or None
+        "Fast" shape of the image used to generate the FFT.
+        If None, it will be determined automatically.
+    return_fft: bool
+        If True, return the FFT of the convolved image.
+        If False, return the image in real space.
+        Default: False
     """
     return _kspace_op(
         image,
@@ -120,6 +125,13 @@ def deconvolve(image, kernel, padding=3, axes=None, fft_shape=None, return_fft=F
         to supress artifacts.
     axes: tuple or None
         Axes that contain the spatial information for the PSFs.
+    fft_shape: tuple or None
+        "Fast" shape of the image used to generate the FFT.
+        If None, it will be determined automatically.
+    return_fft: bool
+        If True, return the FFT of the convolved image.
+        If False, return the image in real space.
+        Default: False
     """
 
     return _kspace_op(
@@ -133,9 +145,7 @@ def deconvolve(image, kernel, padding=3, axes=None, fft_shape=None, return_fft=F
     )
 
 
-def _kspace_op(
-    image, kernel, f, padding=3, axes=None, fft_shape=None, return_fft=False
-):
+def _kspace_op(image, kernel, f, padding=3, axes=None, fft_shape=None, return_fft=False):
     if axes is None:
         axes = range(len(image.shape))
     else:
@@ -147,15 +157,11 @@ def _kspace_op(
     # assumes kernel FFT has been computed with large enough shape to cover also image
     if kernel.dtype in (jnp.complex64, jnp.complex128):
         fft_shape = [kernel.shape[ax] for ax in axes]
-        fft_shape[-1] = 2 * (
-            fft_shape[-1] - 1
-        )  # real-valued FFT has 1/2 of the frequencies
+        fft_shape[-1] = 2 * (fft_shape[-1] - 1)  # real-valued FFT has 1/2 of the frequencies
         kernel_fft = kernel
     else:
         if fft_shape is None:
-            fft_shape = _get_fast_shape(
-                image.shape, kernel.shape, padding=padding, axes=axes
-            )
+            fft_shape = _get_fast_shape(image.shape, kernel.shape, padding=padding, axes=axes)
         kernel_fft = transform(kernel, fft_shape, axes=axes)
 
     image_fft = transform(image, fft_shape, axes=axes)
@@ -172,20 +178,13 @@ def _get_fast_shape(im_or_shape1, im_or_shape2, axes=None, padding=3, max_shape=
     Calculate the fast fft shape for each dimension in
     axes.
     """
-    if hasattr(im_or_shape1, "shape"):
-        shape1 = im_or_shape1.shape
-    else:
-        shape1 = im_or_shape1
-    if hasattr(im_or_shape2, "shape"):
-        shape2 = im_or_shape2.shape
-    else:
-        shape2 = im_or_shape2
+
+    shape1 = im_or_shape1.shape if hasattr(im_or_shape1, "shape") else im_or_shape1
+    shape2 = im_or_shape2.shape if hasattr(im_or_shape2, "shape") else im_or_shape2
 
     # Make sure the shapes are the same size
     if len(shape1) != len(shape2):
-        msg = (
-            "img1 and img2 must have the same number of dimensions, but got {0} and {1}"
-        )
+        msg = "img1 and img2 must have the same number of dimensions, but got {0} and {1}"
         raise ValueError(msg.format(len(shape1), len(shape2)))
 
     if axes is None:
@@ -197,7 +196,7 @@ def _get_fast_shape(im_or_shape1, im_or_shape2, axes=None, padding=3, max_shape=
             axes = (axes,)
 
     # Set the combined shape based on the total dimensions
-    combine_shapes = lambda s1, s2: max(s1, s2) if max_shape else s1 + s2
+    combine_shapes = lambda s1, s2: max(s1, s2) if max_shape else s1 + s2  # noqa: E731
     shape = [combine_shapes(shape1[ax], shape2[ax]) + padding for ax in axes]
     # Use the next fastest shape in each dimension
     # TODO: check what jnp actually uses for FFTs
@@ -219,7 +218,7 @@ def _trim(arr, newshape):
     fft standard order (0 frequency and position is
     in the bottom left) to 0 position in the center.
     """
-    startind = tuple((c - s + 1) // 2 for c, s in zip(arr.shape, newshape))
+    startind = tuple((c - s + 1) // 2 for c, s in zip(arr.shape, newshape, strict=False))
     return jax.lax.dynamic_slice(arr, startind, newshape)
 
 
@@ -242,7 +241,7 @@ def _fast_zero_pad(arr, pad_width):
     result: array
         The array padded with `constant_values`
     """
-    newshape = tuple([a + ps[0] + ps[1] for a, ps in zip(arr.shape, pad_width)])
+    newshape = tuple([a + ps[0] + ps[1] for a, ps in zip(arr.shape, pad_width, strict=False)])
     result = jnp.zeros(newshape, dtype=arr.dtype)
     start = tuple(start for start, end in pad_width)
     result = jax.lax.dynamic_update_slice(result, arr, start_indices=start)
@@ -260,10 +259,10 @@ def _pad(arr, newshape, axes=None, mode="constant", constant_values=0):
     if axes is None:
         newshape = jnp.asarray(newshape)
         currshape = jnp.array(arr.shape)
-        dS = newshape - currshape
-        startind = (dS + 1) // 2
-        endind = dS - startind
-        pad_width = list(zip(startind, endind))
+        ds = newshape - currshape
+        startind = (ds + 1) // 2
+        endind = ds - startind
+        pad_width = list(zip(startind, endind, strict=False))
     else:
         # only pad the axes that will be transformed
         pad_width = [(0, 0) for axis in arr.shape]
@@ -272,12 +271,12 @@ def _pad(arr, newshape, axes=None, mode="constant", constant_values=0):
         except TypeError:
             axes = [axes]
         for a, axis in enumerate(axes):
-            dS = newshape[a] - arr.shape[axis]
-            startind = (dS + 1) // 2
-            endind = dS - startind
+            ds = newshape[a] - arr.shape[axis]
+            startind = (ds + 1) // 2
+            endind = ds - startind
             pad_width[axis] = (startind, endind)
 
-    # if mode == "constant" and constant_values == 0:   
+    # if mode == "constant" and constant_values == 0:
     # result = _fast_zero_pad(arr, pad_width)
     # else:
     result = jnp.pad(arr, pad_width, mode=mode)
@@ -293,12 +292,9 @@ def good_fft_size(input_size):
     # Reduce slightly to eliminate potential rounding errors:
     insize = (1.0 - 1.0e-5) * input_size
     log2n = math.log(2.0) * math.ceil(math.log(insize) / math.log(2.0))
-    log2n3 = math.log(3.0) + math.log(2.0) * math.ceil(
-        (math.log(insize) - math.log(3.0)) / math.log(2.0)
-    )
+    log2n3 = math.log(3.0) + math.log(2.0) * math.ceil((math.log(insize) - math.log(3.0)) / math.log(2.0))
     log2n3 = max(log2n3, math.log(6.0))  # must be even number
-    Nk = max(int(math.ceil(math.exp(min(log2n, log2n3)) - 1.0e-5)), 2)
-    return Nk
+    return max(int(math.ceil(math.exp(min(log2n, log2n3)) - 1.0e-5)), 2)
 
 
 def _wrap_hermitian_x(im, im_xmin, im_ymin, wrap_xmin, wrap_ymin, wrap_nx, wrap_ny):
@@ -336,17 +332,12 @@ def _wrap_hermitian_x(im, im_xmin, im_ymin, wrap_xmin, wrap_ymin, wrap_nx, wrap_
         im = jax.lax.fori_loop(0, im.shape[0], _body_i, im)
         return im
 
-
     def expand_hermitian_x(im):
         return jnp.concatenate([im[:, 1:][::-1, ::-1].conjugate(), im], axis=1)
-
 
     def contract_hermitian_x(im):
         return im[:, im.shape[1] // 2 :]
 
-    
     im_exp = expand_hermitian_x(im)
-    im_exp = wrap_nonhermitian(
-        im_exp, wrap_xmin - im_xmin, wrap_ymin - im_ymin, wrap_nx, wrap_ny
-    )
+    im_exp = wrap_nonhermitian(im_exp, wrap_xmin - im_xmin, wrap_ymin - im_ymin, wrap_nx, wrap_ny)
     return contract_hermitian_x(im_exp)

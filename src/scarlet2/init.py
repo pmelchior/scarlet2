@@ -6,8 +6,7 @@ from functools import reduce
 import astropy.units as u
 import jax.numpy as jnp
 
-from . import Scenery
-from . import measure
+from . import Scenery, measure
 from .bbox import Box
 from .morphology import GaussianMorphology
 from .observation import Observation
@@ -27,7 +26,7 @@ def _get_edge_pixels(img, box):
     return jnp.concatenate(edge, axis=1)
 
 
-def make_bbox(obs, center_pix, sizes=[11, 17, 25, 35, 47, 61, 77], min_snr=20, min_corr=0.99):
+def make_bbox(obs, center_pix, sizes=[11, 17, 25, 35, 47, 61, 77], min_snr=20, min_corr=0.99):  # noqa: B006
     """Make a bounding box for source at center
 
     This method finds small box around the center so that the edge flux has a minimum SNR,
@@ -38,8 +37,9 @@ def make_bbox(obs, center_pix, sizes=[11, 17, 25, 35, 47, 61, 77], min_snr=20, m
     Parameters
     ----------
     obs: :py:class:`~scarlet2.Observation`
+        The Observation instance to use when defining the bounding box.
     center_pix: tuple
-        source enter, in pixel coordinates
+        source center, in pixel coordinates
     sizes: list[int]
         a list of box sizes to cycle through
     min_snr: float
@@ -53,14 +53,15 @@ def make_bbox(obs, center_pix, sizes=[11, 17, 25, 35, 47, 61, 77], min_snr=20, m
     """
     assert isinstance(obs, Observation)
     assert obs.weights is not None, "Observation weights are required"
-    assert obs.frame.bbox.spatial.contains(center_pix), f"Center pixel {center_pix} not contained in observation"
+    assert obs.frame.bbox.spatial.contains(
+        center_pix
+    ), f"Center pixel {center_pix} not contained in observation"
     assert len(sizes) > 0
 
     # increase box size from list until SNR is below threshold or spectrum changes significantly
     peak_spectrum = pixel_spectrum(obs, center_pix, correct_psf=True)
     last_spectrum = jnp.empty(len(peak_spectrum))
     for i in range(len(sizes)):
-
         box2d = Box((sizes[i], sizes[i]))
         box2d.set_center(center_pix.astype(int))
 
@@ -70,8 +71,11 @@ def make_bbox(obs, center_pix, sizes=[11, 17, 25, 35, 47, 61, 77], min_snr=20, m
         weight_edge_pixels = _get_edge_pixels(obs.weights, box2d)
         snr_edge_pixels = edge_pixels * jnp.sqrt(weight_edge_pixels)
         mean_snr = jnp.sum(jnp.sum(snr_edge_pixels, axis=-1) / jnp.sum(valid_edge_pixel, axis=-1))
-        spec_corr = jnp.dot(edge_spectrum, peak_spectrum) / \
-                    jnp.sqrt(jnp.dot(peak_spectrum, peak_spectrum)) / jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
+        spec_corr = (
+            jnp.dot(edge_spectrum, peak_spectrum)
+            / jnp.sqrt(jnp.dot(peak_spectrum, peak_spectrum))
+            / jnp.sqrt(jnp.dot(edge_spectrum, edge_spectrum))
+        )
 
         if mean_snr < min_snr or max(box2d.shape) > max(obs.frame.bbox.spatial.shape):
             break
@@ -119,23 +123,26 @@ def compact_morphology(min_value=1e-6, max_value=1 - 1e-6):
 
 
 def standardized_moments(
-        obs,
-        center,
-        footprint=None,
-        bbox=None,
+    obs,
+    center,
+    footprint=None,
+    bbox=None,
 ):
     """Create image of a Gaussian from the 2nd moments of the observation in the region of the bounding box
 
-    The methods cuts out the pixel included in `bbox` or in `footprint`, measures their 2nd moments with respect to
-    `center`, adjust the spatial coordinates and the PSF to match the model frame.
+    The methods cuts out the pixel included in `bbox` or in `footprint`, measures
+    their 2nd moments with respect to `center`, adjust the spatial coordinates
+    and the PSF to match the model frame.
 
     Parameters
     ----------
     obs: :py:class:`~scarlet2.Observation`
+        The Observation instance to derive moments from
     center: tuple
         central pixel of the source
     footprint: array, optional
-        2D image with non-zero values for all pixels associated with this source (aka a segmentation map or footprint)
+        2D image with non-zero values for all pixels associated with this source
+        (aka a segmentation map or footprint)
     bbox: :py:class:`~scarlet2.BBox`, optional
         box to cut out source from observation, in pixel coordinates
 
@@ -196,19 +203,19 @@ def standardized_moments(
 
 
 def from_gaussian_moments(
-        obs,
-        center,
-        box_sizes=None,
-        min_snr=20,
-        min_corr=0.99,
-        min_value=1e-6,
-        max_value=1 - 1e-6,
+    obs,
+    center,
+    box_sizes=None,
+    min_snr=20,
+    min_corr=0.99,
+    min_value=1e-6,
+    max_value=1 - 1e-6,
 ):
     """Create a Gaussian-shaped morphology and associated spectrum from the observation(s).
 
     The method determines an suitable bounding box that contains the source given its `center`,
-    computes the deconvolved moments up to order 2, constructs the spectrum from the 0th moment and a morphology image
-    from the 2nd moments (assuming a Gaussian shape).
+    computes the deconvolved moments up to order 2, constructs the spectrum from
+    the 0th moment and a morphology image from the 2nd moments (assuming a Gaussian shape).
 
     If multiple observations are given, it takes the median of the moments in the same channel.
 
@@ -236,8 +243,8 @@ def from_gaussian_moments(
 
     Warnings
     --------
-    This method is stable only for isolated sources. In cases of significant blending, the size of the bounding box
-    and the measured moments are likely biased high.
+    This method is stable only for isolated sources. In cases of significant blending,
+    the size of the bounding box and the measured moments are likely biased high.
 
     See Also
     --------
@@ -254,10 +261,7 @@ def from_gaussian_moments(
 
     # TODO: implement with source footprints given for each observation
     # get moments from all channels in all observations
-    if not isinstance(obs, (list, tuple)):
-        observations = (obs,)
-    else:
-        observations = obs
+    observations = obs if isinstance(obs, (list, tuple)) else (obs,)
 
     # centers and box_sizes are defined in pixel in the model frame
     # therefore need to convert back to skycoord and convert to pixel in obs frames
@@ -265,7 +269,7 @@ def from_gaussian_moments(
     if box_sizes is None:
         # growing sizes in units of the observed PSF
         psf_sizes = [measure.fwhm(obs.frame.psf()).min() for obs in observations]  # in obs pixels
-        magic_number = lambda i: 6. if i == 0 else 1.5 * magic_number(i - 1)
+        magic_number = lambda i: 6.0 if i == 0 else 1.5 * magic_number(i - 1)  # noqa:E731
         # NOTE: Not forced to be odd
         box_sizes = [[int(psf_size * magic_number(i)) for i in range(10)] for psf_size in psf_sizes]
     else:
@@ -277,10 +281,14 @@ def from_gaussian_moments(
             # assume that all pixels are in proper observed frame
             box_sizes = [box_sizes for obs in observations]
 
-    boxes = [make_bbox(obs_, center_, sizes=sizes_, min_snr=min_snr, min_corr=min_corr) for
-             obs_, center_, sizes_ in zip(observations, centers, box_sizes)]
-    moments = [standardized_moments(obs_, center_, bbox=bbox_) for obs_, center_, bbox_ in
-               zip(observations, centers, boxes)]
+    boxes = [
+        make_bbox(obs_, center_, sizes=sizes_, min_snr=min_snr, min_corr=min_corr)
+        for obs_, center_, sizes_ in zip(observations, centers, box_sizes, strict=False)
+    ]
+    moments = [
+        standardized_moments(obs_, center_, bbox=bbox_)
+        for obs_, center_, bbox_ in zip(observations, centers, boxes, strict=False)
+    ]
 
     # flat lists of spectra, sorted as model frame channels
     spectra = jnp.concatenate([g[0, 0] for g in moments])
@@ -289,17 +297,20 @@ def from_gaussian_moments(
 
     # average over all channels
     g = moments[0]  # moments from first observation
-    for key in g.keys():
+    for key in g:
         g[key] = jnp.concatenate([g[key] for g in moments])  # combine all observations
-        g[key] = jnp.median(g[key])  # this is not SNR weighted nor consistent aross different moments, but works(?)
+        g[key] = jnp.median(
+            g[key]
+        )  # this is not SNR weighted nor consistent aross different moments, but works(?)
 
     # average box size across observations
     if frame.wcs is not None:
         size = jnp.mean(
             jnp.array(
-                [frame.u_to_pixel(obs.frame.pixel_to_angle(max(box.spatial.shape)))
-                for box, obs in zip(boxes, observations)
-                 ]
+                [
+                    frame.u_to_pixel(obs.frame.pixel_to_angle(max(box.spatial.shape)))
+                    for box, obs in zip(boxes, observations, strict=False)
+                ]
             )
         ).astype(int)
     else:
@@ -325,11 +336,12 @@ def pixel_spectrum(obs, pos, correct_psf=False):
     obs: `:py:class:`~scarlet2.Observation` or list
         Observation(s) to extract pixel SED from
     pos: tuple
-        Position in the observation. Needs to be in sky coordinates if multiple observations have different locations
-        or pixel scales.
+        Position in the observation. Needs to be in sky coordinates if multiple
+        observations have different locations or pixel scales.
     correct_psf: bool, optional
-        Whether PSF shape variations in the observations should be corrected. If `True`, this method homogenizes the
-        PSFs of the observations, which yields the correct spectrum for a flux=1 point source.
+        Whether PSF shape variations in the observations should be corrected.
+        If `True`, this method homogenizes the PSFs of the observations, which
+        yields the correct spectrum for a flux=1 point source.
 
     Returns
     -------
@@ -337,12 +349,11 @@ def pixel_spectrum(obs, pos, correct_psf=False):
         If `obs` is a list, the method returns the associate list of spectra.
     """
 
-    # for multiple observations, get spectrum from each observation and then combine channels in order of model frame
+    # for multiple observations, get spectrum from each observation and then
+    # combine channels in order of model frame
     if isinstance(obs, (list, tuple)):
-
         # flat lists of spectra and channels in order of observations
-        spectra = jnp.concatenate(
-            [pixel_spectrum(obs_, pos, correct_psf=correct_psf) for obs_ in obs])
+        spectra = jnp.concatenate([pixel_spectrum(obs_, pos, correct_psf=correct_psf) for obs_ in obs])
         channels = reduce(operator.add, [obs_.frame.channels for obs_ in obs])
         spectrum = _sort_spectra(spectra, channels)
 
@@ -358,7 +369,6 @@ def pixel_spectrum(obs, pos, correct_psf=False):
     spectrum = obs.data[:, pixel[0], pixel[1]].copy()
 
     if correct_psf and obs.frame.psf is not None:
-
         try:
             frame = Scenery.scene.frame
         except AttributeError:

@@ -4,14 +4,14 @@ import h5py
 import jax
 import jax.numpy as jnp
 from huggingface_hub import hf_hub_download
-
 from scarlet2 import *
-from scarlet2.io import model_to_h5, model_from_h5
+from scarlet2.io import model_from_h5, model_to_h5
 
 
 def test_save_output():
-    filename = hf_hub_download(repo_id="astro-data-lab/scarlet-test-data", filename="hsc_cosmos_35.npz",
-                               repo_type="dataset")
+    filename = hf_hub_download(
+        repo_id="astro-data-lab/scarlet-test-data", filename="hsc_cosmos_35.npz", repo_type="dataset"
+    )
     file = jnp.load(filename)
     data = jnp.asarray(file["images"])
     centers = [(src["y"], src["x"]) for src in file["catalog"]]  # Note: y/x convention!
@@ -23,7 +23,6 @@ def test_save_output():
     obs = Observation(data, weights, psf=ArrayPSF(jnp.asarray(psf))).match(model_frame)
 
     with Scene(model_frame) as scene:
-
         for center in centers:
             center = jnp.array(center)
             try:
@@ -51,26 +50,27 @@ def test_save_output():
 
     # print the output
     print(f"Output saved to {full_path}")
-    # print the storage size 
+    # print the storage size
     print(f"Storage size: {os.path.getsize(full_path) / 1e6:.4f} MB")
     # load the output and plot the sources
     scene_loaded = model_from_h5(filename, ID, path=path)
     print("Output loaded from h5 file")
 
-    # compare scenes 
+    # compare scenes
     saved = jax.tree_util.tree_leaves(scene)
     loaded = jax.tree_util.tree_leaves(scene_loaded)
     status = True
-    for leaf_saved, leaf_loaded in zip(saved, loaded):
+    for leaf_saved, leaf_loaded in zip(saved, loaded, strict=False):
         if hasattr(leaf_saved, "__iter__"):
             if (leaf_saved != leaf_loaded).all():
                 status = False
         else:
             if leaf_saved != leaf_loaded:
                 status = False
-        
+
     print(f"saved == loaded: {status}")
     assert status == True, "Loaded leaves not identical to original"
+
 
 if __name__ == "__main__":
     test_save_output()

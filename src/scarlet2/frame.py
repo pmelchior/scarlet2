@@ -14,6 +14,7 @@ class Frame(eqx.Module):
     This class combines all elements to determine how a piece of the sky will appear.
     It includes metadata about the spatial and spectral coverage and resolution.
     """
+
     bbox: Box
     """Bounding box of the frame"""
     psf: PSF = None
@@ -37,7 +38,7 @@ class Frame(eqx.Module):
         return hash(self.bbox)
 
     @property
-    def C(self) -> int:
+    def C(self) -> int:  # noqa: N802
         """Number of channels"""
         return len(self.channels)
 
@@ -70,9 +71,9 @@ class Frame(eqx.Module):
         """
         if isinstance(pos, SkyCoord):
             assert self.wcs is not None, "SkyCoord can only be converted with valid WCS"
-            wcs_ = self.wcs.celestial  # only use celestial portion 
+            wcs_ = self.wcs.celestial  # only use celestial portion
             pixel = jnp.asarray(pos.to_pixel(wcs_), dtype="float32").T
-            return pixel[...,::-1]
+            return pixel[..., ::-1]
         return pos
 
     def get_sky_coord(self, pos):
@@ -93,21 +94,21 @@ class Frame(eqx.Module):
             sky_coord = SkyCoord.from_pixel(pixels[:, 1], pixels[:, 0], wcs)
             return sky_coord
         return pos
-    
+
     def convert_pixel_to(self, target, pixel=None):
         """Converts pixel coordinates from this frame to `target` frame
 
-            Parameters
-            ----------
-            target: :py:class:`~scarlet2.Frame`
-                target frame
-            pixel: array
-                Pixel coordinates in this frame. If not set, convert all pixels in this frame
+        Parameters
+        ----------
+        target: :py:class:`~scarlet2.Frame`
+            target frame
+        pixel: array
+            Pixel coordinates in this frame. If not set, convert all pixels in this frame
 
-            Returns
-            -------
-            array
-                coordinates at the location of `pixel` in the frame `target`
+        Returns
+        -------
+        array
+            coordinates at the location of `pixel` in the frame `target`
         """
 
         if pixel is None:
@@ -120,15 +121,15 @@ class Frame(eqx.Module):
     def u_to_pixel(self, distance):
         """Converts celestial distance to pixel size according to this frame WCS
 
-            Parameters
-            ----------
-            distance: :py:class:`astropy.units.Quantity`
-                Physical size, must be `PhysicalType("angle")`
+        Parameters
+        ----------
+        distance: :py:class:`astropy.units.Quantity`
+            Physical size, must be `PhysicalType("angle")`
 
-            Returns
-            -------
-            float
-                size in pixels
+        Returns
+        -------
+        float
+            size in pixels
         """
         assert u.get_physical_type(distance) == "angle"
 
@@ -136,18 +137,19 @@ class Frame(eqx.Module):
         pixel_size = get_pixel_size(self.wcs.celestial) * 60 * 60  # in arcsec/pixel
 
         return distance.to(u.arcsec).value / pixel_size
-    
+
     def pixel_to_angle(self, size):
         """Converts pixel size to celestial distance according to this frame WCS
 
-            Parameters
-            ----------
-            size: float
+        Parameters
+        ----------
+        size: float
+            The size in pixels
 
-            Returns
-            -------
-            distance: :py:class:`astropy.units.Quantity`
-                Physical size, must be `PhysicalType("angle")`
+        Returns
+        -------
+        distance: :py:class:`astropy.units.Quantity`
+            Physical size, must be `PhysicalType("angle")`
         """
         # first computer the pixel size
         pixel_size = get_pixel_size(self.wcs.celestial) * 60 * 60  # in arcsec/pixel
@@ -156,9 +158,7 @@ class Frame(eqx.Module):
         return distance
 
     @staticmethod
-    def from_observations(
-        observations, model_psf=None, model_wcs=None, obs_id=None, coverage="union"
-    ):
+    def from_observations(observations, model_psf=None, model_wcs=None, obs_id=None, coverage="union"):
         """Generates a suitable model frame for a set of observations.
 
         This method generates a frame from a set of observations by identifying the highest resolution
@@ -169,16 +169,18 @@ class Frame(eqx.Module):
         observations: list
             list of :py:class:`~scarlet2.Observation` to determine a common frame
         model_psf: :py:class:`~scarlet2.PSF`, optional
-            PSF to be adopted for the model frame. This is the effective resolution of the model, and all observations
-             are to be deconvolved to this limit. If None, uses the smallest PSF across all observations and channels.
+            PSF to be adopted for the model frame. This is the effective resolution
+            of the model, and all observations are to be deconvolved to this limit.
+            If None, uses the smallest PSF across all observations and channels.
         model_wcs: :py:class:`astropy.wcs.WCS`
-            WCS for the model frame. If None, uses WCS information of the observation with the smallest pixels.
+            WCS for the model frame. If None, uses WCS information of the
+            observation with the smallest pixels.
         obs_id: int, optional
             index of the reference observation.
             If set to None, uses the observation with the smallest pixels.
         coverage: "union" or "intersection"
-            Sets the frame to incorporate the pixels covered by any observation ('union')
-            or by all observations ('intersection').
+            Sets the frame to incorporate the pixels covered by any observation
+            ('union') or by all observations ('intersection').
         """
         assert coverage in ["union", "intersection"]
 
@@ -193,7 +195,6 @@ class Frame(eqx.Module):
         channels = []
         # Create frame channels and find smallest and largest psf
         for c, obs in enumerate(observations):
-
             # Concatenate all channels
             channels = channels + obs.frame.channels
 
@@ -207,13 +208,15 @@ class Frame(eqx.Module):
                 psf_size = get_psf_size(psf_channel) * h_temp
                 if (fat_psf_size is None) or (psf_size > fat_psf_size):
                     fat_psf_size = psf_size
-                if (obs_id is None) or (c == obs_id):
-                    if (model_psf is None) and (
-                        (small_psf_size is None) or (psf_size < small_psf_size)
-                    ):
-                        small_psf_size = psf_size
+                if (
+                    model_psf is None
+                    and ((obs_id is None) or (c == obs_id))
+                    and ((small_psf_size is None) or (psf_size < small_psf_size))
+                ):
+                    small_psf_size = psf_size
 
-        # Find a reference observation. Either provided by obs_id or as the observation with the smallest pixel
+        # Find a reference observation. Either provided by obs_id or as the
+        # observation with the smallest pixel
         if obs_id is None:
             p = jnp.array(pix_tab)
             obs_ref = observations[jnp.where(p == p.min())[0][0]]
@@ -232,23 +235,21 @@ class Frame(eqx.Module):
         if model_psf is None:
             # create Gaussian PSF with a sigma smaller than the smallest observed PSF
             sigma = 0.7
-            assert small_psf_size / h > sigma, \
-                f"Default model PSF width ({sigma} pixel) too large for best-seeing observation"
+            assert (
+                small_psf_size / h > sigma
+            ), f"Default model PSF width ({sigma} pixel) too large for best-seeing observation"
             model_psf = GaussianPSF(sigma=sigma)
 
         # Dummy frame for WCS computations
         model_shape = (len(channels), 0, 0)
 
-        model_frame = Frame(
-            Box(model_shape), channels=channels, psf=model_psf, wcs=model_wcs
-        )
+        model_frame = Frame(Box(model_shape), channels=channels, psf=model_psf, wcs=model_wcs)
 
         # Determine overlap of all observations in pixel coordinates of the model frame
         for c, obs in enumerate(observations):
-
             obs_coord = obs.frame.convert_pixel_to(model_frame)
             # round coordinate to nearest integer (use python, not jnp)
-            minmax_int = lambda x: (int(f) for f in jnp.round(jnp.sort(x)[jnp.array([0, -1])]))
+            minmax_int = lambda x: (int(f) for f in jnp.round(jnp.sort(x)[jnp.array([0, -1])]))  # noqa:E731
             y_min, y_max = minmax_int(obs_coord[:, 0])
             x_min, x_max = minmax_int(obs_coord[:, 1])
 
@@ -263,12 +264,9 @@ class Frame(eqx.Module):
                     model_box &= this_box
 
         frame_shape = (len(channels),) + model_box.shape
-        frame_origin = (0, ) + model_box.origin
+        frame_origin = (0,) + model_box.origin
         model_frame = Frame(
-            Box(shape=frame_shape, origin=frame_origin),
-            channels=channels,
-            psf=model_psf,
-            wcs=model_wcs
+            Box(shape=frame_shape, origin=frame_origin), channels=channels, psf=model_psf, wcs=model_wcs
         )
 
         # Match observations to this frame
@@ -286,18 +284,19 @@ def get_psf_size(psf):
 
     Parameters
     ----------
-        PSF: `scarlet.PSF` object
-            PSF for whic to compute the size
+    psf: `scarlet.PSF`
+        PSF for which to compute the size
+
     Returns
     -------
-        sigma3: `float`
-            radius of the area inside 3 sigma around the center in pixels
+    sigma3: `float`
+        radius of the area inside 3 sigma around the center in pixels
     """
     # Normalisation by maximum
     psf_frame = psf / jnp.max(psf)
 
     # Pixels in the FWHM set to one, others to 0:
-    psf_frame = jnp.where(psf_frame > 0.5, 1., 0.)
+    psf_frame = jnp.where(psf_frame > 0.5, 1.0, 0.0)
 
     # Area in the FWHM:
     area = jnp.sum(psf_frame)
@@ -310,7 +309,9 @@ def get_psf_size(psf):
 
     return sigma3
 
+
 def get_affine(wcs):
+    """Return the WCS transformation matrix"""
     try:
         model_affine = wcs.wcs.pc
     except AttributeError:
@@ -327,10 +328,10 @@ def get_pixel_size(wcs):
         return 1
     model_affine = get_affine(wcs)
     pix = jnp.sqrt(
-        jnp.abs(model_affine[0, 0])
-        * jnp.abs(model_affine[1, 1] - model_affine[0, 1] * model_affine[1, 0])
+        jnp.abs(model_affine[0, 0]) * jnp.abs(model_affine[1, 1] - model_affine[0, 1] * model_affine[1, 0])
     )
     return pix
+
 
 def get_scale(wcs):
     """
@@ -339,10 +340,11 @@ def get_scale(wcs):
     if wcs is None:
         return 1
     model_affine = get_affine(wcs)
-    c1 = (model_affine[0,:2]**2).sum()**0.5
-    c2 = (model_affine[1,:2]**2).sum()**0.5
+    c1 = (model_affine[0, :2] ** 2).sum() ** 0.5
+    c2 = (model_affine[1, :2] ** 2).sum() ** 0.5
     return jnp.array([c1, c2])
-    
+
+
 def get_angle(wcs):
     """
     Return WCS rotation angle in rad
@@ -351,13 +353,14 @@ def get_angle(wcs):
         return 0
     model_affine = get_affine(wcs)
     c = get_scale(wcs)
-    c = c.reshape([c.shape[-1],1])
-    R = model_affine[:2, :2] / c # removing the scaling factors from the pc
+    c = c.reshape([c.shape[-1], 1])
+    r = model_affine[:2, :2] / c  # removing the scaling factors from the pc
 
-    if R[0,0]==0.:
-        return jnp.arcsin(R[0,1])
+    if r[0, 0] == 0.0:
+        return jnp.arcsin(r[0, 1])
     else:
-        return jnp.arctan(R[0,1]/R[0,0])
+        return jnp.arctan(r[0, 1] / r[0, 0])
+
 
 def get_sign(wcs):
     """
@@ -365,16 +368,12 @@ def get_sign(wcs):
     """
     model_affine = get_affine(wcs)
     c = get_scale(wcs)
-    c = c.reshape([c.shape[-1],1])
-    R = model_affine[:2, :2] / c # removing the absolute scaling factors from the pc
+    c = c.reshape([c.shape[-1], 1])
+    r = model_affine[:2, :2] / c  # removing the absolute scaling factors from the pc
 
-    if R[0,0]==0.:
-        phi = jnp.arcsin(R[0,1])
-    else:
-        phi = jnp.arctan(R[0,1]/R[0,0])
-    
-    R_inv = jnp.array([[jnp.cos(phi), -jnp.sin(phi)],
-                    [jnp.sin(phi), jnp.cos(phi)]])
-    
-    R = R_inv @ R
-    return jnp.round(jnp.diag(R))
+    phi = jnp.arcsin(r[0, 1]) if r[0, 0] == 0.0 else jnp.arctan(r[0, 1] / r[0, 0])
+
+    r_inv = jnp.array([[jnp.cos(phi), -jnp.sin(phi)], [jnp.sin(phi), jnp.cos(phi)]])
+
+    r = r_inv @ r
+    return jnp.round(jnp.diag(r))

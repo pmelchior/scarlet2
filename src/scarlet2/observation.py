@@ -5,16 +5,18 @@ from .bbox import Box
 from .frame import Frame
 from .module import Module
 from .renderer import (
-    Renderer,
-    NoRenderer,
-    ConvolutionRenderer,
-    ChannelRenderer,
-    MultiresolutionRenderer,
     AdjustToFrame,
+    ChannelRenderer,
+    ConvolutionRenderer,
+    MultiresolutionRenderer,
+    NoRenderer,
+    Renderer,
 )
+
 
 class Observation(Module):
     """Content and definition of an observation"""
+
     data: jnp.ndarray
     """Observed data"""
     weights: jnp.ndarray
@@ -129,5 +131,3 @@ class Observation(Module):
             ), "Renderer does not map model frame to observation frame"
         object.__setattr__(self, "renderer", renderer)
         return self
-
-    

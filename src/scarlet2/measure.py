@@ -6,7 +6,7 @@ import astropy.units as u
 import numpy as jnp
 import numpy.ma as ma
 
-from .frame import get_scale, get_angle, get_sign
+from .frame import get_angle, get_scale, get_sign
 from .source import Component
 
 
@@ -78,7 +78,10 @@ def centroid(component):
         grid_y = grid_y[None, :, :]
         grid_x = grid_x[None, :, :]
     f = flux(model)
-    c = (grid_y * model).sum(axis=(-2, -1)) / f + origin[0], (grid_x * model).sum(axis=(-2, -1)) / f + origin[1]
+    c = (
+        (grid_y * model).sum(axis=(-2, -1)) / f + origin[0],
+        (grid_x * model).sum(axis=(-2, -1)) / f + origin[1],
+    )
     return jnp.array(c)
 
 
@@ -104,6 +107,7 @@ def fwhm(component):
     num_pixels = jnp.count_nonzero(model >= half_value[:, None, None], axis=(1, 2))
     diameter = 2 * jnp.sqrt(num_pixels) / jnp.pi
     return diameter
+
 
 def snr(component, observations):
     """Determine SNR with `component` as weight function
@@ -139,7 +143,7 @@ def snr(component, observations):
         model_ = obs.render(model)
         M.append(model_.reshape(-1))
         W.append((model_ / (model_.sum(axis=(-2, -1))[:, None, None])).reshape(-1))
-        noise_var = noise_rms ** 2
+        noise_var = noise_rms**2
         var.append(noise_var.reshape(-1))
     M = jnp.concatenate(M)
     W = jnp.concatenate(W)
@@ -154,7 +158,7 @@ def snr(component, observations):
 
 class Moments(dict):
     def __init__(self, component, N=2, center=None, weight=None):
-        """Moments of the brightness distribution
+        r"""Moments of the brightness distribution
 
         The dict is accessed by keys, which denote the power of y/x of the specific Moment:
         `m[p,q] = \int dx dy f(y,x) y^p x^q`.
@@ -195,7 +199,7 @@ class Moments(dict):
         for n in range(self.N + 1):
             for m in range(n + 1):
                 # moments ordered by power in y, then x
-                self[m, n - m] = (grid_y ** m * grid_x ** (n - m) * model * weight).sum(axis=(-2, -1))
+                self[m, n - m] = (grid_y**m * grid_x ** (n - m) * model * weight).sum(axis=(-2, -1))
 
             if n == 1:
                 # shift grid to produce centered moments
@@ -296,12 +300,7 @@ class Moments(dict):
                             for j in range(n - i):
                                 for k in range(i):
                                     for l in range(j):
-                                        g[i, j] -= (
-                                                binomial(i, k)
-                                                * binomial(j, l)
-                                                * g[k, l]
-                                                * p[i - k, j - l]
-                                        )
+                                        g[i, j] -= binomial(i, k) * binomial(j, l) * g[k, l] * p[i - k, j - l]
                                 for k in range(i):
                                     g[i, j] -= binomial(i, k) * g[k, j] * p[i - k, 0]
                                 for l in range(j):
@@ -352,23 +351,28 @@ class Moments(dict):
         -------
         None
         """
-        assert u.get_physical_type(phi) == "angle" # check that it's an angle with a suitable unit
+        assert u.get_physical_type(phi) == "angle"  # check that it's an angle with a suitable unit
         phi = phi.to(u.deg).value
-        phi = phi * math.pi / 180 # radian
+        phi = phi * math.pi / 180  # radian
 
         mu_p = {}
-        for n in range(self.N+1):
-            for m in range(n+1):
+        for n in range(self.N + 1):
+            for m in range(n + 1):
                 j = m
-                k = n-m
+                k = n - m
                 value = 0
-                for r in range(j+1):
-                    for s in range(k+1):
-                        value += (-1)**(k-s) * binomial(j, r)*binomial(k, s) *\
-                              jnp.cos(phi)**(j-r+s) * jnp.sin(phi)**(k+r-s) *\
-                                  self[j+k-r-s, r+s]
-                mu_p[m, n-m] = value
-        
+                for r in range(j + 1):
+                    for s in range(k + 1):
+                        value += (
+                            (-1) ** (k - s)
+                            * binomial(j, r)
+                            * binomial(k, s)
+                            * jnp.cos(phi) ** (j - r + s)
+                            * jnp.sin(phi) ** (k + r - s)
+                            * self[j + k - r - s, r + s]
+                        )
+                mu_p[m, n - m] = value
+
         for e in self:
             self[e] = mu_p[e]
 
@@ -388,12 +392,12 @@ class Moments(dict):
         None
         """
 
-        flux_in = self[0,0]
+        flux_in = self[0, 0]
 
         if (wcs_in is not None) and (wcs_out is not None):
             # Rescale moments (amplitude rescaling)
-            scale_in = get_scale(wcs_in) * 60 ** 2  # arcsec
-            scale_out = get_scale(wcs_out) * 60 ** 2  # arcsec
+            scale_in = get_scale(wcs_in) * 60**2  # arcsec
+            scale_out = get_scale(wcs_out) * 60**2  # arcsec
             c = jnp.array(scale_in) / jnp.array(scale_out)
             self.resize(c)
 
@@ -408,13 +412,15 @@ class Moments(dict):
             sign_out = get_sign(wcs_out)
             self.resize(sign_in * sign_out)
 
-            flux_out = self[0,0]
-            
+            flux_out = self[0, 0]
+
             for key in self.keys():
-                self[key]  /= flux_out/flux_in
-                
+                self[key] /= flux_out / flux_in
+
+
 # def moments(component, N=2, center=None, weight=None):
 #    return Moments(component, N=N, center=center, weight=weight)
+
 
 # adapted from  https://github.com/pmelchior/shapelens/blob/src/DEIMOS.cc
 def binomial(n, k):
@@ -428,6 +434,3 @@ def binomial(n, k):
         result *= n - i + 1
         result //= i
     return result
-
-
-

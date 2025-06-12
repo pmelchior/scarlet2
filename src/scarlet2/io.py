@@ -41,13 +41,11 @@ def model_to_h5(model, filename, id=0, path=".", overwrite=False):
 
     f = h5py.File(save_h5_path, "a")
     # create a group for the scene
-    if model_group in f.keys():
+    if model_group in f:
         if overwrite:
             del f[model_group]
         else:
-            raise ValueError(
-                "ID already exists. Set overwrite=True to overwrite the ID."
-            )
+            raise ValueError("ID already exists. Set overwrite=True to overwrite the ID.")
 
     # save the binary to HDF5
     group = f.create_group(model_group)
@@ -77,7 +75,7 @@ def model_from_h5(filename, id=0, path="."):
     filename = os.path.join(path, filename)
     f = h5py.File(filename, "r")
     model_group = str(id)
-    if model_group not in f.keys():
+    if model_group not in f:
         raise ValueError(f"ID {id} not found in the file.")
 
     group = f.get(model_group)

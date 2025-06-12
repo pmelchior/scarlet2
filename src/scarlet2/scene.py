@@ -19,6 +19,7 @@ class Scene(Module):
     any method implemented in jax, but this class provides the :py:func:`fit` and :py:func:`sample` methods as built-in
     solutions.
     """
+
     frame: Frame
     """Portion of the sky represented by this model"""
     sources: list
@@ -92,7 +93,9 @@ class Scene(Module):
     def __exit__(self, exc_type, exc_value, traceback):
         Scenery.scene = None
 
-    def sample(self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs):
+    def sample(
+        self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs
+    ):
         """Sample `parameters` of every source in the scene to get posteriors given `observations`.
 
         This method runs the HMC NUTS sampler from `numpyro` to get parameter posteriors. It uses the likehood of
@@ -164,6 +167,7 @@ class Scene(Module):
         has_none = any(prior is None for prior in priors.values())
         if has_none:
             from pprint import pformat
+
             msg = f"All parameters need to have priors set. Got:\n{pformat(priors)}"
             raise AttributeError(msg)
 
@@ -183,8 +187,10 @@ class Scene(Module):
         try:
             init_strategy = kwargs.pop("init_strategy")
         except KeyError:
-            from numpyro.infer.initialization import init_to_value
             from functools import partial
+
+            from numpyro.infer.initialization import init_to_value
+
             values = {p.name: p.node for p in parameters}
             init_strategy = partial(init_to_value, values=values)
 
@@ -194,8 +200,17 @@ class Scene(Module):
         mcmc.run(rng_key, self)
         return mcmc
 
-    def fit(self, observations, parameters, schedule=None, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None,
-            **kwargs):
+    def fit(
+        self,
+        observations,
+        parameters,
+        schedule=None,
+        max_iter=100,
+        e_rel=1e-4,
+        progress_bar=True,
+        callback=None,
+        **kwargs,
+    ):
         """Fit model `parameters` of every source in the scene to match `observations`.
 
         Computes the best-fit parameters of all components in every source by first-order gradient descent with
@@ -229,10 +244,10 @@ class Scene(Module):
             The scene model with updated parameters
         """
         try:
-            from tqdm.auto import trange
             import optax
             import optax._src.base as base
             from numpyro.distributions.transforms import biject_to
+            from tqdm.auto import trange
         except ImportError:
             raise ImportError("scarlet2.Scene.fit() requires optax and numpyro.")
 
@@ -287,8 +302,9 @@ class Scene(Module):
         with trange(max_iter, disable=not progress_bar) as t:
             for step in t:
                 # optimizer step
-                scene, loss, opt_state, convergence = _make_step(scene, observations, parameters, optim, opt_state,
-                                                                 filter_spec=filter_spec)
+                scene, loss, opt_state, convergence = _make_step(
+                    scene, observations, parameters, optim, opt_state, filter_spec=filter_spec
+                )
 
                 # compute max change across all non-fixed parameters for convergence test
                 max_change = jax.tree_util.tree_reduce(lambda a, b: max(a, b), convergence)
@@ -394,6 +410,7 @@ class Scene(Module):
                 v = src_.spectrum.at[channel_map].set(jnp.maximum(spectra[i], noise_bg))
                 self.sources[i] = eqx.tree_at(lambda src: src.spectrum, src_, v)
 
+
 def _constraint_replace(self, parameters, inv=False):
     # replace any parameter with constraint into unconstrained ones by calling its constraint bijector
     # return transformed pytree
@@ -401,17 +418,23 @@ def _constraint_replace(self, parameters, inv=False):
     param_values = where_in(self)
     if not inv:
         replace = tuple(
-            p.constraint_transform(v) if p.constraint is not None else v for p, v in zip(parameters, param_values))
+            p.constraint_transform(v) if p.constraint is not None else v
+            for p, v in zip(parameters, param_values, strict=False)
+        )
     else:
         replace = tuple(
-            p.constraint_transform.inv(v) if p.constraint is not None else v for p, v in zip(parameters, param_values))
+            p.constraint_transform.inv(v) if p.constraint is not None else v
+            for p, v in zip(parameters, param_values, strict=False)
+        )
 
     return eqx.tree_at(where_in, self, replace=replace)
+
 
 # update step for optax optimizer
 @eqx.filter_jit
 def _make_step(model, observations, parameters, optim, opt_state, filter_spec=None):
     from .nn import ScorePrior, pad_fwd
+
     def loss_fn(model):
         if any(param.constraint is not None for param in parameters):
             # parameters now obey constraints
@@ -427,21 +450,27 @@ def _make_step(model, observations, parameters, optim, opt_state, filter_spec=No
         log_prior = 0
 
         # Gather parameters with the same ScorePrior for parallel evaluation
-        grouped = defaultdict(list) 
-        for param, value in zip(parameters, param_values):
+        grouped = defaultdict(list)
+        for param, value in zip(parameters, param_values, strict=False):
             if isinstance(param.prior, ScorePrior):
                 grouped[param.prior].append(pad_fwd(value, param.prior._model.shape)[0])
             elif param.prior is not None:
-                log_prior += param.prior.log_prob(value) 
+                log_prior += param.prior.log_prob(value)
 
         if len(grouped) > 0:
-            log_prior += sum(sum(jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0)) for prior, arr_list in grouped.items()))
+            log_prior += sum(
+                sum(
+                    jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0))
+                    for prior, arr_list in grouped.items()
+                )
+            )
 
         return -(log_like + log_prior)
 
     if filter_spec is None:
         loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
     else:
+
         @eqx.filter_value_and_grad
         def filtered_loss_fn(diff_model, static_model):
             model = eqx.combine(diff_model, static_model)
