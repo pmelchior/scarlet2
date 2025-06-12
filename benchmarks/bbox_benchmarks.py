@@ -19,12 +19,14 @@ class BoxSuite:
         `params` list."""
         self.bb = Box((edge_length, edge_length))
 
-    def time_bbox_contains(self):
-        """Timing benchmark for `contains` method."""
+    def time_bbox_contains(self, edge_length):
+        """Timing benchmark for `contains` method. Note that `edge_length` is
+        unused by this method."""
         this_point = (6, 7)
         self.bb.contains(this_point)
 
-    def mem_bbox_contains(self):
-        """Memory benchmark for `contains` method."""
+    def mem_bbox_contains(self, edge_length):
+        """Memory benchmark for `contains` method. Note that `edge_length` is
+        unused by this method."""
         this_point = (6, 7)
         self.bb.contains(this_point)
