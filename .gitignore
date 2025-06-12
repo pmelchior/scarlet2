@@ -130,3 +130,6 @@ dmypy.json
 
 # VSCode settings
 .vscode
+
+# Default location for saved models
+stored_models/
