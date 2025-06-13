@@ -4,7 +4,7 @@ name = "scarlet2"
 license = {file = "LICENSE"}
 readme = "README.md"
 authors = [
-    { name = "Peter Melchior", email = "melchior@astro.princeton.edu" }
+    { name = "Peter Melchior", email = "peter.m.melchior@gmail.com" }
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
