@@ -19,6 +19,7 @@ class Component(Module):
     `spectrum` and `morphology`. That means that there is no variation of the spectrum in spatial direction.
     The `center` coordinate is only needed to define the bounding box and place the component in the model frame.
     """
+
     center: jnp.ndarray
     """Center position, in pixel coordinates of the model frame"""
     spectrum: (jnp.array, Spectrum)
@@ -66,7 +67,11 @@ class Component(Module):
         # Boxed and centered model
         delta_center = (self.bbox.center[-2] - self.center[-2], self.bbox.center[-1] - self.center[-1])
         spectrum = self.spectrum() if isinstance(self.spectrum, Module) else self.spectrum
-        morph = self.morphology(delta_center=delta_center) if isinstance(self.morphology, Module) else self.morphology
+        morph = (
+            self.morphology(delta_center=delta_center)
+            if isinstance(self.morphology, Module)
+            else self.morphology
+        )
         return spectrum[:, None, None] * morph[None, :, :]
 
 
@@ -86,6 +91,7 @@ class Source(Component):
 
     The class is the basic parameterization for sources in :py:class:`~scarlet2.Scene`.
     """
+
     components: list
     """List of components in this source"""
     component_ops: list
@@ -169,7 +175,7 @@ class Source(Component):
     def __call__(self):
         base = super()
         model = base.__call__()
-        for component, op in zip(self.components, self.component_ops):
+        for component, op in zip(self.components, self.component_ops, strict=False):
             model_ = component()
             # cut out regions from model and model_
             bbox, bbox_ = overlap_slices(base.bbox, component.bbox, return_boxes=True)

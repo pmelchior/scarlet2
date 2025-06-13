@@ -3,6 +3,7 @@
 
 import jax.numpy as jnp
 
+
 class Starlet:
     """Wavelet transform of a images (2D or 3D) with the 'a trou' algorithm.
 
@@ -42,7 +43,6 @@ class Starlet:
         """Starlet coefficients"""
         return self._coeffs
 
-
     @staticmethod
     def from_image(image, scales=None, generation=2, convolve2D=None):
         """Generate a set of starlet coefficients for an image
@@ -72,7 +72,8 @@ class Starlet:
             scales = get_scales(image.shape)
         coefficients = starlet_transform(image, scales, generation, convolve2D)
         return Starlet(image, coefficients, generation, convolve2D)
-    
+
+
 def bspline_convolve(image, scale):
     """Convolve an image with a bpsline at a given scale.
 
@@ -93,10 +94,10 @@ def bspline_convolve(image, scale):
     h1D = jnp.array([1.0 / 16, 1.0 / 4, 3.0 / 8, 1.0 / 4, 1.0 / 16])
     j = scale
 
-    slice0 = slice(None, -2**(j+1))
-    slice1 = slice(None, -2**j)
+    slice0 = slice(None, -(2 ** (j + 1)))
+    slice1 = slice(None, -(2**j))
     slice3 = slice(2**j, None)
-    slice4 = slice(2**(j+1), None)
+    slice4 = slice(2 ** (j + 1), None)
 
     # row
     col = image * h1D[2]

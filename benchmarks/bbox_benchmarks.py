@@ -3,17 +3,19 @@ from scarlet2.bbox import Box
 
 def time_bbox_creation():
     """Basic timing benchmark for Box creation"""
-    bb = Box((15,15))
+    _ = Box((15, 15))
+
 
 def mem_bbox_creation():
     """Basic memory benchmark for Box creation"""
-    bb = Box((15,15))
+    _ = Box((15, 15))
 
 
 class BoxSuite:
     """Suite of benchmarks for methods of the Box class"""
 
     params = [2, 16, 256, 2048]
+
     def setup(self, edge_length):
         """Create a Box, for each of the different edge_lengths defined in the
         `params` list."""

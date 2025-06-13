@@ -6,7 +6,7 @@ import astropy.units as u
 import numpy as jnp
 import numpy.ma as ma
 
-from .frame import get_scale, get_angle, get_sign
+from .frame import get_angle, get_scale, get_sign
 from .source import Component
 
 
@@ -21,7 +21,8 @@ def max_pixel(component):
     Returns
     -------
     array
-        Coordinates of the brightest pixel in pixel coordinates or in the model frame (if `component` has a `bbox`)
+        Coordinates of the brightest pixel in pixel coordinates or in the model
+        frame (if `component` has a `bbox`)
     """
     if isinstance(component, Component):
         model = component()
@@ -45,10 +46,7 @@ def flux(component):
     -------
     float
     """
-    if isinstance(component, Component):
-        model = component()
-    else:
-        model = component
+    model = component() if isinstance(component, Component) else component
 
     return model.sum(axis=(-2, -1))
 
@@ -78,7 +76,10 @@ def centroid(component):
         grid_y = grid_y[None, :, :]
         grid_x = grid_x[None, :, :]
     f = flux(model)
-    c = (grid_y * model).sum(axis=(-2, -1)) / f + origin[0], (grid_x * model).sum(axis=(-2, -1)) / f + origin[1]
+    c = (
+        (grid_y * model).sum(axis=(-2, -1)) / f + origin[0],
+        (grid_x * model).sum(axis=(-2, -1)) / f + origin[1],
+    )
     return jnp.array(c)
 
 
@@ -94,16 +95,14 @@ def fwhm(component):
     -------
     float
     """
-    if isinstance(component, Component):
-        model = component()
-    else:
-        model = component
+    model = component() if isinstance(component, Component) else component
     peak_pixel = max_pixel(model)[-2:]  # only spatial location
     peak_value = model[:, peak_pixel[0], peak_pixel[1]]
     half_value = peak_value / 2
     num_pixels = jnp.count_nonzero(model >= half_value[:, None, None], axis=(1, 2))
     diameter = 2 * jnp.sqrt(num_pixels) / jnp.pi
     return diameter
+
 
 def snr(component, observations):
     """Determine SNR with `component` as weight function
@@ -113,6 +112,7 @@ def snr(component, observations):
     component: :py:class:`~scarlet2.Component` or array
         Component to analyze or its hyperspectral model
     observations: :py:class:`scarlet2.Observation` or list
+        The observations to use for the SNR computation.
 
     Returns
     -------
@@ -127,8 +127,8 @@ def snr(component, observations):
     else:
         model = component
 
-    M = []
-    W = []
+    m = []
+    w = []
     var = []
     # convolve model for every observation;
     # flatten in channel direction because it may not have all C channels; concatenate
@@ -137,24 +137,26 @@ def snr(component, observations):
         noise_rms = 1 / jnp.sqrt(ma.masked_equal(obs.weights, 0))
         ma.set_fill_value(noise_rms, jnp.inf)
         model_ = obs.render(model)
-        M.append(model_.reshape(-1))
-        W.append((model_ / (model_.sum(axis=(-2, -1))[:, None, None])).reshape(-1))
-        noise_var = noise_rms ** 2
+        m.append(model_.reshape(-1))
+        w.append((model_ / (model_.sum(axis=(-2, -1))[:, None, None])).reshape(-1))
+        noise_var = noise_rms**2
         var.append(noise_var.reshape(-1))
-    M = jnp.concatenate(M)
-    W = jnp.concatenate(W)
+    m = jnp.concatenate(m)
+    w = jnp.concatenate(w)
     var = jnp.concatenate(var)
 
     # SNR from Erben (2001), eq. 16, extended to multiple bands
     # SNR = (I @ W) / sqrt(W @ Sigma^2 @ W)
     # with W = morph, Sigma^2 = diagonal variance matrix
-    snr = (M * W).sum() / jnp.sqrt(((var * W) * W).sum())
+    snr = (m * w).sum() / jnp.sqrt(((var * w) * w).sum())
     return snr
 
 
 class Moments(dict):
-    def __init__(self, component, N=2, center=None, weight=None):
-        """Moments of the brightness distribution
+    """Base Moments class"""
+
+    def __init__(self, component, N=2, center=None, weight=None):  # noqa: N803
+        r"""Moments of the brightness distribution
 
         The dict is accessed by keys, which denote the power of y/x of the specific Moment:
         `m[p,q] = \int dx dy f(y,x) y^p x^q`.
@@ -176,10 +178,7 @@ class Moments(dict):
         """
         super().__init__()
 
-        if isinstance(component, Component):
-            model = component()
-        else:
-            model = component
+        model = component() if isinstance(component, Component) else component
 
         if weight is None:
             weight = 1
@@ -195,7 +194,7 @@ class Moments(dict):
         for n in range(self.N + 1):
             for m in range(n + 1):
                 # moments ordered by power in y, then x
-                self[m, n - m] = (grid_y ** m * grid_x ** (n - m) * model * weight).sum(axis=(-2, -1))
+                self[m, n - m] = (grid_y**m * grid_x ** (n - m) * model * weight).sum(axis=(-2, -1))
 
             if n == 1:
                 # shift grid to produce centered moments
@@ -244,8 +243,7 @@ class Moments(dict):
         float
         """
         flux = self[0, 0]
-        T = (self[0, 2] / flux * self[2, 0] / flux - (self[1, 1] / flux) ** 2) ** (1 / 4)
-        return T
+        return (self[0, 2] / flux * self[2, 0] / flux - (self[1, 1] / flux) ** 2) ** (1 / 4)
 
     @property
     def ellipticity(self):
@@ -276,43 +274,40 @@ class Moments(dict):
         None
         """
         g = self
-        Nmin = min(p.order, g.order)
+        n_min = min(p.order, g.order)
 
         # use explicit relations for up to 2nd moments
         g[0, 0] /= p[0, 0]
-        if Nmin >= 1:
+        if n_min >= 1:
             g[0, 1] -= g[0, 0] * p[0, 1]
             g[1, 0] -= g[0, 0] * p[1, 0]
             g[0, 1] /= p[0, 0]
             g[1, 0] /= p[0, 0]
-            if Nmin >= 2:
+            if n_min >= 2:
                 g[0, 2] -= g[0, 0] * p[0, 2] + 2 * g[0, 1] * p[0, 1]
                 g[1, 1] -= g[0, 0] * p[1, 1] + g[0, 1] * p[1, 0] + g[1, 0] * p[0, 1]
                 g[2, 0] -= g[0, 0] * p[2, 0] + 2 * g[1, 0] * p[1, 0]
-                if Nmin >= 3:
+                if n_min >= 3:
                     # use general formula
-                    for n in range(3, Nmin + 1):
+                    for n in range(3, n_min + 1):
                         for i in range(n + 1):
                             for j in range(n - i):
                                 for k in range(i):
-                                    for l in range(j):
-                                        g[i, j] -= (
-                                                binomial(i, k)
-                                                * binomial(j, l)
-                                                * g[k, l]
-                                                * p[i - k, j - l]
-                                        )
+                                    for l in range(j):  # noqa: E741
+                                        g[i, j] -= binomial(i, k) * binomial(j, l) * g[k, l] * p[i - k, j - l]
                                 for k in range(i):
                                     g[i, j] -= binomial(i, k) * g[k, j] * p[i - k, 0]
-                                for l in range(j):
+                                for l in range(j):  # noqa: E741
                                     g[i, j] -= binomial(j, l) * g[i, l] * p[0, j - l]
                         g[i, j] /= p[0, 0]
 
     def resize(self, c):
-        """Change moments for a change of factor `c` of the size/spatial resolution of the defining frame
+        """Change moments for a change of factor `c` of the size/spatial resolution
+        of the defining frame
 
-        This operation arises when one adjust the moments for a change in the size of pixels of the defining frame, e.g.
-        when asking "what would the moments be if the pixels were factor c smaller (or the source c times larger)"?
+        This operation arises when one adjust the moments for a change in the size
+        of pixels of the defining frame, e.g. when asking "what would the moments
+        be if the pixels were factor c smaller (or the source c times larger)"?
         The moments are changed in place.
 
         See Teague (1980), "Image  analysis via the general  theory of moments", eq. 34 for details.
@@ -352,23 +347,28 @@ class Moments(dict):
         -------
         None
         """
-        assert u.get_physical_type(phi) == "angle" # check that it's an angle with a suitable unit
+        assert u.get_physical_type(phi) == "angle"  # check that it's an angle with a suitable unit
         phi = phi.to(u.deg).value
-        phi = phi * math.pi / 180 # radian
+        phi = phi * math.pi / 180  # radian
 
         mu_p = {}
-        for n in range(self.N+1):
-            for m in range(n+1):
+        for n in range(self.N + 1):
+            for m in range(n + 1):
                 j = m
-                k = n-m
+                k = n - m
                 value = 0
-                for r in range(j+1):
-                    for s in range(k+1):
-                        value += (-1)**(k-s) * binomial(j, r)*binomial(k, s) *\
-                              jnp.cos(phi)**(j-r+s) * jnp.sin(phi)**(k+r-s) *\
-                                  self[j+k-r-s, r+s]
-                mu_p[m, n-m] = value
-        
+                for r in range(j + 1):
+                    for s in range(k + 1):
+                        value += (
+                            (-1) ** (k - s)
+                            * binomial(j, r)
+                            * binomial(k, s)
+                            * jnp.cos(phi) ** (j - r + s)
+                            * jnp.sin(phi) ** (k + r - s)
+                            * self[j + k - r - s, r + s]
+                        )
+                mu_p[m, n - m] = value
+
         for e in self:
             self[e] = mu_p[e]
 
@@ -381,19 +381,21 @@ class Moments(dict):
         Parameters
         ----------
         wcs_in: :py:class:`astropy.wcs.Wcsprm`
+            WCS of the frame with original moments
         wcs_out: :py:class:`astropy.wcs.Wcsprm`
+            WCS of the frame to which the moments should be adjusted
 
         Returns
         -------
         None
         """
 
-        flux_in = self[0,0]
+        flux_in = self[0, 0]
 
         if (wcs_in is not None) and (wcs_out is not None):
             # Rescale moments (amplitude rescaling)
-            scale_in = get_scale(wcs_in) * 60 ** 2  # arcsec
-            scale_out = get_scale(wcs_out) * 60 ** 2  # arcsec
+            scale_in = get_scale(wcs_in) * 60**2  # arcsec
+            scale_out = get_scale(wcs_out) * 60**2  # arcsec
             c = jnp.array(scale_in) / jnp.array(scale_out)
             self.resize(c)
 
@@ -408,13 +410,15 @@ class Moments(dict):
             sign_out = get_sign(wcs_out)
             self.resize(sign_in * sign_out)
 
-            flux_out = self[0,0]
-            
+            flux_out = self[0, 0]
+
             for key in self.keys():
-                self[key]  /= flux_out/flux_in
-                
+                self[key] /= flux_out / flux_in
+
+
 # def moments(component, N=2, center=None, weight=None):
 #    return Moments(component, N=N, center=center, weight=weight)
+
 
 # adapted from  https://github.com/pmelchior/shapelens/blob/src/DEIMOS.cc
 def binomial(n, k):
@@ -428,6 +432,3 @@ def binomial(n, k):
         result *= n - i + 1
         result //= i
     return result
-
-
-
