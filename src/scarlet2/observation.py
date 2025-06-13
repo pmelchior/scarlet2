@@ -74,8 +74,8 @@ class Observation(Module):
         # 1 / [(2pi)^1/2 (sigma^2)^1/2]
         # with inverse variance weights: sigma^2 = 1/weight
         # full likelihood is sum over all (unmasked) pixels in data
-        D = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
-        log_norm = D / 2 * jnp.log(2 * jnp.pi)
+        d = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
+        log_norm = d / 2 * jnp.log(2 * jnp.pi)
         log_like = -jnp.sum(self.weights * (model_ - data) ** 2) / 2
         return log_like - log_norm
 

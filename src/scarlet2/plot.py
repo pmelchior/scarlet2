@@ -1,3 +1,8 @@
+# To be removed as part of issue #169
+# ruff: noqa: D101
+# ruff: noqa: D102
+# ruff: noqa: D103
+
 """Plotting functions"""
 
 from abc import ABC, abstractmethod
@@ -104,9 +109,9 @@ class Norm(ABC):
         """Compute total intensity image"""
         return jnp.maximum(0, im).sum(axis=0)
 
-    def clip(self, im, m, M):
-        """Clip image between m and M"""
-        return jnp.maximum(0, jnp.minimum(im - m, M - m))
+    def clip(self, im, min_value, max_value):
+        """Clip image between min_value and max_value"""
+        return jnp.maximum(0, jnp.minimum(im - min_value, max_value - min_value))
 
     def convert_to_uint8(self, im):
         """Convert three-channel image to RGB image with uint8 dtype"""
@@ -133,26 +138,28 @@ class LinearNorm(Norm):
         Parameters
         ----------
         minimum: float
+            Value that will be mapped to 0
         maximum: float
+            Value that will be mapped to 1
         """
-        self.m, self.M = minimum, maximum
+        self.min_value, self.max_value = minimum, maximum
         super().__init__()
 
     def __call__(self, im):
-        return self.clip(im, self.m, self.M) / (self.M - self.m)
+        return self.clip(im, self.min_value, self.max_value) / (self.max_value - self.min_value)
 
 
 class LinearPercentileNorm(LinearNorm):
-    def __init__(self, img, percentiles=[1, 99]):
+    def __init__(self, img, percentiles=(1, 99)):
         """Norm that is linear between the two elements of `percentiles` of `img`
 
         Parameters
         ----------
         img: array
             Image to normalize
-        percentiles: list, optional
+        percentiles: array-like, optional
             Lower and upper percentile to consider. Pixel values below will be
-            set to zero, above to saturated.
+            set to zero, above to saturated. Default is (1, 99)
         """
         assert len(percentiles) == 2
         vmin, vmax = np.percentile(img, percentiles)
@@ -160,22 +167,24 @@ class LinearPercentileNorm(LinearNorm):
 
 
 class AsinhNorm(Norm):
-    def __init__(self, m, M, beta):
+    """AsinhNorm class"""
+
+    def __init__(self, min_value, max_value, beta):
         """Norm that scales as arcsinh(I / beta) between `m` and `M`
 
         See Lupton+(2004) https://ui.adsabs.harvard.edu/abs/2004PASP..116..133L
 
         Parameters
         ----------
-        m: float
+        min_value: float
             Minimum value to consider
-        M: float
+        max_value: float
             Maximum value to consider
         beta: float
             Turnover point of arcsinh. Below it norm behaves linear, above
             it norm approximates ln(2*I)
         """
-        self.m, self.M, self.beta = m, M, beta
+        self.min_value, self.max_value, self.beta = min_value, max_value, beta
         self._rgb_max = 1
         super().__init__()
 
@@ -194,16 +203,17 @@ class AsinhNorm(Norm):
         self._rgb_max = rgb[np.isfinite(rgb)].max() / (1 + vibrance)
 
     def __call__(self, img):
-        m = self.m
-        M = self.M
-        I = self.get_intensity(img)
+        """Compute Asinh normalized image"""
+        min_value = self.min_value
+        max_value = self.max_value
+        intensity = self.get_intensity(img)
         with np.errstate(invalid="ignore", divide="ignore"):  # n.b. np.where can't and doesn't short-circuit
             # clip between m and M
-            I_ = self.clip(I - m, 0, M - m)
+            i_ = self.clip(intensity - min_value, 0, max_value - min_value)
 
             # arcsinh scaling from Lupton+(2004)
-            f = np.arcsinh(I_ / self.beta)  # no need to normalize, done below
-            rgb = img / (I / f)[None, :, :]
+            f = np.arcsinh(i_ / self.beta)  # no need to normalize, done below
+            rgb = img / (intensity / f)[None, :, :]
 
             # keep rgb between 0 and 1 (with an allowance of self.vibrance)
             rgb = rgb / self._rgb_max
@@ -212,7 +222,9 @@ class AsinhNorm(Norm):
 
 
 class AsinhPercentileNorm(AsinhNorm):
-    def __init__(self, img, percentiles=[45, 50, 99], vibrance=0.15):
+    """AsinhPercentileNorm class"""
+
+    def __init__(self, img, percentiles=(45, 50, 99), vibrance=0.15):
         """Norm that scales as arcsinh(I / beta) between bottom and top percentile
 
         Uses the middle percentile to define the turnover `beta`. The defaults
@@ -224,16 +236,17 @@ class AsinhPercentileNorm(AsinhNorm):
         ----------
         img: array_like
             Image to normalize
-        percentile: array_like, default=[45,50,99]
+        percentiles: array_like
             Lower, middle, and upper percentile to consider. Pixel values below will be
             set to zero, above to one. Asinh turnover is given by middle percentile.
+            Default is (45,50,99)
         vibrance: float
             Allowance to exceed normalization of three-channel image.
             Makes images more vibrant but causes slight color shifts in the highlights.
         """
         assert len(percentiles) == 3
-        m, beta, M = np.percentile(img, percentiles)
-        super().__init__(m, M, beta)
+        min_value, beta, max_value = np.percentile(img, percentiles)
+        super().__init__(min_value, max_value, beta)
         super().set_rgb_max(img, vibrance=vibrance)
 
 
@@ -259,10 +272,12 @@ class AsinhAutomaticNorm(AsinhNorm):
             Observation object with weights
         channel_map: array
             Linear mapping from channels to RGB, dimensions (3, channels)
-        noise_level: float
-            Factor to be multiplied to the total noise RMS to define the turnover point
+        minimum: float
+            Minimum value to consider.
         upper_percentile: float
             Upper percentile: Pixel values above will be saturated.
+        noise_level: float
+            Factor to be multiplied to the total noise RMS to define the turnover point
         vibrance: float
             Allowance to exceed normalization of three-channel image.
             Makes images more vibrant but causes slight color shifts in the highlights.
@@ -276,18 +291,18 @@ class AsinhAutomaticNorm(AsinhNorm):
         var3 = img_to_3channel(1 / observation.weights, channel_map=channel_map)
 
         # total intensity and variance images
-        I = self.get_intensity(im3)
-        V = self.get_intensity(var3)
+        i = self.get_intensity(im3)
+        v = self.get_intensity(var3)
 
         # find upper clipping point
-        (M,) = np.percentile(I.flatten(), [upper_percentile])
-        m = minimum
+        (max_value,) = np.percentile(i.flatten(), [upper_percentile])
+        min_value = minimum
 
         # find a good turnover point for arcsinh: ~noise level
-        rms = np.median(np.sqrt(V))
+        rms = np.median(np.sqrt(v))
         beta = rms * noise_level
 
-        super().__init__(m, M, beta)
+        super().__init__(min_value, max_value, beta)
         super().set_rgb_max(im3, vibrance=vibrance)
 
 
@@ -314,17 +329,17 @@ def img_to_3channel(img, channel_map=None):
         img_ = img.reshape(1, ny, nx)
     elif len(img.shape) == 3:
         img_ = img
-    C = len(img_)
+    num_channels = len(img_)
 
     # filterWeights: channel x band
     if channel_map is None:
-        channel_map = channels_to_rgb(C)
+        channel_map = channels_to_rgb(num_channels)
     else:
         assert channel_map.shape == (3, len(img))
 
     # map channels onto RGB channels
     _, ny, nx = img_.shape
-    rgb = jnp.dot(channel_map, img_.reshape(C, -1)).reshape(3, ny, nx)
+    rgb = jnp.dot(channel_map, img_.reshape(num_channels, -1)).reshape(3, ny, nx)
 
     rgb = jnp.where(np.isfinite(rgb), rgb, 0)
 
@@ -360,10 +375,10 @@ def img_to_rgb(img, channel_map=None, fill_value=0, norm=None, mask=None):
     im3 = img_to_3channel(img, channel_map=channel_map)
     if norm is None:
         norm = LinearPercentileNorm(im3)
-    RGB = norm.make_rgb_image(*im3)
+    rgb = norm.make_rgb_image(*im3)
     if mask is not None:
-        RGB = jnp.dstack([RGB, ~mask * 255])
-    return RGB
+        rgb = jnp.dstack([rgb, ~mask * 255])
+    return rgb
 
 
 panel_size = 4.0
@@ -377,17 +392,19 @@ def observation(
     show_psf=False,
     add_labels=True,
     split_channels=False,
-    fig_kwargs=dict(),
-    title_kwargs=dict(),
-    label_kwargs={"color": "w", "ha": "center", "va": "center"},
+    fig_kwargs=None,
+    title_kwargs=None,
+    label_kwargs=None,
 ):
     """Plot observation
 
-    Show entire content of `observation`, optionally with list of sources given by `sky_coords` or a PSF image.
+    Show entire content of `observation`, optionally with list of sources given
+    by `sky_coords` or a PSF image.
 
     Parameters
     ----------
     observation: :py:class:`~scarlet2.Observation`
+        The observation object to plot
     norm: Norm, optional
         Norm to scale the intensity of `observation` into RGB 0..256
     channel_map: array, optional
@@ -396,9 +413,11 @@ def observation(
         2D coordinates (in pixel coordinates or sky coordinates).
         If in sky coordinates, the Frame of `observation` needs to have a valid WCS.
     show_psf: bool, optional
-        Whether to plot a panel with the PSF model of `observation` centered in the middle
+        Whether to plot a panel with the PSF model of `observation` centered in
+        the middle
     add_labels: bool, optional
-        Whether to plot a text label with the running number for each of the sources in `sky_coords`
+        Whether to plot a text label with the running number for each of the
+        sources in `sky_coords`
     split_channels: bool, optional
         Whether to split the observation into separate channels
     fig_kwargs: dict, optional
@@ -406,12 +425,20 @@ def observation(
     title_kwargs: dict, optional
         Additional arguments for `mpl.set_title`
     label_kwargs: dict, optional
-        Additional arguments for `mpl.text`
+        Additional arguments for `mpl.text`. Default is None and will be set to
+        `{"color": "w", "ha": "center", "va": "center"}`
 
     Returns
     -------
     mpl.Figure
     """
+    if fig_kwargs is None:
+        fig_kwargs = {}
+    if title_kwargs is None:
+        title_kwargs = {}
+    if label_kwargs is None:
+        label_kwargs = {"color": "w", "ha": "center", "va": "center"}
+
     if show_psf:
         assert observation.frame.psf is not None, "show_psf requires observation.frame.psf to be set"
         psf_model = observation.frame.psf()
@@ -487,16 +514,19 @@ def cut_square_box(arr, center, size):
     Cut out a square box from a 2D array based on the center and size.
 
     Parameters:
-    arr (numpy.ndarray): The input 2D array.
-    center (tuple): The center of the box in the format (row_center, col_center).
-    size (int): The size of the square box (side length).
+    arr: numpy.ndarray
+        The input 2D array.
+    center: tuple
+        The center of the box in the format (row_center, col_center).
+    size: int
+        The size of the square box (side length).
 
     Returns:
-    numpy.ndarray: The square box extracted from the input array.
+        numpy.ndarray: The square box extracted from the input array.
     """
 
     # get the dimensions of the data
-    obsDim = arr.ndim
+    obs_dim = arr.ndim
 
     row_center, col_center = center
     # col_center, row_center = center
@@ -511,7 +541,7 @@ def cut_square_box(arr, center, size):
     # Ensure the indices are within the array bounds
     start_row = max(0, start_row)
     start_col = max(0, start_col)
-    if obsDim == 2:
+    if obs_dim == 2:
         end_row = min(arr.shape[0], end_row)
         end_col = min(arr.shape[1], end_col)
     else:
@@ -519,14 +549,14 @@ def cut_square_box(arr, center, size):
         end_col = min(arr.shape[2], end_col)
 
     # Cut out the square box
-    if obsDim == 2:
+    if obs_dim == 2:
         square_box = arr[start_row:end_row, start_col:end_col]
     else:
         square_box = arr[:, start_row:end_row, start_col:end_col]
 
     # pad array up if needed (ie box outside array bounds)
     pad = False
-    if obsDim == 2:
+    if obs_dim == 2:
         if square_box.shape[0] < size or square_box.shape[1] < size:
             pad_low = size - square_box.shape[0]
             pad_high = size - square_box.shape[1]
@@ -538,13 +568,13 @@ def cut_square_box(arr, center, size):
             pad = True
 
     # perform the padding
-    if pad == True:
+    if pad:
         # If the square box is not the correct size, pad it with zeros
         if pad_low < 0:
             pad_low = 0
         if pad_high < 0:
             pad_high = 0
-        if obsDim <= 2:
+        if obs_dim <= 2:
             square_box = np.pad(square_box, ((pad_low, 0), (pad_high, 0)), mode="constant", constant_values=0)
         else:
             # Get the original array shape
@@ -575,8 +605,8 @@ def neural_grad(galaxy, src):
 
 def log_like(morph, spectrum, data, weights):
     model = morph[None, :, :] * spectrum[:, None, None]
-    D = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(weights == 0)
-    log_norm = D / 2 * jnp.log(2 * jnp.pi)
+    d = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(weights == 0)
+    log_norm = d / 2 * jnp.log(2 * jnp.pi)
     log_like = -jnp.sum(weights * (model - data) ** 2) / 2
     return log_like - log_norm
 
@@ -599,23 +629,25 @@ def hvp_grad(grad_f, primals, tangents):
 
 # diagonals of Hessian from HVPs
 def hvp_rad(hvp, shape):
+    """Approximate the diagonal of the Hessian"""
     max_iters = 100  # maximum number of iterations
-    H = jnp.zeros(shape, dtype=jnp.float32)
-    H_ = jnp.zeros(shape, dtype=jnp.float32)
+    h = jnp.zeros(shape, dtype=jnp.float32)
+    h_ = jnp.zeros(shape, dtype=jnp.float32)
     for i in range(max_iters):
         key = random.PRNGKey(i)
         z = random.rademacher(key, shape, dtype=jnp.float32)
-        H += jnp.multiply(z, hvp(z))
+        h += jnp.multiply(z, hvp(z))
         if i > 0:
-            norm = jnp.linalg.norm(H / (i + 1) - H_ / i, ord=2)
-            if norm < 1e-6 * jnp.linalg.norm(H / (i + 1), ord=2):  # gets reasonable results with 1e-2
+            norm = jnp.linalg.norm(h / (i + 1) - h_ / i, ord=2)
+            if norm < 1e-6 * jnp.linalg.norm(h / (i + 1), ord=2):  # gets reasonable results with 1e-2
                 break
-        H_ = H
-    return H / (i + 1)
+        h_ = h
+    return h / (i + 1)
 
 
 # TODO: fix the jit compilation errors here
 def hallucination_score(scene, obs, src_num):
+    """Calculate the hallucination score of a source in `scene` based on `obs`"""
     src = scene.sources[src_num]
     center = np.array(src.morphology.bbox.center)[::-1]
     morph = src.morphology.data
@@ -631,7 +663,7 @@ def hallucination_score(scene, obs, src_num):
     weights = obs.weights
 
     # jit the HVP for this loss and this morph model
-    f = lambda morph: log_like(morph, spectrum, data, weights)
+    f = lambda morph: log_like(morph, spectrum, data, weights)  # noqa: E371
     jit_hvp_x = jit(lambda z: hvp(f, (morph,), (z,)))
     hvp_ll = hvp_rad(jit_hvp_x, morph.shape)
 
@@ -644,11 +676,12 @@ def hallucination_score(scene, obs, src_num):
 
 
 def confidence(scene, observation):
+    """The confidence of each source in `scene` based on the hallucination score"""
     sources = scene.sources
     n_sources = len(sources)
     metrics = np.zeros(n_sources)
-    for k, src in enumerate(sources):
-        hallucination, metric = hallucination_score(scene, observation, k)
+    for k, _ in enumerate(sources):
+        _, metric = hallucination_score(scene, observation, k)
         metrics[k] = metric
     return metrics
 
@@ -666,20 +699,22 @@ def sources(
     model_mask=None,
     add_markers=True,
     add_boxes=False,
-    fig_kwargs=dict(),
-    title_kwargs=dict(),
-    marker_kwargs={"color": "w", "marker": "x", "mew": 1, "ms": 10},
-    box_kwargs={"facecolor": "none", "edgecolor": "w", "lw": 0.5},
+    fig_kwargs=None,
+    title_kwargs=None,
+    marker_kwargs=None,
+    box_kwargs=None,
 ):
     """Plot all sources in `scene`
 
-    Creates one figure, with each source in `scene` occupying one row. Depending on the chosen options, multiple panels
-    per source will be created.
+    Creates one figure, with each source in `scene` occupying one row. Depending
+    on the chosen options, multiple panels per source will be created.
 
     Parameters
     ----------
     scene: :py:class:`~scarlet2.Scene`
+        The scene object containing the sources and their models
     observation: :py:class:`~scarlet2.Observation`, optional
+        The observation containing the dataobservation: :py:class:`~scarlet2.Observation`, optional
     norm: Norm, optional
         Norm to scale the intensity of `observation` into RGB 0..256
     channel_map: array, optional
@@ -695,6 +730,8 @@ def sources(
         Whether to show the model of each source rendered into the frame of `observation`
     show_spectrum: bool, optional
         Whether to show the spectrum of each source
+    model_mask: array, optional
+        A mask to apply to the model. If not given, no mask is applied
     add_markers: bool, optional
         Whether to plot a marker at the center for each source
         Requires the source to have a `center` attribute.
@@ -705,14 +742,25 @@ def sources(
     title_kwargs: dict, optional
         Additional arguments for `mpl.set_title`
     marker_kwargs: dict, optional
-        Additional arguments for `mpl.plot` of the source centers
+        Additional arguments for `mpl.plot` of the source centers. Defaults to
+        {"color": "w", "marker": "x", "mew": 1, "ms": 10}
     box_kwargs: dict, optional
-        Additional arguments for `mpl.Polygon`
+        Additional arguments for `mpl.Polygon`.
+        Defaults to {"facecolor": "none", "edgecolor": "w", "lw": 0.5}
 
     Returns
     -------
     mpl.Figure
     """
+    if fig_kwargs is None:
+        fig_kwargs = {}
+    if title_kwargs is None:
+        title_kwargs = {}
+    if marker_kwargs is None:
+        marker_kwargs = {"color": "w", "marker": "x", "mew": 1, "ms": 10}
+    if box_kwargs is None:
+        box_kwargs = {"facecolor": "none", "edgecolor": "w", "lw": 0.5}
+
     sources = scene.sources
     n_sources = len(sources)
     panels = sum((show_model, show_hallucination, show_observed, show_rendered, show_spectrum))
@@ -843,19 +891,21 @@ def scene(
     add_labels=True,
     add_boxes=False,
     split_channels=False,
-    fig_kwargs=dict(),
-    title_kwargs=dict(),
-    label_kwargs={"color": "w", "ha": "center", "va": "center"},
-    box_kwargs={"facecolor": "none", "edgecolor": "w", "lw": 0.5},
+    fig_kwargs=None,
+    title_kwargs=None,
+    label_kwargs=None,
+    box_kwargs=None,
 ):
-    """Plot all sources to recreate the scence.
+    """Plot all sources to recreate the scene.
     The functions provide a fast way of evaluating the quality of the entire model,
     i.e. the combination of all scenes that seek to fit the observation.
 
     Parameters
     ----------
     scene: :py:class:`~scarlet2.Scene`
+        The scene object containing the sources and their models
     observation: :py:class:`~scarlet2.Observation`, optional
+        The observation containing the data
     norm: Norm
         Norm to scale the intensity of `observation` into RGB 0..256
     channel_map: array_like
@@ -868,7 +918,7 @@ def scene(
         Whether the model, rendered to match the observation, is shown
     show_residual: bool
         Whether the residuals between rendered model and observation is shown
-    add_label: bool
+    add_labels: bool
         Whether each source is labeled with its numerical index in the source list
     add_boxes: bool
         Whether each source box is shown
@@ -879,14 +929,23 @@ def scene(
     title_kwargs: dict
         kwargs for plt.title()
     label_kwargs: dict
-        kwargs for source labels
+        kwargs for source labels, default {"color": "w", "ha": "center", "va": "center"}
     box_kwargs: dict
-        kwargs for source boxes
+        kwargs for source boxes, default {"facecolor": "none", "edgecolor": "w", "lw": 0.5}
 
     Returns
     -------
     mpl.Figure
     """
+
+    if fig_kwargs is None:
+        fig_kwargs = {}
+    if title_kwargs is None:
+        title_kwargs = {}
+    if label_kwargs is None:
+        label_kwargs = {"color": "w", "ha": "center", "va": "center"}
+    if box_kwargs is None:
+        box_kwargs = {"facecolor": "none", "edgecolor": "w", "lw": 0.5}
 
     # for animations with multiple scenes
     if hasattr(scene, "__iter__"):
@@ -947,7 +1006,7 @@ def scene(
             panel += 1
 
         if show_observed or show_rendered:
-            if split_channels:
+            if split_channels:  # noqa: SIM108
                 mask_ = mask[sel]
             else:
                 # Mask any pixels with zero weight in all channels
@@ -956,7 +1015,7 @@ def scene(
                 mask_ = None
 
         if show_observed:
-            observed_img = ax[row, panel].imshow(
+            _ = ax[row, panel].imshow(
                 img_to_rgb(data[sel], norm=norm, channel_map=channel_map, mask=mask_),
                 origin="lower",
             )
@@ -989,7 +1048,7 @@ def scene(
                     start = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(start))).flatten()
                     stop = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(stop))).flatten()
                     box_coords = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
-                    for panel in range(panel, panels):
+                    for panel in range(panel, panels):  # noqa: B020
                         poly = Polygon(box_coords, closed=True, **box_kwargs)
                         ax[row, panel].add_artist(poly)
 
@@ -1001,7 +1060,7 @@ def scene(
                     panel = 1
                 if observation is not None:
                     center = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
-                    for panel in range(panel, panels):
+                    for panel in range(panel, panels):  # noqa: B020
                         ax[row, panel].text(*center, k, **label_kwargs)
 
     fig.tight_layout()

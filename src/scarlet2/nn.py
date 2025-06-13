@@ -1,11 +1,18 @@
+# To be removed as part of issue #168
+# ruff: noqa: D101
+# ruff: noqa: D102
+# ruff: noqa: D103
+# ruff: noqa: D106
+
 """Neural network priors"""
+from functools import partial
 
 try:
     import numpyro.distributions as dist
     import numpyro.distributions.constraints as constraints
 
-except ImportError:
-    raise ImportError("scarlet2.nn requires numpyro.")
+except ImportError as err:
+    raise ImportError("scarlet2.nn requires numpyro.") from err
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -77,8 +84,10 @@ def calc_grad(x, model):
 
     Parameters
     ----------
-    x : array of the data
-    model : the model to calculate the score function
+    x:
+        array of the data
+    model:
+        the model to calculate the score function
 
     Returns
     -------
@@ -109,7 +118,6 @@ def vgrad(f, x):
 # Here we define a custom vjp for the log_prob function
 # such that for gradient calls in jax, the score prior
 # is returned
-from functools import partial
 
 
 @partial(custom_vjp, nondiff_argnums=(0,))

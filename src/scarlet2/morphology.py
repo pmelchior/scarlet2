@@ -18,7 +18,7 @@ class Morphology(Module):
 
 
 class ProfileMorphology(Morphology):
-    """Base class for morpholgies based on a radial profile"""
+    """Base class for morphologies based on a radial profile"""
 
     size: float
     """Size of the profile
@@ -61,50 +61,59 @@ class ProfileMorphology(Morphology):
         """
         return self._shape
 
-    def f(self, R2):
+    def f(self, r2):
         """Radial profile function
 
         Parameters
         ----------
-        R2: float or array
+        r2: float or array
             Radius (distance from the center) squared
         """
         raise NotImplementedError
 
-    def __call__(self, delta_center=jnp.zeros(2)):
-        _Y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) + delta_center[-2]
-        _X = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) + delta_center[-1]
+    def __call__(self, delta_center=jnp.zeros(2)):  # noqa: B008
+        """Evaluate the model"""
+        _y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) + delta_center[-2]
+        _x = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) + delta_center[-1]
 
         if self.ellipticity is None:
-            R2 = _Y[:, None] ** 2 + _X[None, :] ** 2
+            r2 = _y[:, None] ** 2 + _x[None, :] ** 2
         else:
             e1, e2 = self.ellipticity
             g_factor = 1 / (1.0 + jnp.sqrt(1.0 - (e1**2 + e2**2)))
             g1, g2 = self.ellipticity * g_factor
-            __X = ((1 - g1) * _X[None, :] - g2 * _Y[:, None]) / jnp.sqrt(1 - (g1**2 + g2**2))
-            __Y = (-g2 * _X[None, :] + (1 + g1) * _Y[:, None]) / jnp.sqrt(1 - (g1**2 + g2**2))
-            R2 = __Y**2 + __X**2
+            __x = ((1 - g1) * _x[None, :] - g2 * _y[:, None]) / jnp.sqrt(1 - (g1**2 + g2**2))
+            __y = (-g2 * _x[None, :] + (1 + g1) * _y[:, None]) / jnp.sqrt(1 - (g1**2 + g2**2))
+            r2 = __y**2 + __x**2
 
-        R2 /= self.size**2
-        R2 = jnp.maximum(R2, 1e-3)  # prevents infs at R2 = 0
-        morph = self.f(R2)
+        r2 /= self.size**2
+        r2 = jnp.maximum(r2, 1e-3)  # prevents infs at R2 = 0
+        morph = self.f(r2)
         return morph
 
 
 class GaussianMorphology(ProfileMorphology):
     """Gaussian radial profile"""
 
-    def f(self, R2):
-        return jnp.exp(-R2 / 2)
+    def f(self, r2):
+        """Radial profile function
 
-    def __call__(self, delta_center=jnp.zeros(2)):
+        Parameters
+        ----------
+        r2: float or array
+            Radius (distance from the center) squared
+        """
+        return jnp.exp(-r2 / 2)
+
+    def __call__(self, delta_center=jnp.zeros(2)):  # noqa: B008
+        """Evaluate the model"""
         # faster circular 2D Gaussian: instead of N^2 evaluations, use outer product of 2 1D Gaussian evals
         if self.ellipticity is None:
-            _Y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) + delta_center[-2]
-            _X = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) + delta_center[-1]
+            _y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) + delta_center[-2]
+            _x = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) + delta_center[-1]
 
             # with pixel integration
-            f = lambda x, s: 0.5 * (
+            f = lambda x, s: 0.5 * (  # noqa: E731
                 1
                 - jax.scipy.special.erfc((0.5 - x) / jnp.sqrt(2) / s)
                 + 1
@@ -113,7 +122,7 @@ class GaussianMorphology(ProfileMorphology):
             # # without pixel integration
             # f = lambda x, s: jnp.exp(-(x ** 2) / (2 * s ** 2)) / (jnp.sqrt(2 * jnp.pi) * s)
 
-            return jnp.outer(f(_Y, self.size), f(_X, self.size))
+            return jnp.outer(f(_y, self.size), f(_x, self.size))
 
         else:
             return super().__call__(delta_center)
@@ -152,15 +161,15 @@ class GaussianMorphology(ProfileMorphology):
         -------
         GaussianMorphology
         """
-        T = g.size
+        t = g.size
         ellipticity = g.ellipticity
 
         # create image of Gaussian with these 2nd moments
-        if jnp.isfinite(T) and jnp.isfinite(ellipticity).all():
-            morph = GaussianMorphology(T, ellipticity, shape=shape)
+        if jnp.isfinite(t) and jnp.isfinite(ellipticity).all():
+            morph = GaussianMorphology(t, ellipticity, shape=shape)
         else:
             raise ValueError(
-                f"Gaussian morphology not possible with size={T}, and ellipticity={ellipticity}!"
+                f"Gaussian morphology not possible with size={t}, and ellipticity={ellipticity}!"
             )
         return morph
 
@@ -175,7 +184,14 @@ class SersicMorphology(ProfileMorphology):
         self.n = n
         super().__init__(size, ellipticity=ellipticity, shape=shape)
 
-    def f(self, R2):
+    def f(self, r2):
+        """Radial profile function
+
+        Parameters
+        ----------
+        r2: float or array
+            Radius (distance from the center) squared
+        """
         n = self.n
         n2 = n * n
         # simplest form of bn: Capaccioli (1989)
@@ -192,12 +208,12 @@ class SersicMorphology(ProfileMorphology):
 
         # Graham & Driver 2005, eq. 1
         # we're given R^2, so we use R2^(0.5/n) instead of 1/n
-        return jnp.exp(-bn * (R2 ** (0.5 / n) - 1))
+        return jnp.exp(-bn * (r2 ** (0.5 / n) - 1))
 
 
-prox_plus = lambda x: jnp.maximum(x, 0)
-prox_soft = lambda x, thresh: jnp.sign(x) * prox_plus(jnp.abs(x) - thresh)
-prox_soft_plus = lambda x, thresh: prox_plus(prox_soft(x, thresh))
+prox_plus = lambda x: jnp.maximum(x, 0)  # noqa: E731
+prox_soft = lambda x, thresh: jnp.sign(x) * prox_plus(jnp.abs(x) - thresh)  # noqa: E731
+prox_soft_plus = lambda x, thresh: prox_plus(prox_soft(x, thresh))  # noqa: E731
 
 
 class StarletMorphology(Morphology):
@@ -216,14 +232,13 @@ class StarletMorphology(Morphology):
     """Whether the coefficients are restricted to non-negative values"""
 
     def __call__(self, **kwargs):
-        if self.positive:
-            f = prox_soft_plus
-        else:
-            f = prox_soft
+        """Evaluate the model"""
+        f = prox_soft_plus if self.positive else prox_soft
         return starlet_reconstruction(f(self.coeffs, self.l1_thresh))
 
     @property
     def shape(self):
+        """Shape (2D) of the morphology model"""
         return self.coeffs.shape[-2:]  # wavelet coeffs: scales x n1 x n2
 
     @staticmethod

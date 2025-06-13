@@ -10,8 +10,8 @@ from astropy.coordinates import SkyCoord
 class Module(eqx.Module):
     """Scarlet2 base module
 
-    Derives directly from :py:class:`equinox.Module`, i.e. from python dataclasses, and adds extra functionality to deal
-    with optimizable parameters.
+    Derives directly from :py:class:`equinox.Module`, i.e. from python dataclasses,
+    and adds extra functionality to deal with optimizable parameters.
     """
 
     def __call__(self):
@@ -54,7 +54,7 @@ class Module(eqx.Module):
         :py:class:`Module`
             Modified module. All other module components are unchanged.
         """
-        where = lambda model: model.get(parameters)
+        where = lambda model: model.get(parameters)  # noqa: E731
         return eqx.tree_at(where, self, replace=values)
 
     def get_filter_spec(self, parameters):
@@ -71,7 +71,7 @@ class Module(eqx.Module):
             requested data arrays for `parameters`
         """
         filtered = jax.tree_util.tree_map(lambda _: False, self)
-        where = lambda model: model.get(parameters)
+        where = lambda model: model.get(parameters)  # noqa: E731
         values = (True,) * len(parameters)
         filtered = eqx.tree_at(where, filtered, replace=values)
         if all(jax.tree_util.tree_leaves(filtered)):
@@ -80,6 +80,8 @@ class Module(eqx.Module):
 
 
 class Parameter:
+    """Class representing a single optimizable parameter"""
+
     def __init__(self, node, name=None, constraint=None, prior=None, stepsize=0):
         """Definition of optimizable parameter
 
@@ -89,15 +91,19 @@ class Parameter:
             Data portion of a member of :py:class:`~scarlet2.Module`
         name: str, optional
             Name to assign to this parameter
-            If not set, uses :py:mod:`varname` to determine the name `node` has within its module.
+            If not set, uses :py:mod:`varname` to determine the name `node` has
+            within its module.
         constraint: :py:class:`numpyro.distributions.constraints.Constraint`, optional
-            Region over which the parameter value is valid. Contains a bijective transformation to reach this region.
-            Cannot be used at the same time as `prior`.
+            Region over which the parameter value is valid. Contains a bijective
+            transformation to reach this region. Cannot be used at the same time
+            as `prior`.
         prior: :py:class:`numpyro.distributions.distribution.Distribution`, optional
             Distribution to determine the probability of a parameter value.
-            This is used by the optimization in :py:meth:`scarlet2.Scene.fit` and :py:meth:`scarlet2.Scene.sample`.
+            This is used by the optimization in :py:meth:`scarlet2.Scene.fit`
+            and :py:meth:`scarlet2.Scene.sample`.
         stepsize: (float, callable)
-            Step size, or function to determine it (e.g. :py:func:`~scarlet2.relative_step`) for parameter updates.
+            Step size, or function to determine it
+            (e.g. :py:func:`~scarlet2.relative_step`) for parameter updates.
             This is used by the optimization in :py:meth:`scarlet2.Scene.fit`.
 
         See Also
@@ -125,8 +131,8 @@ class Parameter:
         if self.constraint is not None:
             try:
                 from numpyro.distributions.transforms import biject_to
-            except ImportError:
-                raise ImportError("scarlet2.Parameter requires numpyro.")
+            except ImportError as err:
+                raise ImportError("scarlet2.Parameter requires numpyro.") from err
             # transformation to unconstrained parameters
             self.constraint_transform = biject_to(self.constraint)
 
@@ -150,6 +156,8 @@ class Parameter:
 
 
 class Parameters:
+    """Collection class that contains parameters"""
+
     def __init__(self, base):
         """Collection of optimizable parameters
 
@@ -175,8 +183,9 @@ class Parameters:
         >>> maxiter = 200
         >>> scene_ = scene.fit(observation, parameters, max_iter=maxiter)
 
-        This defines a scene with two sources, initialized with their respective `center`, `spectrum`, and `morphology`
-        parameters. It then fits `observation` by adjusting only the spectrum array of the first source for 200 steps.
+        This defines a scene with two sources, initialized with their respective
+        `center`, `spectrum`, and `morphology` parameters. It then fits `observation`
+        by adjusting only the spectrum array of the first source for 200 steps.
 
         See Also
         --------
@@ -233,8 +242,9 @@ class Parameters:
 
         Parameters
         ----------
-        parameter: :py:class:`~scarlet2.Parameter`
-            Parameter to be removed. Silently ignores if `parameter` is not in the collection.
+        name: str
+            Name of the parameter to be removed. Silently ignores if named parameter
+            is not in the collection.
         """
         for i, param in enumerate(self._params):
             if param.name == name:
@@ -249,6 +259,7 @@ class Parameters:
         Parameters
         ----------
         i: (int,slice)
+            Index or slice to access the collection.
 
         Returns
         -------
@@ -267,7 +278,8 @@ class Parameters:
         Parameters
         ----------
         root: :py:class:`~scarlet2.Module`
-            The module to extract parameters from. Can be different from `base`, but must have the same Pytree structure
+            The module to extract parameters from. Can be different from `base`,
+            but must have the same Pytree structure
 
         Returns
         -------
@@ -283,8 +295,9 @@ class Parameters:
     def to_pixels(self, parameter):
         """Convert parameter to pixel coordinates of the model frame
 
-        scarlet2 models are optimized in pixel coordinates (defined by the model frame of :py:class:`~scarlet2.Scene`.
-        Therefore parameters (or their priors, stepsize, etc) that are defined in :py:mod:`astropy.units` or
+        scarlet2 models are optimized in pixel coordinates (defined by the model
+        frame of :py:class:`~scarlet2.Scene`. Therefore parameters (or their priors,
+        stepsize, etc) that are defined in :py:mod:`astropy.units` or
         :py:class:`astropy.SkyCoord` need to be transformed to pixel coordinates.
 
         See details in issue :issue:`51`.
@@ -311,14 +324,15 @@ class Parameters:
                     if isinstance(attrib, SkyCoord):
                         setattr(field, name, frame.get_pixel(attrib))
                         used_sky_coords_prior = fieldname == "prior"
-                except:
+                except Exception as e:
+                    print(f"Error processing fieldname '{fieldname}'. - {e}")
                     pass
 
             if used_sky_coords_prior:
                 try:
                     import numpyro.distributions as dist
-                except ImportError:
-                    raise ImportError("scarlet2.Parameter requires numpyro.")
+                except ImportError as err:
+                    raise ImportError("scarlet2.Parameter requires numpyro.") from err
 
                 # converting SkyCoord to Array in numpyro distributions requires
                 # to update batch and event shape
