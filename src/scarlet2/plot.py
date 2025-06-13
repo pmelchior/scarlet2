@@ -5,7 +5,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as random
 import matplotlib.animation as animation
-import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 import numpy as np
 from jax import jvp, grad, jit
@@ -624,7 +623,7 @@ def hallucination_score(scene, obs, src_num):
     hvp_nn = np.array(hvp_nn)
 
     model_scene = scene()
-    morph = model_scene[src_num] 
+    morph = model_scene[src_num]  # FIXME: this must be wrong because that is a channel image, not a source image
     spectrum = jnp.array((1,))
     data = obs.data
     weights = obs.weights
@@ -657,7 +656,6 @@ def sources(
         norm=None,
         channel_map=None,
         show_model=True,
-        show_hallucination=False,
         show_observed=False,
         show_rendered=False,
         show_spectrum=True,
@@ -678,15 +676,14 @@ def sources(
     ----------
     scene: :py:class:`~scarlet2.Scene`
     observation: :py:class:`~scarlet2.Observation`, optional
+        The observation to render the sources for, or to show the data of.
+        Only needed when `show_observed` or `show_rendered` is True.
     norm: Norm, optional
         Norm to scale the intensity of `observation` into RGB 0..256
     channel_map: array, optional
         Linear mapping from channels to RGB, dimensions (3, channels)
     show_model: bool, optional
         Whether to show the internal model of each source
-    show_hallucination: bool, optional
-        Whether to show the hallucination score of each source.
-        See Sampson & Melchior (arXiv:2306.13272)
     show_observed: bool, optional
         Whether to show the observations in the same region as the source
     show_rendered: bool, optional
@@ -713,7 +710,7 @@ def sources(
     """
     sources = scene.sources
     n_sources = len(sources)
-    panels = sum((show_model, show_hallucination,show_observed, show_rendered, show_spectrum))
+    panels = sum((show_model, show_observed, show_rendered, show_spectrum))
 
     figsize = fig_kwargs.pop("figsize", None)
     if figsize is None:
@@ -721,7 +718,6 @@ def sources(
 
     fig, ax = plt.subplots(n_sources, panels, figsize=figsize, squeeze=False, **fig_kwargs)
 
-    skipped = 0
     for k, src in enumerate(sources):
 
         center = np.array(src.center)[::-1]
@@ -734,43 +730,18 @@ def sources(
         if show_model:
             # Show the unrendered model in it's bbox
             extent = src.bbox.get_extent()
-            ax[k - skipped][panel].imshow(
+            ax[k][panel].imshow(
                 img_to_rgb(model, norm=norm, channel_map=channel_map, mask=model_mask),
                 extent=extent,
                 origin="lower",
             )
-            ax[k - skipped][panel].set_title("Model Source {}".format(k), **title_kwargs)
+            ax[k][panel].set_title("Model Source {}".format(k), **title_kwargs)
             if center is not None and add_markers:
-                ax[k - skipped][panel].plot(*center, **marker_kwargs)
-            panel += 1
-
-        if show_hallucination:
-            # FIXME: outdated code
-            # Cannot be done here because priors are attached to parameters, which are not passed to this function
-            # Better to create separate plot.hallucination() only on sources with priors
-
-            # must use a prior to get a hallucination score
-            _, info = src.get_parameters(return_info=True)['morphology.data']
-            assert (info["prior"] is not None), "Must use a prior to get a hallucination score"
-
-            # Show the unrendered model in it's bbox
-            hallucination, metric = hallucination_score(scene, observation, k)
-            extent = src.bbox.get_extent()
-            true_max = np.max(np.abs(hallucination))
-            im = ax[k - skipped][panel].imshow(hallucination,
-                norm=colors.SymLogNorm(linthresh=1, linscale=1,
-                        vmin=-true_max, vmax=true_max, base=10),
-                cmap="RdBu",
-                extent=extent,
-                origin="lower",
-            )
-            title = 'Confidence: ' + str(jnp.round(metric,3))
-            ax[k - skipped][panel].set_title(title, **title_kwargs)
-            if center is not None and add_markers:
-                ax[k - skipped][panel].plot(*center, **marker_kwargs)
+                ax[k][panel].plot(*center, **marker_kwargs)
             panel += 1
 
         if show_rendered or show_observed:
+            assert observation is not None, "show_rendered or show_observed requires observation"
             extent = observation.frame.bbox.get_extent()
 
         # model in observation frame
@@ -778,33 +749,32 @@ def sources(
             model = scene.evaluate_source(src)
             model_ = observation.render(model)
 
-            ax[k - skipped][panel].imshow(
+            ax[k][panel].imshow(
                 img_to_rgb(model_, norm=norm, channel_map=channel_map, mask=model_mask),
                 extent=extent,
                 origin="lower",
             )
-            ax[k - skipped][panel].set_title("Model Source {} Rendered".format(k), **title_kwargs)
+            ax[k][panel].set_title("Model Source {} Rendered".format(k), **title_kwargs)
             if add_markers:
-                ax[k - skipped][panel].plot(*center, **marker_kwargs)
+                ax[k][panel].plot(*center, **marker_kwargs)
             if add_boxes:
                 poly = Polygon(box_coords, closed=True, **box_kwargs)
-                ax[k - skipped][panel].add_artist(poly)
+                ax[k][panel].add_artist(poly)
             panel += 1
 
         if show_observed:
             # Center the observation on the source and display it
-            _images = observation.data
-            ax[k - skipped][panel].imshow(
-                img_to_rgb(_images, norm=norm, channel_map=channel_map),
+            ax[k][panel].imshow(
+                img_to_rgb(observation.data, norm=norm, channel_map=channel_map),
                 extent=extent,
                 origin="lower",
             )
-            ax[k - skipped][panel].set_title("Observation".format(k), **title_kwargs)
+            ax[k][panel].set_title("Observation".format(k), **title_kwargs)
             if add_markers:
-                ax[k - skipped][panel].plot(*center, **marker_kwargs)
+                ax[k][panel].plot(*center, **marker_kwargs)
             if add_boxes:
                 poly = Polygon(box_coords, closed=True, **box_kwargs)
-                ax[k - skipped][panel].add_artist(poly)
+                ax[k][panel].add_artist(poly)
             panel += 1
 
         if show_spectrum:
@@ -812,14 +782,13 @@ def sources(
             spectra = [measure.flux(src), ] + [measure.flux(component) for component in src.components]
             
             for spectrum in spectra:
-                ax[k-skipped][panel].plot(spectrum)
-            ax[k-skipped][panel].set_xticks(range(len(spectrum)))
-            if observation is not None and hasattr(observation.frame,
-                                                   "channels") and observation.frame.channels is not None:
-                ax[k - skipped][panel].set_xticklabels(observation.frame.channels)
-            ax[k - skipped][panel].set_title("Spectrum", **title_kwargs)
-            ax[k - skipped][panel].set_xlabel("Channel")
-            ax[k-skipped][panel].set_ylabel("Intensity")
+                ax[k][panel].plot(spectrum)
+            ax[k][panel].set_xticks(range(len(spectrum)))
+            if scene.frame.channels is not None:
+                ax[k][panel].set_xticklabels(scene.frame.channels)
+            ax[k][panel].set_title("Spectrum", **title_kwargs)
+            ax[k][panel].set_xlabel("Channel")
+            ax[k][panel].set_ylabel("Intensity")
 
     fig.tight_layout()
     return fig
