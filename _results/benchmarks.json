@@ -1,0 +1,69 @@
+{
+    "bbox_benchmarks.BoxSuite.mem_bbox_contains": {
+        "code": "class BoxSuite:\n    def mem_bbox_contains(self, edge_length):\n        \"\"\"Memory benchmark for `contains` method. Note that `edge_length` is\n        unused by this method.\"\"\"\n        this_point = (6, 7)\n        self.bb.contains(this_point)\n\n    def setup(self, edge_length):\n        \"\"\"Create a Box, for each of the different edge_lengths defined in the\n        `params` list.\"\"\"\n        self.bb = Box((edge_length, edge_length))",
+        "name": "bbox_benchmarks.BoxSuite.mem_bbox_contains",
+        "param_names": [
+            "param1"
+        ],
+        "params": [
+            [
+                "2",
+                "16",
+                "256",
+                "2048"
+            ]
+        ],
+        "type": "memory",
+        "unit": "bytes",
+        "version": "f9e7de6b1773cf0d35a808f5560e1ccf4de03f24e7b53e763b03c5f3c4c0b2f7"
+    },
+    "bbox_benchmarks.BoxSuite.time_bbox_contains": {
+        "code": "class BoxSuite:\n    def time_bbox_contains(self, edge_length):\n        \"\"\"Timing benchmark for `contains` method. Note that `edge_length` is\n        unused by this method.\"\"\"\n        this_point = (6, 7)\n        self.bb.contains(this_point)\n\n    def setup(self, edge_length):\n        \"\"\"Create a Box, for each of the different edge_lengths defined in the\n        `params` list.\"\"\"\n        self.bb = Box((edge_length, edge_length))",
+        "min_run_count": 2,
+        "name": "bbox_benchmarks.BoxSuite.time_bbox_contains",
+        "number": 0,
+        "param_names": [
+            "param1"
+        ],
+        "params": [
+            [
+                "2",
+                "16",
+                "256",
+                "2048"
+            ]
+        ],
+        "repeat": 0,
+        "rounds": 2,
+        "sample_time": 0.01,
+        "type": "time",
+        "unit": "seconds",
+        "version": "77c8800e4c8a7e2cd30d7de701b70a46141b86fdbf78ff389ca5e1d1b8553c7b",
+        "warmup_time": -1
+    },
+    "bbox_benchmarks.mem_bbox_creation": {
+        "code": "def mem_bbox_creation():\n    \"\"\"Basic memory benchmark for Box creation\"\"\"\n    bb = Box((15,15))",
+        "name": "bbox_benchmarks.mem_bbox_creation",
+        "param_names": [],
+        "params": [],
+        "type": "memory",
+        "unit": "bytes",
+        "version": "c61509a7b2510950dafb5a87a99b684485242714178d6c9d11ec89b2cf83d4b1"
+    },
+    "bbox_benchmarks.time_bbox_creation": {
+        "code": "def time_bbox_creation():\n    \"\"\"Basic timing benchmark for Box creation\"\"\"\n    bb = Box((15,15))",
+        "min_run_count": 2,
+        "name": "bbox_benchmarks.time_bbox_creation",
+        "number": 0,
+        "param_names": [],
+        "params": [],
+        "repeat": 0,
+        "rounds": 2,
+        "sample_time": 0.01,
+        "type": "time",
+        "unit": "seconds",
+        "version": "5f8f7a48f2c09ff6cac6b10db2af818b1ce3caf097a089676681e38826047127",
+        "warmup_time": -1
+    },
+    "version": 2
+}
