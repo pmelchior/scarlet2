@@ -1,0 +1,22 @@
+# Changes here will be overwritten by Copier
+_commit: v2.0.7
+_src_path: gh:lincc-frameworks/python-project-template
+author_email: peter.m.melchior@gmail.com
+author_name: Peter Melchior
+create_example_module: false
+custom_install: true
+enforce_style: []
+failure_notification: []
+include_benchmarks: true
+include_docs: false
+mypy_type_checking: none
+package_name: scarlet2
+project_license: MIT
+project_name: scarlet2
+project_organization: pmelchior
+python_versions:
+- '3.10'
+- '3.11'
+- '3.12'
+- '3.13'
+test_lowest_version: none

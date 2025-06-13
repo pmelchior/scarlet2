@@ -21,6 +21,7 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
+    "sphinx.ext.doctest",
     "sphinx_issues",
     "myst_nb",
 ]
@@ -31,7 +32,7 @@ source_suffix = {
 }
 
 templates_path = ['_templates']
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', 'jupyter_execute']
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
@@ -75,6 +76,9 @@ intersphinx_mapping = {'astropy': ('https://docs.astropy.org/en/stable/', None),
                        }
 
 issues_github_path = "pmelchior/scarlet2"
+
+nb_execution_timeout = 60
+nb_execution_excludepatterns = ["_build", "jupyter_execute"]
 
 # Napoleon settings
 napoleon_google_docstring = False
