@@ -684,9 +684,6 @@ def sources(
         Linear mapping from channels to RGB, dimensions (3, channels)
     show_model: bool, optional
         Whether to show the internal model of each source
-    show_hallucination: bool, optional
-        Whether to show the hallucination score of each source.
-        See Sampson & Melchior (arXiv:2306.13272)
     show_observed: bool, optional
         Whether to show the observations in the same region as the source
     show_rendered: bool, optional
