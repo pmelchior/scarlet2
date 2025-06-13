@@ -18,6 +18,7 @@ class Interpolant(eqx.Module):
     """Size of the interpolation kernel"""
 
     def __call__(self):
+        """Code to execute when the class is called"""
         raise NotImplementedError
 
     def kernel(self, x):
@@ -69,6 +70,7 @@ class Quintic(Interpolant):
         return jnp.zeros_like(x, dtype=x.dtype)
 
     def kernel(self, x):
+        """See parent class"""
         x = jnp.abs(x)  # quitic kernel is even
 
         b1 = x <= 1
@@ -80,6 +82,7 @@ class Quintic(Interpolant):
         )
 
     def uval(self, u):
+        """See parent class"""
         u = jnp.abs(u)
         s = jnp.sinc(u)
         piu = jnp.pi * u
@@ -91,12 +94,15 @@ class Quintic(Interpolant):
 
 
 class Lanczos(Interpolant):
+    """Lanczos interpolation class"""
+
     def __init__(self, n):
         """Lanczos interpolant
 
         Parameters
         ----------
-        n: Lanczos order
+        n: int
+            Lanczos order
         """
         self.extent = n
 
@@ -123,13 +129,14 @@ class Lanczos(Interpolant):
         )
 
     def kernel(self, x):
+        """See parent class"""
         return self.lanczos_n(x, self.extent)
 
 
 ### Resampling function
 
 
-def resample2d(signal, coords, warp, interpolant=Quintic()):
+def resample2d(signal, coords, warp, interpolant=Quintic()):  # noqa: B008
     """Resample a 2-dimensional image using a Lanczos kernel
 
     Parameters
@@ -168,14 +175,14 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):
     xi = jnp.floor((x - coords_x[0]) / h).astype(jnp.int32)
     yi = jnp.floor((y - coords_y[0]) / h).astype(jnp.int32)
 
-    Nx = coords.shape[0]
-    Ny = coords.shape[1]
+    n_x = coords.shape[0]
+    n_y = coords.shape[1]
 
     def body_fun_x(i, args):
         res, yind, ky, masky = args
 
         xind = xi + i
-        maskx = (xind >= 0) & (xind < Ny)
+        maskx = (xind >= 0) & (xind < n_y)
 
         kx = interpolant.kernel((x - coords_x[xind]) / h)
 
@@ -189,7 +196,7 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):
         res = args
 
         yind = yi + i
-        masky = (yind >= 0) & (yind < Nx)
+        masky = (yind >= 0) & (yind < n_x)
 
         ky = interpolant.kernel((y - coords_y[yind]) / h)
 
@@ -206,7 +213,7 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):
     return res.reshape(warp[..., 0].shape)
 
 
-def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):
+def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):  # noqa: B008
     """Resample a 2-dimensional image using a Lanczos kernel
 
     This is assuming that the signal is Hermitian and starting at 0 on axis=2,
@@ -290,7 +297,14 @@ def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):
 
 
 def resample_ops(
-    kimage, shape_in, shape_out, res_in, res_out, phi=None, flip_sign=None, interpolant=Quintic()
+    kimage,
+    shape_in,
+    shape_out,
+    res_in,
+    res_out,
+    phi=None,
+    flip_sign=None,
+    interpolant=Quintic(),  # noqa: B008
 ):
     """Resampling operation
 
@@ -312,10 +326,10 @@ def resample_ops(
 
     # Apply rotation to the frequencies
     if phi is not None:
-        R = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
+        r = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
 
         b_shape = kcoords_out.shape
-        kcoords_out = (R @ kcoords_out.reshape((-1, 2)).T).T.reshape(b_shape)
+        kcoords_out = (r @ kcoords_out.reshape((-1, 2)).T).T.reshape(b_shape)
 
     k_resampled = jax.vmap(resample_hermitian, in_axes=(0, None, None, None, None))(
         kimage, kcoords_out, -shape_in / 2, -shape_in / 2, interpolant
