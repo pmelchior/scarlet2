@@ -26,6 +26,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+_version.py
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -69,7 +70,9 @@ instance/
 .scrapy
 
 # Sphinx documentation
+docs/_autosummary/
 docs/_build/
+docs/jupyter_execute/
 
 # PyBuilder
 target/
@@ -127,3 +130,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# VSCode settings
+.vscode
+
+# Default location for saved models
+stored_models/
