@@ -124,7 +124,7 @@ class Lanczos(Interpolant):
         )
 
     def kernel(self, x):
-        return self.lanczos_n(x, self.extent)
+        return self._lanczos_n(x, self.extent)
 
 ### Resampling function
 
