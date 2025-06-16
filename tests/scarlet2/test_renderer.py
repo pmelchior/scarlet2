@@ -1,6 +1,9 @@
-import warnings
+# ruff: noqa: D101
+# ruff: noqa: D102
+# ruff: noqa: D103
+# ruff: noqa: D106
 
-warnings.filterwarnings("ignore")
+import warnings
 
 import astropy.io.fits as fits
 import jax
@@ -8,6 +11,8 @@ import jax.numpy as jnp
 import scarlet2
 from astropy.wcs import WCS
 from huggingface_hub import hf_hub_download
+
+warnings.filterwarnings("ignore")
 
 # Load the HSC image data
 # load test data from HSC and HST

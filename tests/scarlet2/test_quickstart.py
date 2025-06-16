@@ -1,7 +1,19 @@
+# ruff: noqa: D101
+# ruff: noqa: D102
+# ruff: noqa: D103
+# ruff: noqa: D106
+
 import jax.numpy as jnp
 from huggingface_hub import hf_hub_download
 from numpyro.distributions import constraints
-from scarlet2 import *
+from scarlet2 import *  # noqa: F403
+from scarlet2 import init
+from scarlet2.frame import Frame
+from scarlet2.module import Parameter, relative_step
+from scarlet2.observation import Observation
+from scarlet2.psf import ArrayPSF, GaussianPSF
+from scarlet2.scene import Scene
+from scarlet2.source import Source
 
 
 def test_quickstart():
@@ -15,7 +27,7 @@ def test_quickstart():
     weights = jnp.asarray(1 / file["variance"])
     psf = jnp.asarray(file["psfs"])
 
-    frame_psf = GaussianPSF(0.7)
+    _ = GaussianPSF(0.7)
     obs = Observation(data, weights, psf=ArrayPSF(jnp.asarray(psf)), channels=channels)
     model_frame = Frame.from_observations(obs)
 
@@ -59,7 +71,7 @@ def test_quickstart():
     p = scene_.sources[0].spectrum
     prior = dist.Normal(p, scale=1)
     parameters += Parameter(p, name="spectrum:0", prior=prior)
-    mcmc = scene_.sample(
+    _ = scene_.sample(
         obs, parameters, num_samples=200, dense_mass=True, init_strategy=init_to_sample, progress_bar=False
     )
 

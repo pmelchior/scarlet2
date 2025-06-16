@@ -1,11 +1,23 @@
+# ruff: noqa: D101
+# ruff: noqa: D102
+# ruff: noqa: D103
+# ruff: noqa: D106
+
 import os
 
 import h5py
 import jax
 import jax.numpy as jnp
 from huggingface_hub import hf_hub_download
-from scarlet2 import *
+from scarlet2 import *  # noqa: F403
+from scarlet2 import init
+from scarlet2.bbox import Box
+from scarlet2.frame import Frame
 from scarlet2.io import model_from_h5, model_to_h5
+from scarlet2.observation import Observation
+from scarlet2.psf import ArrayPSF, GaussianPSF
+from scarlet2.scene import Scene
+from scarlet2.source import Source
 
 
 def test_save_output():
@@ -34,14 +46,14 @@ def test_save_output():
             Source(center, spectrum, morph)
 
     # save the output
-    ID = 1
+    id = 1
     filename = "demo_io.h5"
     path = "stored_models"
-    model_to_h5(scene, filename, ID, path=path, overwrite=True)
+    model_to_h5(scene, filename, id, path=path, overwrite=True)
 
     # demo that it works to add models to a single file
-    ID = 2
-    model_to_h5(scene, filename, ID, path=path, overwrite=True)
+    id = 2
+    model_to_h5(scene, filename, id, path=path, overwrite=True)
 
     # load files and show keys
     full_path = os.path.join(path, filename)
@@ -53,7 +65,7 @@ def test_save_output():
     # print the storage size
     print(f"Storage size: {os.path.getsize(full_path) / 1e6:.4f} MB")
     # load the output and plot the sources
-    scene_loaded = model_from_h5(filename, ID, path=path)
+    scene_loaded = model_from_h5(filename, id, path=path)
     print("Output loaded from h5 file")
 
     # compare scenes
@@ -69,7 +81,7 @@ def test_save_output():
                 status = False
 
     print(f"saved == loaded: {status}")
-    assert status == True, "Loaded leaves not identical to original"
+    assert status, "Loaded leaves not identical to original"
 
 
 if __name__ == "__main__":

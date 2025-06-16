@@ -1,3 +1,8 @@
+# ruff: noqa: D101
+# ruff: noqa: D102
+# ruff: noqa: D103
+# ruff: noqa: D106
+
 import astropy.io.fits as fits
 import astropy.units as u
 import jax.numpy as jnp
@@ -6,8 +11,9 @@ from astropy.wcs import WCS
 from huggingface_hub import hf_hub_download
 from jax import vmap
 from numpy.testing import assert_allclose
-from scarlet2 import *
+from scarlet2 import *  # noqa: F403
 from scarlet2.measure import get_scale
+from scarlet2.morphology import GaussianMorphology
 
 # load test data from HSC and HST
 filename_hsc = hf_hub_download(
@@ -53,15 +59,15 @@ def test_measure_ellipticity():
 def test_gaussian_from_moments():
     g = scarlet2.measure.Moments(component=morph(), N=2)
     # generate Gaussian from moments
-    T = g.size
+    t = g.size
     ellipticity = g.ellipticity
-    morph2 = GaussianMorphology(T, ellipticity)
+    morph2 = GaussianMorphology(t, ellipticity)
     assert_allclose(morph(), morph2(), rtol=1e-2)
 
 
 def test_rotate_moments():
     a = 90 * u.deg
-    a.to(u.deg).value
+    a.to(u.deg).value  # noqa: B018
     # rotate 90 degrees counterclockwise the image
     # and measure its moments
     g2 = scarlet2.measure.Moments(jnp.rot90(morph()))
@@ -89,17 +95,17 @@ def test_resize_moments():
 def test_wcs_transfer_moments():
     # Mock a rotation of 90 deg counter-clockwise of the HST WCS
     phi = 90 / 180 * jnp.pi  # in rad
-    R = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
+    r = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
 
     wcs_hst = WCS(hst_hdu[0].header)  # need to recreate to change in the next step
-    wcs_hst.wcs.pc = R @ wcs_hst.wcs.pc
+    wcs_hst.wcs.pc = r @ wcs_hst.wcs.pc
     im_hst = jnp.rot90(morph())
 
     # Generate the same image seen from HSC
     h = (get_scale(wcs_hst) / get_scale(wcs_hsc)).mean()
-    T1 = T0 * h
+    t1 = T0 * h
     ellipticity1 = jnp.array((0.3, 0.5))
-    morph1 = GaussianMorphology(size=T1, ellipticity=ellipticity1, shape=im_hst.shape)
+    morph1 = GaussianMorphology(size=t1, ellipticity=ellipticity1, shape=im_hst.shape)
     im_hsc = morph1()
 
     # Measure moments of the HST image
@@ -119,10 +125,10 @@ def test_wcs_transfer_moments():
 def test_wcs_transfer_w_flip_moments():
     # Mock a rotation of 90 deg counter-clockwise of the HST WCS
     phi = 90 / 180 * jnp.pi  # in rad
-    R = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
+    r = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
 
     wcs_hst = WCS(hst_hdu[0].header)  # need to recreate to change in the next step
-    wcs_hst.wcs.pc = R @ wcs_hst.wcs.pc
+    wcs_hst.wcs.pc = r @ wcs_hst.wcs.pc
     wcs_hst.wcs.pc *= jnp.array([[-1], [1]])
 
     # rotate and flip x
@@ -130,9 +136,9 @@ def test_wcs_transfer_w_flip_moments():
 
     # Generate the same image seen from HSC
     h = (get_scale(wcs_hst) / get_scale(wcs_hsc)).mean()
-    T1 = T0 * h
+    t1 = T0 * h
     ellipticity1 = jnp.array((0.3, 0.5))
-    morph1 = GaussianMorphology(size=T1, ellipticity=ellipticity1, shape=im_hst.shape)
+    morph1 = GaussianMorphology(size=t1, ellipticity=ellipticity1, shape=im_hst.shape)
     im_hsc = morph1()
 
     # Measure moments of the HST image
@@ -152,10 +158,10 @@ def test_wcs_transfer_w_flip_moments():
 def test_wcs_transfer_moments_multichannels():
     # Mock a rotation of 90 deg counter-clockwise of the HST WCS
     phi = 90 / 180 * jnp.pi  # in rad
-    R = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
+    r = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
 
     wcs_hst = WCS(hst_hdu[0].header)  # need to recreate to change in the next step
-    wcs_hst.wcs.pc = R @ wcs_hst.wcs.pc
+    wcs_hst.wcs.pc = r @ wcs_hst.wcs.pc
 
     nc = 5
     im_hst = jnp.repeat(morph()[None, :, :], repeats=nc, axis=0)
@@ -163,9 +169,9 @@ def test_wcs_transfer_moments_multichannels():
 
     # Generate the same image seen from HSC
     h = (get_scale(wcs_hst) / get_scale(wcs_hsc)).mean()
-    T1 = T0 * h
+    t1 = T0 * h
     ellipticity1 = jnp.array((0.3, 0.5))
-    morph1 = GaussianMorphology(size=T1, ellipticity=ellipticity1, shape=im_hst.shape)
+    morph1 = GaussianMorphology(size=t1, ellipticity=ellipticity1, shape=im_hst.shape)
     im_hsc = morph1()
 
     # Measure moments of the HST image
