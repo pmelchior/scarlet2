@@ -15,9 +15,10 @@ from .spectrum import Spectrum
 class Component(Module):
     """Single component of a hyperspectral model
 
-    The parameterization of the 3D model (channel, height, width) is defined by the outer product of
-    `spectrum` and `morphology`. That means that there is no variation of the spectrum in spatial direction.
-    The `center` coordinate is only needed to define the bounding box and place the component in the model frame.
+    The parameterization of the 3D model (channel, height, width) is defined by
+    the outer product of `spectrum` and `morphology`. That means that there is no
+    variation of the spectrum in spatial direction. The `center` coordinate is only
+    needed to define the bounding box and place the component in the model frame.
     """
 
     center: jnp.ndarray
@@ -34,14 +35,18 @@ class Component(Module):
         Parameters
         ----------
         center: array, :py:class:`astropy.coordinates.SkyCoord`
-            Center position. If given as astropy sky coordinate, it will be transformed with the WCS of the model frame.
+            Center position. If given as astropy sky coordinate, it will be
+            transformed with the WCS of the model frame.
         spectrum: :py:class:`~scarlet2.Spectrum`
+            The spectrum of the component.
         morphology: :py:class:`~scarlet2.Morphology`
+            The morphology of the component.
 
         Examples
         --------
-        To uniquely determine coordinates, the creation of components is restricted to a context defined by
-        a :py:class:`~scarlet2.Scene`, which define the :py:class:`~scarlet2.Frame` of the model.
+        To uniquely determine coordinates, the creation of components is restricted
+        to a context defined by a :py:class:`~scarlet2.Scene`, which define the
+        :py:class:`~scarlet2.Frame` of the model.
 
         >>> with Scene(model_frame) as scene:
         >>>    component = Component(center, spectrum, morphology)
@@ -64,6 +69,7 @@ class Component(Module):
         self.bbox = box @ box2d
 
     def __call__(self):
+        """What to run when Component is called"""
         # Boxed and centered model
         delta_center = (self.bbox.center[-2] - self.center[-2], self.bbox.center[-1] - self.center[-1])
         spectrum = self.spectrum() if isinstance(self.spectrum, Module) else self.spectrum
@@ -83,6 +89,7 @@ class DustComponent(Component):
     """
 
     def __call__(self):
+        """What to run when DustComponent is called"""
         return jnp.exp(-super().__call__())
 
 
@@ -102,9 +109,12 @@ class Source(Component):
         Parameters
         ----------
         center: array, :py:class:`astropy.coordinates.SkyCoord`
-            Center position. If given as astropy sky coordinate, it will be transformed with the WCS of the model frame.
+            Center position. If given as astropy sky coordinate, it will be
+            transformed with the WCS of the model frame.
         spectrum: array, :py:class:`~scarlet2.Spectrum`
+            The spectrum of the source.
         morphology: array, :py:class:`~scarlet2.Morphology`
+            The morphology of the source.
 
         Examples
         --------
@@ -114,8 +124,9 @@ class Source(Component):
         >>> with Scene(model_frame) as scene:
         >>>    source = Source(center, spectrum, morphology)
 
-        A source can comprise one or multiple :py:class:`~scarlet2.Component`, which can be added by
-        :py:func:`add_component` or operators `+=` (for an additive component) or `*=` (for a multiplicative component).
+        A source can comprise one or multiple :py:class:`~scarlet2.Component`,
+        which can be added by :py:func:`add_component` or operators `+=`
+        (for an additive component) or `*=` (for a multiplicative component).
 
         >>> with Scene(model_frame) as scene:
         >>>    source = Source(center, spectrum, morphology)
@@ -141,6 +152,8 @@ class Source(Component):
         Parameters
         ----------
         component: :py:class:`~scarlet2.Component`
+            The component to include in this source. It will be combined with the
+            previous component according to the operator `op`.
         op: callable
             Operator to combine this `component` with those before it in the list :py:attr:`components`.
             Conventional operators from the :py:mod:`operator` package can be used.
@@ -173,6 +186,7 @@ class Source(Component):
         return self.add_component(component, operator.mul)
 
     def __call__(self):
+        """What to run when Source is called"""
         base = super()
         model = base.__call__()
         for component, op in zip(self.components, self.component_ops, strict=False):
@@ -189,6 +203,8 @@ class Source(Component):
 
 
 class PointSource(Source):
+    """Point source model"""
+
     def __init__(self, center, spectrum):
         """Model for point sources
 
@@ -197,8 +213,10 @@ class PointSource(Source):
         Parameters
         ----------
         center: array, :py:class:`astropy.coordinates.SkyCoord`
-            Center position. If given as astropy sky coordinate, it will be transformed with the WCS of the model frame.
+            Center position. If given as astropy sky coordinate, it will be
+            transformed with the WCS of the model frame.
         spectrum: array, :py:class:`~scarlet2.Spectrum`
+            The spectrum of the point source.
 
         Examples
         --------

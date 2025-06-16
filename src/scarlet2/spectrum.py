@@ -17,8 +17,9 @@ class Spectrum(Module):
 class StaticArraySpectrum(Spectrum):
     """Static (non-variable) source in a transient scene
 
-    In the frames of transient scenes, the attribute :py:attr:`~scarlet2.Frame.channels` are overloaded and defined
-    with a spectral and a temporal component, e.g. `channel = (band, epoch)`.
+    In the frames of transient scenes, the attribute :py:attr:`~scarlet2.Frame.channels`
+    are overloaded and defined with a spectral and a temporal component, e.g.
+    `channel = (band, epoch)`.
     This class is for models that do not vary in time, i.e. only have a spectral dependency.
     The length of :py:attr:`data` is thus given by the number of distinct spectral bands.
     """
@@ -37,11 +38,13 @@ class StaticArraySpectrum(Spectrum):
         Parameters
         ----------
         data: array
-            Spectrum without temporal variation. Contains as many elements as there are spectral channels in the model.
+            Spectrum without temporal variation. Contains as many elements as there
+            are spectral channels in the model.
         bands: list, array
             Identifier for the list of unique bands in the model frame channels
         band_selector: callable, optional
-            Identify the spectral "band" component from the name/ID used in the channels of the model frame
+            Identify the spectral "band" component from the name/ID used in the
+            channels of the model frame
 
         Examples
         --------
@@ -51,7 +54,8 @@ class StaticArraySpectrum(Spectrum):
         >>> band_selector = lambda channel: channel[0]
         >>> StaticArraySpectrum(spectrum, bands, band_selector=band_selector)
 
-        This constructs a 2-element spectrum to describe the spectral properties in all epochs 0,1,2.
+        This constructs a 2-element spectrum to describe the spectral properties
+        in all epochs 0,1,2.
 
         See Also
         --------
@@ -69,30 +73,34 @@ class StaticArraySpectrum(Spectrum):
         self._channelindex = jnp.array([self.bands.index(band_selector(c)) for c in frame.channels])
 
     def __call__(self):
+        """What to run when the StaticArraySpectrum is called"""
         return self.data[self._channelindex]
 
     @property
     def shape(self):
+        """The shape of the spectrum data"""
         return (len(self._channelindex),)
 
 
 class TransientArraySpectrum(Spectrum):
     """Variable source in a transient scene with possible quiescent periods
 
-    In the frames of transient scenes, the attribute :py:attr:`~scarlet2.Frame.channels` are overloaded and defined
-    with a spectral and a temporal component, e.g. `channel = (band, epoch)`.
-    This class is for models that vary in time, especially if they have periods of inactivity.
-    The length of :py:attr:`data` is given by the number channels in the model frame, but during inactive epochs, the
-    emission is set to zero.
+    In the frames of transient scenes, the attribute :py:attr:`~scarlet2.Frame.channels`
+    are overloaded and defined with a spectral and a temporal component, e.g.
+    `channel = (band, epoch)`. This class is for models that vary in time, especially
+    if they have periods of inactivity. The length of :py:attr:`data` is given by
+    the number channels in the model frame, but during inactive epochs, the emission
+    is set to zero.
     """
 
     data: jnp.array
-    """Data to describe the variable spectrum. 
+    """Data to describe the variable spectrum.
 
     The length of this vector is identical to the number of channels in the model frame.
     """
     epochs: list
-    """Identifier for the list of active epochs. If set to `None`, all epochs are considered active"""
+    """Identifier for the list of active epochs. If set to `None`, all epochs are
+    considered active"""
     _epochmultiplier: jnp.array = eqx.field(repr=False)
 
     def __init__(self, data, epochs=None, epoch_selector=lambda channel: channel[1]):
@@ -100,11 +108,13 @@ class TransientArraySpectrum(Spectrum):
         Parameters
         ----------
         data: array
-            Spectrum array. Contains as many elements as there are spectro-temporal channels in the model.
+            Spectrum array. Contains as many elements as there are spectro-temporal
+            channels in the model.
         epochs: list, array, optional
             List of temporal "epoch" identifiers for the active phases of the source.
         epoch_selector: callable, optional
-            Identify the temporal "epoch" component from the name/ID used in the channels of the model frame
+            Identify the temporal "epoch" component from the name/ID used in the
+            channels of the model frame
 
         Examples
         --------
@@ -114,7 +124,8 @@ class TransientArraySpectrum(Spectrum):
         >>> epoch_selector = lambda channel: channel[1]
         >>> TransientArraySpectrum(spectrum, epochs, epoch_selector=epoch_selector)
 
-        This sets the spectrum to active during epochs 0 and 1, and mask the spectrum element for `('R',2)` with zero.
+        This sets the spectrum to active during epochs 0 and 1, and mask the
+        spectrum element for `('R',2)` with zero.
 
         See Also
         --------
@@ -133,8 +144,10 @@ class TransientArraySpectrum(Spectrum):
         )
 
     def __call__(self):
+        """What to run when the TransientArraySpectrum is called"""
         return jnp.multiply(self.data, self._epochmultiplier)
 
     @property
     def shape(self):
+        """The shape of the spectrum data"""
         return self.data.shape
