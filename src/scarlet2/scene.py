@@ -14,11 +14,13 @@ from .renderer import ChannelRenderer
 class Scene(Module):
     """Model of the celestial scene
 
-    This class connects the main functionality of `scarlet2`: the fitting of an :py:class:`~scarlet2.Observation`
-    (or several) by a :py:class:`~scarlet2.Source` model (or several). Model parameters can be optimized or samples with
-    any method implemented in jax, but this class provides the :py:func:`fit` and :py:func:`sample` methods as built-in
-    solutions.
+    This class connects the main functionality of `scarlet2`: the fitting of an
+    :py:class:`~scarlet2.Observation` (or several) by a :py:class:`~scarlet2.Source`
+    model (or several). Model parameters can be optimized or samples with any method
+    implemented in jax, but this class provides the :py:func:`fit` and
+    :py:func:`sample` methods as built-in solutions.
     """
+
     frame: Frame
     """Portion of the sky represented by this model"""
     sources: list
@@ -38,12 +40,13 @@ class Scene(Module):
         >>> with Scene(model_frame) as scene:
         >>>    Source(center, spectrum, morphology)
 
-        This adds a single source to the list :py:attr:`~scarlet2.Scene.sources` of `scene`.
-        The context provides a common definition of the model frame, so that, e.g., `center` can be given
-        as :py:class:`astropy.coordinates.SkyCoord` and will automatically be converted to the pixel coordinate in the
-        model frame.
+        This adds a single source to the list :py:attr:`~scarlet2.Scene.sources`
+        of `scene`. The context provides a common definition of the model frame,
+        so that, e.g., `center` can be given as :py:class:`astropy.coordinates.SkyCoord`
+        and will automatically be converted to the pixel coordinate in the model frame.
 
-        The constructed source does not go out of scope after the `with` context is closed, it is stored in the scene.
+        The constructed source does not go out of scope after the `with` context
+        is closed, it is stored in the scene.
 
         See Also
         --------
@@ -53,6 +56,7 @@ class Scene(Module):
         self.sources = list()
 
     def __call__(self):
+        """What to run when the scene is called"""
         model = jnp.zeros(self.frame.bbox.shape)
         for source in self.sources:
             model += self.evaluate_source(source)
@@ -66,6 +70,7 @@ class Scene(Module):
         Parameters
         ----------
         source: :py:class:`~scarlet2.Source`
+            The source to evaluate.
 
         Returns
         -------
@@ -92,15 +97,19 @@ class Scene(Module):
     def __exit__(self, exc_type, exc_value, traceback):
         Scenery.scene = None
 
-    def sample(self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs):
+    def sample(
+        self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs
+    ):
         """Sample `parameters` of every source in the scene to get posteriors given `observations`.
 
-        This method runs the HMC NUTS sampler from `numpyro` to get parameter posteriors. It uses the likehood of
-        `observations` as well as the `prior` attribute set for every :py:class:`~scarlet2.Parameter` in `parameters`.
+        This method runs the HMC NUTS sampler from `numpyro` to get parameter
+        posteriors. It uses the likelihood of `observations` as well as the `prior`
+        attribute set for every :py:class:`~scarlet2.Parameter` in `parameters`.
 
         Parameters
         ----------
         observations: :py:class:`~scarlet2.Observation` or list
+            The observations to fit the models to.
         parameters: :py:class:`~scarlet2.Parameters`
             Parameters to sample. This method will ignore all parameters that are not in this list.
             Every parameter in the list needs to have the attribute `prior` set.
@@ -112,6 +121,8 @@ class Scene(Module):
             Number of samples to create from tuned HMC
         progress_bar: bool, optional
             Whether to show a progress bar
+        **kwargs: dict, optional
+            Additional keyword arguments passed to the `numpyro.infer.NUTS` sampler.
 
         Notes
         -----
@@ -128,8 +139,8 @@ class Scene(Module):
             import numpyro.distributions as dist
             import numpyro.distributions.constraints as constraints
             from numpyro.infer import MCMC, NUTS
-        except ImportError:
-            raise ImportError("scarlet2.Scene.sample() requires numpyro.")
+        except ImportError as err:
+            raise ImportError("scarlet2.Scene.sample() requires numpyro.") from err
 
         # making sure we can iterate
         if not isinstance(observations, (list, tuple)):
@@ -164,6 +175,7 @@ class Scene(Module):
         has_none = any(prior is None for prior in priors.values())
         if has_none:
             from pprint import pformat
+
             msg = f"All parameters need to have priors set. Got:\n{pformat(priors)}"
             raise AttributeError(msg)
 
@@ -183,8 +195,10 @@ class Scene(Module):
         try:
             init_strategy = kwargs.pop("init_strategy")
         except KeyError:
-            from numpyro.infer.initialization import init_to_value
             from functools import partial
+
+            from numpyro.infer.initialization import init_to_value
+
             values = {p.name: p.node for p in parameters}
             init_strategy = partial(init_to_value, values=values)
 
@@ -194,16 +208,26 @@ class Scene(Module):
         mcmc.run(rng_key, self)
         return mcmc
 
-    def fit(self, observations, parameters, schedule=None, max_iter=100, e_rel=1e-4, progress_bar=True, callback=None,
-            **kwargs):
+    def fit(
+        self,
+        observations,
+        parameters,
+        schedule=None,
+        max_iter=100,
+        e_rel=1e-4,
+        progress_bar=True,
+        callback=None,
+        **kwargs,
+    ):
         """Fit model `parameters` of every source in the scene to match `observations`.
 
-        Computes the best-fit parameters of all components in every source by first-order gradient descent with
-        the Adam optimizer from `optax`.
+        Computes the best-fit parameters of all components in every source by
+        first-order gradient descent with the Adam optimizer from `optax`.
 
         Parameters
         ----------
         observations: :py:class:`~scarlet2.Observation` or list
+            The observations to fit the model to.
         parameters: :py:class:`~scarlet2.Parameters`
             Parameters to optimize. This method will ignore all parameters that are not in this list.
         schedule: callable, optional
@@ -211,13 +235,17 @@ class Scene(Module):
         max_iter: int, optional
             Maximum number of optimizer iterations
         e_rel: float, optional
-            Upper limit for the relative change in the norm of any parameter to termine the optimization early.
+            Upper limit for the relative change in the norm of any parameter to
+            terminate the optimization early.
         progress_bar: bool, optional
             Whether to show a progress bar
         callback: callable, optional
             Function to be called on the current state of the optimized scene.
-            Signature `callback(scene, convergence, loss) -> None`, where `convergence` is a tree of the same structure
-            as `scene`, and `loss` is the current value of the log_posterior.
+            Signature `callback(scene, convergence, loss) -> None`, where
+            `convergence` is a tree of the same structure as `scene`, and `loss`
+            is the current value of the log_posterior.
+        **kwargs: dict, optional
+            Additional keyword arguments passed to the `optax.scale_by_adam` optimizer.
 
         Notes
         -----
@@ -229,12 +257,11 @@ class Scene(Module):
             The scene model with updated parameters
         """
         try:
-            from tqdm.auto import trange
             import optax
             import optax._src.base as base
-            from numpyro.distributions.transforms import biject_to
-        except ImportError:
-            raise ImportError("scarlet2.Scene.fit() requires optax and numpyro.")
+            from tqdm.auto import trange
+        except ImportError as err:
+            raise ImportError("scarlet2.Scene.fit() requires optax and numpyro.") from err
 
         # making sure we can iterate
         if not isinstance(observations, (list, tuple)):
@@ -279,16 +306,14 @@ class Scene(Module):
 
         # get optimizer initialized with the optimization parameters
         filter_spec = self.get_filter_spec(parameters)
-        if filter_spec is None:
-            opt_state = optim.init(scene)
-        else:
-            opt_state = optim.init(eqx.filter(scene, filter_spec))
+        opt_state = optim.init(scene) if filter_spec is None else optim.init(eqx.filter(scene, filter_spec))
 
         with trange(max_iter, disable=not progress_bar) as t:
-            for step in t:
+            for step in t:  # noqa: B007
                 # optimizer step
-                scene, loss, opt_state, convergence = _make_step(scene, observations, parameters, optim, opt_state,
-                                                                 filter_spec=filter_spec)
+                scene, loss, opt_state, convergence = _make_step(
+                    scene, observations, parameters, optim, opt_state, filter_spec=filter_spec
+                )
 
                 # compute max change across all non-fixed parameters for convergence test
                 max_change = jax.tree_util.tree_reduce(lambda a, b: max(a, b), convergence)
@@ -316,6 +341,7 @@ class Scene(Module):
         Parameters
         ----------
         observations: :py:class:`~scarlet2.Observation` or list
+            The observations used to set the spectra.
         parameters: :py:class:`~scarlet2.Parameters`
             Parameters to adjust. This method will ignore all spectrum parameters that are not arrays
             or not included in this list.
@@ -346,30 +372,30 @@ class Scene(Module):
 
             # check for models with identical initializations, see scarlet repo issue #282
             # if duplicate: raise ValueError
-            for l in range(len(models)):
-                if jnp.allclose(model, models[l]):
-                    message = f"Source {i} has a model identical to source {l}.\n"
+            for model_indx in range(len(models)):
+                if jnp.allclose(model, models[model_indx]):
+                    message = f"Source {i} has a model identical to source {model_indx}.\n"
                     message += "This is likely not intended, and the second source should be deleted."
                     raise ValueError(message)
             models.append(model)
 
         models = jnp.array(models)
-        K = len(models)
+        num_models = len(models)
 
         for obs in observations:
             # independent channels, no mixing
             # solve the linear inverse problem of the amplitudes in every channel
             # given all the rendered morphologies
             # spectrum = (M^T Sigma^-1 M)^-1 M^T Sigma^-1 * im
-            C = obs.frame.C
+            num_channels = obs.frame.C
             images = obs.data
             weights = obs.weights
             morphs = jnp.stack([obs.render(model) for model in models], axis=0)
-            spectra = jnp.zeros((K, C))
-            for c in range(C):
+            spectra = jnp.zeros((num_models, num_channels))
+            for c in range(num_channels):
                 im = images[c].reshape(-1)
                 w = weights[c].reshape(-1)
-                m = morphs[:, c, :, :].reshape(K, -1)
+                m = morphs[:, c, :, :].reshape(num_models, -1)
                 mw = m * w[None, :]
                 # check if all components have nonzero flux in c.
                 # because of convolutions, flux can be outside the box,
@@ -378,7 +404,7 @@ class Scene(Module):
                 # so we check if *most* of the flux is from pixels with non-zero weight
                 nonzero = jnp.sum(mw, axis=1) / jnp.sum(m, axis=1) / jnp.mean(w) > 0.1
                 nonzero = jnp.flatnonzero(nonzero)
-                if len(nonzero) == K:
+                if len(nonzero) == num_models:
                     covar = jnp.linalg.inv(mw @ m.T)
                     spectra = spectra.at[:, c].set(covar @ m @ (im * w))
                 else:
@@ -394,6 +420,7 @@ class Scene(Module):
                 v = src_.spectrum.at[channel_map].set(jnp.maximum(spectra[i], noise_bg))
                 self.sources[i] = eqx.tree_at(lambda src: src.spectrum, src_, v)
 
+
 def _constraint_replace(self, parameters, inv=False):
     # replace any parameter with constraint into unconstrained ones by calling its constraint bijector
     # return transformed pytree
@@ -401,17 +428,23 @@ def _constraint_replace(self, parameters, inv=False):
     param_values = where_in(self)
     if not inv:
         replace = tuple(
-            p.constraint_transform(v) if p.constraint is not None else v for p, v in zip(parameters, param_values))
+            p.constraint_transform(v) if p.constraint is not None else v
+            for p, v in zip(parameters, param_values, strict=False)
+        )
     else:
         replace = tuple(
-            p.constraint_transform.inv(v) if p.constraint is not None else v for p, v in zip(parameters, param_values))
+            p.constraint_transform.inv(v) if p.constraint is not None else v
+            for p, v in zip(parameters, param_values, strict=False)
+        )
 
     return eqx.tree_at(where_in, self, replace=replace)
+
 
 # update step for optax optimizer
 @eqx.filter_jit
 def _make_step(model, observations, parameters, optim, opt_state, filter_spec=None):
     from .nn import ScorePrior, pad_fwd
+
     def loss_fn(model):
         if any(param.constraint is not None for param in parameters):
             # parameters now obey constraints
@@ -427,21 +460,27 @@ def _make_step(model, observations, parameters, optim, opt_state, filter_spec=No
         log_prior = 0
 
         # Gather parameters with the same ScorePrior for parallel evaluation
-        grouped = defaultdict(list) 
-        for param, value in zip(parameters, param_values):
+        grouped = defaultdict(list)
+        for param, value in zip(parameters, param_values, strict=False):
             if isinstance(param.prior, ScorePrior):
                 grouped[param.prior].append(pad_fwd(value, param.prior._model.shape)[0])
             elif param.prior is not None:
-                log_prior += param.prior.log_prob(value) 
+                log_prior += param.prior.log_prob(value)
 
         if len(grouped) > 0:
-            log_prior += sum(sum(jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0)) for prior, arr_list in grouped.items()))
+            log_prior += sum(
+                sum(
+                    jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0))
+                    for prior, arr_list in grouped.items()
+                )
+            )
 
         return -(log_like + log_prior)
 
     if filter_spec is None:
         loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
     else:
+
         @eqx.filter_value_and_grad
         def filtered_loss_fn(diff_model, static_model):
             model = eqx.combine(diff_model, static_model)

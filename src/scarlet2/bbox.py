@@ -1,6 +1,7 @@
 import equinox as eqx
 import jax.numpy as jnp
 
+
 class Box(eqx.Module):
     """Bounding Box for data array
 
@@ -14,6 +15,7 @@ class Box(eqx.Module):
     - 2D shapes denote (Height, Width)
     - 3D shapes denote (Channels, Height, Width)
     """
+
     shape: tuple
     """Size of the array"""
     origin: tuple
@@ -52,7 +54,7 @@ class Box(eqx.Module):
         return Box(shape, origin=origin)
 
     @staticmethod
-    def from_data(X, min_value=0):
+    def from_data(X, min_value=0):  # noqa: N803
         """Define box where `X` is above `min_value`
 
         Parameters
@@ -67,7 +69,7 @@ class Box(eqx.Module):
         bbox : :class:`scarlet2.bbox.Box`
             Bounding box for the thresholded `X`
         """
-        sel = X > min_value
+        sel = min_value < X
         if sel.any():
             nonzero = jnp.where(sel)
             bounds = []
@@ -78,8 +80,7 @@ class Box(eqx.Module):
         return Box.from_bounds(*bounds)
 
     def contains(self, p):
-        """Whether the box contains a given coordinate `p`
-        """
+        """Whether the box contains a given coordinate `p`"""
         if len(p) != self.D:
             raise ValueError(f"Dimension mismatch in {p} and {self.D}")
 
@@ -111,43 +112,38 @@ class Box(eqx.Module):
         return image
 
     def get_extent(self):
+        """Return the start and end coordinates."""
         return [self.start[-1], self.stop[-1], self.start[-2], self.stop[-2]]
 
     @property
-    def D(self):
-        """Dimensionality of this BBox
-        """
+    def D(self):  # noqa: N802
+        """Dimensionality of this BBox"""
         return len(self.shape)
 
     @property
     def start(self):
-        """Tuple of start coordinates
-        """
+        """Tuple of start coordinates"""
         return self.origin
 
     @property
     def stop(self):
-        """Tuple of stop coordinates
-        """
-        return tuple(o + s for o, s in zip(self.origin, self.shape))
+        """Tuple of stop coordinates"""
+        return tuple(o + s for o, s in zip(self.origin, self.shape, strict=False))
 
     @property
     def center(self):
-        """Tuple of center coordinates
-        """
-        return tuple(o + s // 2 for o, s in zip(self.origin, self.shape))
+        """Tuple of center coordinates"""
+        return tuple(o + s // 2 for o, s in zip(self.origin, self.shape, strict=False))
 
     @property
     def bounds(self):
-        """Bounds of the box
-        """
-        return tuple((o, o + s) for o, s in zip(self.origin, self.shape))
+        """Bounds of the box"""
+        return tuple((o, o + s) for o, s in zip(self.origin, self.shape, strict=False))
 
     @property
     def slices(self):
-        """Bounds of the box as slices
-        """
-        return tuple([slice(o, o + s) for o, s in zip(self.origin, self.shape)])
+        """Bounds of the box as slices"""
+        return tuple([slice(o, o + s) for o, s in zip(self.origin, self.shape, strict=False)])
 
     @property
     def spatial(self):
@@ -156,15 +152,13 @@ class Box(eqx.Module):
         return self[-2:]
 
     def set_center(self, pos):
-        """Center box at given position
-        """
+        """Center box at given position"""
         pos_ = tuple(_.item() for _ in pos)
-        origin = tuple(o + p - c for o, p, c in zip(self.origin, pos_, self.center))
-        object.__setattr__(self, 'origin', origin)
+        origin = tuple(o + p - c for o, p, c in zip(self.origin, pos_, self.center, strict=False))
+        object.__setattr__(self, "origin", origin)
 
     def grow(self, delta):
-        """Grow the Box by the given delta in each direction
-        """
+        """Grow the Box by the given delta in each direction"""
         if not hasattr(delta, "__iter__"):
             delta = [delta] * self.D
         origin = tuple([self.origin[d] - delta[d] for d in range(self.D)])
@@ -172,8 +166,7 @@ class Box(eqx.Module):
         return Box(shape, origin=origin)
 
     def shrink(self, delta):
-        """Shrink the Box by the given delta in each direction
-        """
+        """Shrink the Box by the given delta in each direction"""
         if not hasattr(delta, "__iter__"):
             delta = [delta] * self.D
         origin = tuple([self.origin[d] + delta[d] for d in range(self.D)])
@@ -197,9 +190,7 @@ class Box(eqx.Module):
             raise ValueError(f"Dimension mismatch in the boxes {other} and {self}")
         bounds = []
         for d in range(self.D):
-            bounds.append(
-                (min(self.start[d], other.start[d]), max(self.stop[d], other.stop[d]))
-            )
+            bounds.append((min(self.start[d], other.start[d]), max(self.stop[d], other.stop[d])))
         return Box.from_bounds(*bounds)
 
     def __and__(self, other):
@@ -224,9 +215,7 @@ class Box(eqx.Module):
         assert other.D == self.D
         bounds = []
         for d in range(self.D):
-            bounds.append(
-                (max(self.start[d], other.start[d]), min(self.stop[d], other.stop[d]))
-            )
+            bounds.append((max(self.start[d], other.start[d]), min(self.stop[d], other.stop[d])))
         return Box.from_bounds(*bounds)
 
     def __getitem__(self, i):
@@ -240,13 +229,13 @@ class Box(eqx.Module):
     def __add__(self, offset):
         if not hasattr(offset, "__iter__"):
             offset = (offset,) * self.D
-        origin = tuple([a + o for a, o in zip(self.origin, offset)])
+        origin = tuple([a + o for a, o in zip(self.origin, offset, strict=False)])
         return Box(self.shape, origin=origin)
 
     def __sub__(self, offset):
         if not hasattr(offset, "__iter__"):
             offset = (offset,) * self.D
-        origin = tuple([a - o for a, o in zip(self.origin, offset)])
+        origin = tuple([a - o for a, o in zip(self.origin, offset, strict=False)])
         return Box(self.shape, origin=origin)
 
     def __matmul__(self, bbox):
@@ -269,7 +258,13 @@ def overlap_slices(bbox1, bbox2, return_boxes=False):
     Parameters
     ----------
     bbox1: `~scarlet.bbox.Box`
+        The first box to use for comparing overlap.
     bbox2: `~scarlet.bbox.Box`
+        The second box to use for comparing overlap.
+    return_boxes: bool
+        If True return new boxes corresponding to the overlapping portion of
+        each of the input boxes. If False, return the overlapping portion of the
+        original boxes. Default False.
 
     Returns
     -------

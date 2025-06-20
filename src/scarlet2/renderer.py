@@ -1,11 +1,11 @@
 """Renderer classes"""
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
-from .fft import _wrap_hermitian_x
-from .fft import convolve, deconvolve, _get_fast_shape, transform, good_fft_size, _trim
+from .fft import _get_fast_shape, _trim, _wrap_hermitian_x, convolve, deconvolve, good_fft_size, transform
 from .interpolation import resample_ops
 from .measure import get_angle, get_sign
 
@@ -13,45 +13,51 @@ from .measure import get_angle, get_sign
 class Renderer(eqx.Module):
     """Renderer base class
 
-    Renderers are (potentially parameterized) transformations between the model frame and the observation frame,
-    or elements of such a transformation.
+    Renderers are (potentially parameterized) transformations between the model
+    frame and the observation frame, or elements of such a transformation.
     """
 
-    def __call__(
-            self, model, key=None
-    ):  # key is needed to chain renderers with eqx.nn.Sequential
+    def __call__(self, model, key=None):  # key is needed to chain renderers with eqx.nn.Sequential
+        """What to run when Renderer is called"""
         raise NotImplementedError
 
 
 class NoRenderer(Renderer):
     """Inactive renderer that does not change the model"""
+
     def __call__(self, model, key=None):
+        """Just return the model as is"""
         return model
 
 
 class ChannelRenderer(Renderer):
     """Map model to observed channels
 
-    This renderer only affects to spectral dimension of the model. It needs to be combined with spatial renderers
-    for a full transformation to the observed frame.
+    This renderer only affects to spectral dimension of the model. It needs to
+    be combined with spatial renderers for a full transformation to the observed frame.
     """
+
     channel_map: (None, list, slice, jnp.array) = None
     """Lookup table or transformation matrix
 
-    For every channel in the observed frame, this map contained the index or weights of the model channels.
+    For every channel in the observed frame, this map contained the index or
+    weights of the model channels.
     """
 
     def __init__(self, model_frame, obs_frame):
         """Initialize channel mapping
 
-        This method will attempt to find the index in `model_frame.channels` for every item `obs_frame.channels`.
-        For this to work, the identifiers of the channels need to be the same, e.g. `channels=['g','r','i']` or
+        This method will attempt to find the index in `model_frame.channels` for
+        every item `obs_frame.channels`. For this to work, the identifiers of the
+        channels need to be the same, e.g. `channels=['g','r','i']` or
         `channels=[0,1,2,3,4]`.
 
         Parameters
         ----------
         model_frame: :py:class:`~scarlet.Frame`
+            The model frame to be resampled
         obs_frame: :py:class:`~scarlet.Frame`
+            The observation frame to which the model frame is resampled
 
         Raises
         ------
@@ -62,14 +68,11 @@ class ChannelRenderer(Renderer):
             channel_map = None
         else:
             try:
-                channel_map = [
-                    list(model_frame.channels).index(c)
-                    for c in list(obs_frame.channels)
-                ]
-            except ValueError:
+                channel_map = [list(model_frame.channels).index(c) for c in list(obs_frame.channels)]
+            except ValueError as err:
                 msg = "Cannot match channels between model and observation.\n"
                 msg += f"Got {model_frame.channels} and {obs_frame.channels}."
-                raise ValueError(msg)
+                raise ValueError(msg) from err
 
             min_channel = min(channel_map)
             max_channel = max(channel_map)
@@ -84,6 +87,8 @@ class ChannelRenderer(Renderer):
         ----------
         model: array
             The hyperspectral model
+        key: optional
+            Key is needed to chain renderers with eqx.nn.Sequential
         Returns
         -------
         obs_model: array
@@ -100,8 +105,10 @@ class ChannelRenderer(Renderer):
 class ConvolutionRenderer(Renderer):
     """Convolve model with observed PSF
 
-    The convolution is performed in Fourier space and applies the difference kernel between model PSF and observed PSF.
+    The convolution is performed in Fourier space and applies the difference kernel
+    between model PSF and observed PSF.
     """
+
     _diff_kernel_fft: jnp.array = eqx.field(init=False, repr=False)
 
     def __init__(self, model_frame, obs_frame):
@@ -110,19 +117,16 @@ class ConvolutionRenderer(Renderer):
         Parameters
         ----------
         model_frame: :py:class:`~scarlet.Frame`
-        obs_frame: :py:class:`~scarlet.Frame`
+            The model frame to be resampled
+        obs_frame: :py:class:`~scarlet2.Frame`
+            The observation frame to which the model frame is resampled
         """
         # create PSF model
         psf = model_frame.psf()
-        if len(psf.shape) == 2:  # only one image for all bands
-            psf_model = jnp.tile(psf, (obs_frame.bbox.shape[0], 1, 1))
-        else:
-            psf_model = psf
+        psf_model = jnp.tile(psf, (obs_frame.bbox.shape[0], 1, 1)) if len(psf.shape) == 2 else psf
 
         # make sure fft uses a shape large enough to cover the convolved model
-        fft_shape = _get_fast_shape(
-            model_frame.bbox.shape, psf_model.shape, padding=3, axes=(-2, -1)
-        )
+        fft_shape = _get_fast_shape(model_frame.bbox.shape, psf_model.shape, padding=3, axes=(-2, -1))
 
         # compute and store diff kernel in Fourier space
         diff_kernel_fft = deconvolve(
@@ -135,12 +139,15 @@ class ConvolutionRenderer(Renderer):
         self._diff_kernel_fft = diff_kernel_fft
 
     def __call__(self, model, key=None):
+        """What to run when ConvolutionRenderer is called"""
         return convolve(model, self._diff_kernel_fft, axes=(-2, -1))
 
+
 class AdjustToFrame(Renderer):
-    """Extract cutout the observation box from the model frame box
-    """
+    """Extract cutout the observation box from the model frame box"""
+
     im_slices: slice
+
     def __init__(self, model_frame, obs_frame):
         obs_coord = obs_frame.convert_pixel_to(model_frame)
         y_min = jnp.floor(jnp.min(obs_coord[:, 0]))
@@ -148,14 +155,18 @@ class AdjustToFrame(Renderer):
         y_max = jnp.ceil(jnp.max(obs_coord[:, 0]))
         x_max = jnp.ceil(jnp.max(obs_coord[:, 1]))
         num_channels = obs_frame.bbox.shape[0]
-        this_box = Box.from_bounds((0, num_channels), (int(y_min)+1, int(y_max)+1), (int(x_min)+1, int(x_max)+1))
-        
+        this_box = Box.from_bounds(
+            (0, num_channels), (int(y_min) + 1, int(y_max) + 1), (int(x_min) + 1, int(x_max) + 1)
+        )
+
         im_slices, sub_slices = overlap_slices(model_frame.bbox, this_box)
         self.im_slices = im_slices
 
     def __call__(self, model, key=None):
+        """What to run when AdjustToFrame is called"""
         sub = model[self.im_slices]
         return sub
+
 
 class MultiresolutionRenderer(Renderer):
     """Renderer to resample image to different image placing or resolution
@@ -183,7 +194,9 @@ class MultiresolutionRenderer(Renderer):
         Parameters
         ----------
         model_frame: :py:class:`~scarlet2.Frame`
+            The model frame to be resampled
         obs_frame: :py:class:`~scarlet2.Frame`
+            The observation frame to which the model frame is resampled
         padding: int, optional
             How many times to input image if padded to reduce FFT artifacts.
         """
@@ -191,15 +204,15 @@ class MultiresolutionRenderer(Renderer):
 
         # create PSF model
         psf_model = model_frame.psf()
-        if len(psf_model.shape)==2:
-            psf_model = psf_model[None,...]
+        if len(psf_model.shape) == 2:
+            psf_model = psf_model[None, ...]
 
         if len(psf_model.shape) == 2:  # only one image for all bands
             psf_model = jnp.tile(psf_model, (obs_frame.bbox.shape[0], 1, 1))
 
         psf_obs = obs_frame.psf()
-        if len(psf_obs.shape)==2:
-            psf_obs = psf_obs[None,...]
+        if len(psf_obs.shape) == 2:
+            psf_obs = psf_obs[None, ...]
 
         fft_shape_model_im = good_fft_size(padding * max(model_frame.bbox.shape))
         fft_shape_model_psf = good_fft_size(padding * max(psf_model.shape))
@@ -211,11 +224,11 @@ class MultiresolutionRenderer(Renderer):
 
         # Fourier transform model and observation PSFs
         model_kpsf = jnp.fft.fftshift(
-            transform(psf_model, (fft_shape_model_psf, fft_shape_model_psf), (-2, -1)),
-            (-2))
+            transform(psf_model, (fft_shape_model_psf, fft_shape_model_psf), (-2, -1)), (-2)
+        )
         obs_kpsf = jnp.fft.fftshift(
-            transform(psf_obs, (fft_shape_obs_psf, fft_shape_obs_psf), (-2, -1)),
-            (-2))
+            transform(psf_obs, (fft_shape_obs_psf, fft_shape_obs_psf), (-2, -1)), (-2)
+        )
 
         # getting the smallest grid to perform the interpolation
         # odd shape is required for k-wrapping later
@@ -238,34 +251,47 @@ class MultiresolutionRenderer(Renderer):
         sign_out = get_sign(obs_frame.wcs)
         if (sign_in != sign_out).any():
             raise ValueError(
-                "model and observation WCSs have different sign conventions, which is not yet handled by scarlet2")
+                "model and observation WCSs have different sign conventions, \
+                    which is not yet handled by scarlet2"
+            )
 
         object.__setattr__(self, "flip_sign", sign_in * sign_out)
 
-        model_kpsf_interp = resample_ops(model_kpsf, model_kpsf.shape[-2],
-                                         self.fft_shape_target, self.res_in, self.res_out,
-                                         phi=self.rotation_angle,
-                                         flip_sign=self.flip_sign)
+        model_kpsf_interp = resample_ops(
+            model_kpsf,
+            model_kpsf.shape[-2],
+            self.fft_shape_target,
+            self.res_in,
+            self.res_out,
+            phi=self.rotation_angle,
+            flip_sign=self.flip_sign,
+        )
 
-        obs_kpsf_interp = resample_ops(obs_kpsf, obs_kpsf.shape[-2],
-                                       self.fft_shape_target, self.res_out, self.res_out)
+        obs_kpsf_interp = resample_ops(
+            obs_kpsf, obs_kpsf.shape[-2], self.fft_shape_target, self.res_out, self.res_out
+        )
 
         object.__setattr__(self, "model_kpsf_interp", model_kpsf_interp)
         object.__setattr__(self, "obs_kpsf_interp", obs_kpsf_interp)
         object.__setattr__(self, "real_shape_target", obs_frame.bbox.shape)
 
     def __call__(self, model, key=None):
-
+        """What to run when MultiresolutionRenderer is called"""
         # Fourier transform model
         model_kim = jnp.fft.fftshift(
-            transform(model, (self.fft_shape_model_im, self.fft_shape_model_im), (-2, -1)),
-            (-2))
+            transform(model, (self.fft_shape_model_im, self.fft_shape_model_im), (-2, -1)), (-2)
+        )
 
         # resample on target grid
-        model_kim_interp = resample_ops(model_kim, model_kim.shape[-2],
-                                        self.fft_shape_target, self.res_in, self.res_out,
-                                        phi=self.rotation_angle,
-                                        flip_sign=self.flip_sign)
+        model_kim_interp = resample_ops(
+            model_kim,
+            model_kim.shape[-2],
+            self.fft_shape_target,
+            self.res_in,
+            self.res_out,
+            phi=self.rotation_angle,
+            flip_sign=self.flip_sign,
+        )
 
         # deconvolve with model psf, re-convolve with observation psf and Fourier transform back to real space
         model_kim = model_kim_interp
@@ -281,7 +307,7 @@ class MultiresolutionRenderer(Renderer):
             -self.fft_shape_target // 2 + 1,
             -self.fft_shape_target // 2,
             self.fft_shape_target - 1,
-            self.fft_shape_target - 1
+            self.fft_shape_target - 1,
         )
 
         kimage_final_wrap = kimage_final_wrap[:, :-1, :]
@@ -289,11 +315,12 @@ class MultiresolutionRenderer(Renderer):
         kimg_shift = jnp.fft.ifftshift(kimage_final_wrap, axes=(-2,))
 
         real_image_arr = jnp.fft.fftshift(
-            jnp.fft.irfft2(kimg_shift,
-                           [self.fft_shape_target - 1, self.fft_shape_target - 1], (-2, -1)), (-2, -1)
+            jnp.fft.irfft2(kimg_shift, [self.fft_shape_target - 1, self.fft_shape_target - 1], (-2, -1)),
+            (-2, -1),
         )
 
-        img_trimed = _trim(real_image_arr,
-                           [real_image_arr.shape[0], self.real_shape_target[-2], self.real_shape_target[-1]])
+        img_trimed = _trim(
+            real_image_arr, [real_image_arr.shape[0], self.real_shape_target[-2], self.real_shape_target[-1]]
+        )
 
         return img_trimed

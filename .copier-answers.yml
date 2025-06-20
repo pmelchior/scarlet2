@@ -5,7 +5,9 @@ author_email: peter.m.melchior@gmail.com
 author_name: Peter Melchior
 create_example_module: false
 custom_install: true
-enforce_style: []
+enforce_style:
+- ruff_lint
+- ruff_format
 failure_notification: []
 include_benchmarks: true
 include_docs: false

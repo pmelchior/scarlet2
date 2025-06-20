@@ -1,4 +1,5 @@
 """PSF-related classes"""
+
 import jax.numpy as jnp
 
 from .module import Module
@@ -7,6 +8,7 @@ from .morphology import GaussianMorphology
 
 class PSF(Module):
     """PSF base class"""
+
     pass
 
 
@@ -15,12 +17,14 @@ class ArrayPSF(PSF):
 
     Warnings
     --------
-    The number of pixels in `morphology` should be odd, and the centroid of the PSF image should be in the central pixel.
-    If that is not the case, one creates an effective shift by the PSF, which is not captured by the coordinate
+    The number of pixels in `morphology` should be odd, and the centroid of the
+    PSF image should be in the central pixel. If that is not the case, one creates
+    an effective shift by the PSF, which is not captured by the coordinate
     convention of the frame, e.g. its :py:attr:`~scarlet2.Frame.wcs`.
 
     See :issue:`96` from more details.
     """
+
     morphology: jnp.ndarray
     """The PSF morphology image. Can be 2D (height, width) or 3D (channel, height, width)"""
 
@@ -37,6 +41,7 @@ class ArrayPSF(PSF):
 
 class GaussianPSF(PSF):
     """Gaussian-shaped PSF"""
+
     morphology: GaussianMorphology
     """Morphology model"""
 
@@ -51,6 +56,7 @@ class GaussianPSF(PSF):
         self.morphology = GaussianMorphology(sigma)
 
     def __call__(self):
+        """What to run when the Gaussian PSF is called"""
         morph = self.morphology()
-        morph /= morph.sum((-2,-1), keepdims=True)
+        morph /= morph.sum((-2, -1), keepdims=True)
         return morph
