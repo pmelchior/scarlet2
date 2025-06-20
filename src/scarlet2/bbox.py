@@ -112,7 +112,7 @@ class Box(eqx.Module):
         return image
 
     def get_extent(self):
-        """Return the start and stop coordinates."""
+        """Return the start and end coordinates."""
         return [self.start[-1], self.stop[-1], self.start[-2], self.stop[-2]]
 
     @property
