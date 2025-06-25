@@ -1,7 +1,8 @@
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 
-from .bbox import Box
+from .bbox import Box, overlap_slices
 from .frame import Frame
 from .module import Module
 from .renderer import (
@@ -131,3 +132,75 @@ class Observation(Module):
             ), "Renderer does not map model frame to observation frame"
         object.__setattr__(self, "renderer", renderer)
         return self
+
+    def eval_chi_square(self, model):
+        """Evaluate the weighted mean (weighted by the inverse variance weights) of the squared residuals
+
+        Parameters
+        ----------
+        model: array
+            The (pre-rendered) predicted data cube, typically from evaluating :py:class:`~scarlet2.Scene`
+
+        Returns
+        -------
+        """
+        print("Chi^2", (self.weights * (self.render(model) - self.data) ** 2).mean())
+
+    def eval_chi_square_in_box_and_border(self, scene, border_width=3):
+        """
+        Evaluate the weighted mean (weighted by the inverse variance weights) of the squared residuals
+        for each source. Chi square is also computed for the perimeter outside the box of with `border_width`.
+
+        Parameters
+        ----------
+        scene: :py:class:`~scarlet2.Scene`
+            Scene containing the sources
+        border_width: int
+            width of the border around the source box
+        """
+        residuals = self.render(scene()) - self.data
+
+        for i, src in enumerate(scene.sources):
+            bbox, _ = overlap_slices(self.frame.bbox, src.bbox, return_boxes=True)
+            chi_in, chi_out = chi_square_in_box_and_border(residuals, self.weights, bbox, border_width)
+            print(
+                f"Source {i},",
+                "Chi^2 source box:",
+                chi_in,
+                "Chi^2 box border:",
+                chi_out,
+                "Missing flux:",
+                chi_out > 1.5 * chi_in,
+            )
+
+
+def chi_square_in_box_and_border(residuals, weights, bbox, border_width):
+    """
+    helper function for :py:meth:`eval_chi_square_in_box_and_border`
+
+    Parameters
+    ----------
+    residuals: array
+        residual image
+    weights: array
+        observation weights (inverse variance)
+    bbox: :py:class:`~scarlet2.Box
+        source box`
+    border_width: int
+        width of the border around the source box
+    """
+    bbox_out = bbox.grow([0, border_width, border_width])
+
+    sub_res_in = jax.lax.dynamic_slice(residuals, bbox.start, bbox.shape)
+    sub_res_out = jax.lax.dynamic_slice(residuals, bbox_out.start, bbox_out.shape)
+    weights_in = jax.lax.dynamic_slice(weights, bbox.start, bbox.shape)
+    weights_out = jax.lax.dynamic_slice(weights, bbox_out.start, bbox_out.shape)
+
+    border = jax.lax.dynamic_update_slice(
+        jnp.ones_like(sub_res_out), jnp.zeros_like(sub_res_in), (0, 3, 3)
+    ).astype("bool")
+
+    chi_square_box = (weights_in * (sub_res_in**2)).mean()
+    chi_square_border = (weights_out * (sub_res_out**2))[border].mean()
+
+    return chi_square_box, chi_square_border
