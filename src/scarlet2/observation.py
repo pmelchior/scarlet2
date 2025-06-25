@@ -4,6 +4,7 @@ import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
 from .frame import Frame
+from .measure import Moments
 from .module import Module
 from .renderer import (
     AdjustToFrame,
@@ -172,6 +173,41 @@ class Observation(Module):
                 "Missing flux:",
                 chi_out > 1.5 * chi_in,
             )
+
+    def measure_residual_centroid(self, scene):
+        """
+        Compute moment of the residual image for each source and print the remaining flux,
+        dipole centroid and dipole size
+
+        Parameters
+        ----------
+        scene: :py:class:`~scarlet2.Scene`
+            Scene containing the sources
+        """
+        residuals = self.render(scene()) - self.data
+
+        moments = []
+
+        for src in scene.sources:
+            bbox, _ = overlap_slices(self.frame.bbox, src.bbox, return_boxes=True)
+            source_res = jax.lax.dynamic_slice(residuals, bbox.start, bbox.shape)
+            source_weights = jax.lax.dynamic_slice(self.weights, bbox.start, bbox.shape)
+            m = Moments(source_res)
+            moments.append(m)
+
+        print("Remaining flux")
+        for i, m in enumerate(moments):
+            print(f"Source {i}, flux: {abs(m[0, 0].sum())}, std: {(1 / source_weights**0.5).sum()}")
+
+        print()
+        print("Residual dipole centroid per band")
+        for i, m in enumerate(moments):
+            print(f"Source {i}, centroid: {m.centroid}")
+
+        print()
+        print("Residual dipole size per band")
+        for i, m in enumerate(moments):
+            print(f"Source {i}, size: {m.size}")
 
 
 def chi_square_in_box_and_border(residuals, weights, bbox, border_width):
