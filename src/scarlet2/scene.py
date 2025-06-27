@@ -217,6 +217,7 @@ class Scene(Module):
         e_rel=1e-4,
         progress_bar=True,
         callback=None,
+        check_fit=False,
         **kwargs,
     ):
         """Fit model `parameters` of every source in the scene to match `observations`.
@@ -244,6 +245,9 @@ class Scene(Module):
             Signature `callback(scene, convergence, loss) -> None`, where
             `convergence` is a tree of the same structure as `scene`, and `loss`
             is the current value of the log_posterior.
+        check_fit: bool, optional
+            Whether to run validation checks on the scene after fitting.
+            Default is `False`.
         **kwargs: dict, optional
             Additional keyword arguments passed to the `optax.scale_by_adam` optimizer.
 
@@ -330,7 +334,14 @@ class Scene(Module):
                 if max_change < e_rel:
                     break
 
-        return _constraint_replace(scene, parameters)  # transform back to constrained variables
+        returned_scene = _constraint_replace(scene, parameters)  # transform back to constrained variables
+
+        if check_fit:
+            from .validation import check_fit
+
+            check_fit(returned_scene)
+
+        return returned_scene
 
     def set_spectra_to_match(self, observations, parameters):
         """Sets the spectra of every source in the scene to match the observations

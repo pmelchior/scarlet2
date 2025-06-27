@@ -104,7 +104,7 @@ class Source(Component):
     component_ops: list
     """List of operators to combine `components` for the final model"""
 
-    def __init__(self, center, spectrum, morphology):
+    def __init__(self, center, spectrum, morphology, check_source=False):
         """
         Parameters
         ----------
@@ -115,10 +115,12 @@ class Source(Component):
             The spectrum of the source.
         morphology: array, :py:class:`~scarlet2.Morphology`
             The morphology of the source.
+        check_source: bool, optional
+            Whether to run validation checks on the source object. Default is False.
 
         Examples
         --------
-        A source  declaration is restricted to a context of a :py:class:`~scarlet2.Scene`,
+        A source declaration is restricted to a context of a :py:class:`~scarlet2.Scene`,
         which defines the :py:class:`~scarlet2.Frame` of the entire model.
 
         >>> with Scene(model_frame) as scene:
@@ -145,6 +147,17 @@ class Source(Component):
             print("Source can only be created within the context of a Scene")
             print("Use 'with Scene(frame) as scene: Source(...)'")
             raise
+
+        if check_source:
+            from .validation import check_source
+
+            validation_errors = check_source(self)
+            if validation_errors:
+                #! We can raise this as a ValueError or assign it to self.validation_errors
+                raise ValueError(
+                    "Source validation failed with the following errors:\n"
+                    + "\n".join(str(error) for error in validation_errors)
+                )
 
     def add_component(self, component, op):
         """Add `component` to this source

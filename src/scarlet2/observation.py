@@ -26,7 +26,9 @@ class Observation(Module):
     renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
     """Renderer to translate from the model frame the observation frame"""
 
-    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
+    def __init__(
+        self, data, weights, psf=None, wcs=None, channels=None, renderer=None, check_observation=False
+    ):
         self.data = data
         self.weights = weights
         if channels is None:
@@ -35,6 +37,17 @@ class Observation(Module):
         if renderer is None:
             renderer = NoRenderer()
         self.renderer = renderer
+
+        if check_observation:
+            from .validation import check_observation
+
+            validation_errors = check_observation(self)
+            if validation_errors:
+                #! We can raise this as a ValueError or assign it to self.validation_errors
+                raise ValueError(
+                    "Observation validation failed with the following errors:\n"
+                    + "\n".join(str(error) for error in validation_errors)
+                )
 
     def render(self, model):
         """Render `model` in the frame of this observation
