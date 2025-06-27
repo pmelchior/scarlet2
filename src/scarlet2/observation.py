@@ -25,8 +25,6 @@ class Observation(Module):
     """Metadata to describe what view of the sky `data` amounts to"""
     renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
     """Renderer to translate from the model frame the observation frame"""
-    check_observation: bool = eqx.field(static=True, default=False)
-    """Whether to validation checks on the observation object. Default is False."""
 
     def __init__(
         self, data, weights, psf=None, wcs=None, channels=None, renderer=None, check_observation=False
@@ -39,12 +37,17 @@ class Observation(Module):
         if renderer is None:
             renderer = NoRenderer()
         self.renderer = renderer
-        self.check_observation = check_observation
 
-        if self.check_observation:
+        if check_observation:
             from .validation import check_observation
 
-            check_observation(self)
+            validation_errors = check_observation(self)
+            if validation_errors:
+                #! We can raise this as a ValueError or assign it to self.validation_errors
+                raise ValueError(
+                    "Observation validation failed with the following errors:\n"
+                    + "\n".join(str(error) for error in validation_errors)
+                )
 
     def render(self, model):
         """Render `model` in the frame of this observation

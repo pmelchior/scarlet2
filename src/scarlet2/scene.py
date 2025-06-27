@@ -25,18 +25,13 @@ class Scene(Module):
     """Portion of the sky represented by this model"""
     sources: list
     """List of :py:class:`~scarlet2.Source` comprised in this model"""
-    check_scene: bool = eqx.field(static=True, default=False)
-    """Whether to run validation checks on the scene after initialization. Default is `False`."""
 
-    def __init__(self, frame, check_scene=False):
+    def __init__(self, frame):
         """
         Parameters
         ----------
         frame: `Frame`
             Portion of the sky represented by this model
-        check_scene: bool, optional
-            Whether to run validation checks on the scene after initialization.
-            Default is `False`.
 
         Examples
         --------
@@ -59,7 +54,6 @@ class Scene(Module):
         """
         self.frame = frame
         self.sources = list()
-        self.check_scene = check_scene
 
     def __call__(self):
         """What to run when the scene is called"""
@@ -102,10 +96,6 @@ class Scene(Module):
 
     def __exit__(self, exc_type, exc_value, traceback):
         Scenery.scene = None
-        if self.check_scene:
-            from .validation import check_scene
-
-            check_scene(self)
 
     def sample(
         self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs
