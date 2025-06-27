@@ -25,13 +25,18 @@ class Scene(Module):
     """Portion of the sky represented by this model"""
     sources: list
     """List of :py:class:`~scarlet2.Source` comprised in this model"""
+    check_scene: bool = eqx.field(static=True, default=False)
+    """Whether to run validation checks on the scene after initialization. Default is `False`."""
 
-    def __init__(self, frame):
+    def __init__(self, frame, check_scene=False):
         """
         Parameters
         ----------
         frame: `Frame`
             Portion of the sky represented by this model
+        check_scene: bool, optional
+            Whether to run validation checks on the scene after initialization.
+            Default is `False`.
 
         Examples
         --------
@@ -54,6 +59,7 @@ class Scene(Module):
         """
         self.frame = frame
         self.sources = list()
+        self.check_scene = check_scene
 
     def __call__(self):
         """What to run when the scene is called"""
@@ -96,6 +102,10 @@ class Scene(Module):
 
     def __exit__(self, exc_type, exc_value, traceback):
         Scenery.scene = None
+        if self.check_scene:
+            from .validation import check_scene
+
+            check_scene(self)
 
     def sample(
         self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs
@@ -217,6 +227,7 @@ class Scene(Module):
         e_rel=1e-4,
         progress_bar=True,
         callback=None,
+        check_fit=False,
         **kwargs,
     ):
         """Fit model `parameters` of every source in the scene to match `observations`.
@@ -244,6 +255,9 @@ class Scene(Module):
             Signature `callback(scene, convergence, loss) -> None`, where
             `convergence` is a tree of the same structure as `scene`, and `loss`
             is the current value of the log_posterior.
+        check_fit: bool, optional
+            Whether to run validation checks on the scene after fitting.
+            Default is `False`.
         **kwargs: dict, optional
             Additional keyword arguments passed to the `optax.scale_by_adam` optimizer.
 
@@ -330,7 +344,14 @@ class Scene(Module):
                 if max_change < e_rel:
                     break
 
-        return _constraint_replace(scene, parameters)  # transform back to constrained variables
+        returned_scene = _constraint_replace(scene, parameters)  # transform back to constrained variables
+
+        if check_fit:
+            from .validation import check_fit
+
+            check_fit(returned_scene)
+
+        return returned_scene
 
     def set_spectra_to_match(self, observations, parameters):
         """Sets the spectra of every source in the scene to match the observations
