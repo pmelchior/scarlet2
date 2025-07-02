@@ -1,4 +1,5 @@
 import operator
+from typing import Optional
 
 import equinox as eqx
 import jax
@@ -10,6 +11,7 @@ from .bbox import Box, overlap_slices
 from .module import Module
 from .morphology import Morphology
 from .spectrum import Spectrum
+from .validation import ValidationError, ValidationMethodCollector
 
 
 class Component(Module):
@@ -250,3 +252,24 @@ class PointSource(Source):
         morphology = frame.psf.morphology
 
         super().__init__(center, spectrum, morphology)
+
+
+class SourceValidator(metaclass=ValidationMethodCollector):
+    """A class containing all of the validation checks for Source objects.
+
+    Note that the metaclass is defined as `MethodCollector`, which collects all
+    validation methods in this class into a single class attribute list called
+    `validation_checks`. This allows for easy iteration over all checks."""
+
+    def __init__(self, source: Source):
+        self.source = source
+
+    def check_source_example(self) -> Optional[ValidationError]:
+        """Check that the source is valid.
+
+        Returns
+        -------
+        ValidationError or None
+            Returns a ValidationError if the check fails, otherwise None.
+        """
+        return None

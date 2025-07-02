@@ -1,3 +1,5 @@
+from typing import Optional
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -12,6 +14,7 @@ from .renderer import (
     NoRenderer,
     Renderer,
 )
+from .validation import ValidationError, ValidationMethodCollector
 
 
 class Observation(Module):
@@ -144,3 +147,47 @@ class Observation(Module):
             ), "Renderer does not map model frame to observation frame"
         object.__setattr__(self, "renderer", renderer)
         return self
+
+
+class ObservationValidator(metaclass=ValidationMethodCollector):
+    """A class containing all of the validation checks for Observation objects.
+    Note that the metaclass is defined as `MethodCollector`, which collects all
+    validation methods in this class into a single class attribute list called
+    `validation_checks`. This allows for easy iteration over all checks."""
+
+    def __init__(self, observation: Observation):
+        self.observation = observation
+
+    def check_weights_non_negative(self) -> Optional[ValidationError]:
+        """Check that the weights in the observation are non-negative.
+
+        Returns
+        -------
+        ValidationError or None
+            Returns a ValidationError if the check fails, otherwise None.
+        """
+        if (self.observation.weights < 0).any():
+            return ValidationError(
+                "Weights in the observation must be non-negative.",
+                check=self.__class__.__name__,
+                #! Placeholder for a meaningful context
+                context={"observation.weights": self.observation.weights},
+            )
+        return None
+
+    def check_weights_finite(self) -> Optional[ValidationError]:
+        """Check that the weights in the observation are finite.
+
+        Returns
+        -------
+        ValidationError or None
+            Returns a ValidationError if the check fails, otherwise None.
+        """
+        if jnp.isinf(self.observation.weights).any():
+            return ValidationError(
+                "Weights in the observation must be finite.",
+                check=self.__class__.__name__,
+                #! Placeholder for a meaningful context
+                context={"observation.weights": self.observation.weights},
+            )
+        return None

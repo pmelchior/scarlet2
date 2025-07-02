@@ -1,4 +1,5 @@
 from collections import defaultdict
+from typing import Optional
 
 import equinox as eqx
 import jax
@@ -9,6 +10,7 @@ from .bbox import overlap_slices
 from .frame import Frame
 from .module import Module, Parameters
 from .renderer import ChannelRenderer
+from .validation import ValidationError, ValidationMethodCollector
 
 
 class Scene(Module):
@@ -339,7 +341,12 @@ class Scene(Module):
         if check_fit:
             from .validation import check_fit
 
-            check_fit(returned_scene)
+            validation_errors = check_fit(returned_scene)
+            if validation_errors:
+                raise ValueError(
+                    "Fit validation failed. The following errors were found:\n"
+                    + "\n".join(str(error) for error in validation_errors)
+                )
 
         return returned_scene
 
@@ -508,3 +515,25 @@ def _make_step(model, observations, parameters, optim, opt_state, filter_spec=No
     convergence = jax.tree_util.tree_map(lambda x, dx: norm(x, dx), *(model, updates))
 
     return model_, loss, opt_state, convergence
+
+
+class FitValidator(metaclass=ValidationMethodCollector):
+    """A class containing all of the validation checks for a Scene objects after
+    calling `.fit()`.
+
+    Note that the metaclass is defined as `MethodCollector`, which collects all
+    validation methods in this class into a single class attribute list called
+    `validation_checks`. This allows for easy iteration over all checks."""
+
+    def __init__(self, scene: Scene):
+        self.scene = scene
+
+    def check_fit_example(self) -> Optional[ValidationError]:
+        """Check that the fit was successful.
+
+        Returns
+        -------
+        ValidationError or None
+            Returns a ValidationError if the check fails, otherwise None.
+        """
+        return None
