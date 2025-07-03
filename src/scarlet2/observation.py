@@ -14,7 +14,7 @@ from .renderer import (
     NoRenderer,
     Renderer,
 )
-from .validation import ValidationError, ValidationMethodCollector
+from .validation_utils import ValidationError, ValidationMethodCollector
 
 
 class Observation(Module):
@@ -46,7 +46,6 @@ class Observation(Module):
 
             validation_errors = check_observation(self)
             if validation_errors:
-                #! We can raise this as a ValueError or assign it to self.validation_errors
                 raise ValueError(
                     "Observation validation failed with the following errors:\n"
                     + "\n".join(str(error) for error in validation_errors)

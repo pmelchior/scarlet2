@@ -11,7 +11,7 @@ from .bbox import Box, overlap_slices
 from .module import Module
 from .morphology import Morphology
 from .spectrum import Spectrum
-from .validation import ValidationError, ValidationMethodCollector
+from .validation_utils import ValidationError, ValidationMethodCollector
 
 
 class Component(Module):
@@ -155,7 +155,6 @@ class Source(Component):
 
             validation_errors = check_source(self)
             if validation_errors:
-                #! We can raise this as a ValueError or assign it to self.validation_errors
                 raise ValueError(
                     "Source validation failed with the following errors:\n"
                     + "\n".join(str(error) for error in validation_errors)

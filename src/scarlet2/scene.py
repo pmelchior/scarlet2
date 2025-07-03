@@ -10,7 +10,7 @@ from .bbox import overlap_slices
 from .frame import Frame
 from .module import Module, Parameters
 from .renderer import ChannelRenderer
-from .validation import ValidationError, ValidationMethodCollector
+from .validation_utils import ValidationError, ValidationMethodCollector
 
 
 class Scene(Module):
