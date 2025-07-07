@@ -30,6 +30,7 @@ from .psf import PSF, ArrayPSF, GaussianPSF
 from .scene import Scene
 from .source import Component, DustComponent, PointSource, Source
 from .spectrum import Spectrum, StaticArraySpectrum, TransientArraySpectrum
+from .validation import check_fit, check_observation, check_scene, check_source
 from .wavelets import Starlet
 
 # for * imports and docs
@@ -62,4 +63,8 @@ __all__ = [
     "StaticArraySpectrum",
     "TransientArraySpectrum",
     "Starlet",
+    "check_fit",
+    "check_observation",
+    "check_scene",
+    "check_source",
 ]

@@ -1,4 +1,5 @@
 import operator
+from typing import Optional
 
 import equinox as eqx
 import jax
@@ -10,6 +11,7 @@ from .bbox import Box, overlap_slices
 from .module import Module
 from .morphology import Morphology
 from .spectrum import Spectrum
+from .validation_utils import ValidationError, ValidationMethodCollector
 
 
 class Component(Module):
@@ -104,7 +106,7 @@ class Source(Component):
     component_ops: list
     """List of operators to combine `components` for the final model"""
 
-    def __init__(self, center, spectrum, morphology):
+    def __init__(self, center, spectrum, morphology, check_source=False):
         """
         Parameters
         ----------
@@ -115,10 +117,12 @@ class Source(Component):
             The spectrum of the source.
         morphology: array, :py:class:`~scarlet2.Morphology`
             The morphology of the source.
+        check_source: bool, optional
+            Whether to run validation checks on the source object. Default is False.
 
         Examples
         --------
-        A source  declaration is restricted to a context of a :py:class:`~scarlet2.Scene`,
+        A source declaration is restricted to a context of a :py:class:`~scarlet2.Scene`,
         which defines the :py:class:`~scarlet2.Frame` of the entire model.
 
         >>> with Scene(model_frame) as scene:
@@ -145,6 +149,16 @@ class Source(Component):
             print("Source can only be created within the context of a Scene")
             print("Use 'with Scene(frame) as scene: Source(...)'")
             raise
+
+        if check_source:
+            from .validation import check_source
+
+            validation_errors = check_source(self)
+            if validation_errors:
+                raise ValueError(
+                    "Source validation failed with the following errors:\n"
+                    + "\n".join(str(error) for error in validation_errors)
+                )
 
     def add_component(self, component, op):
         """Add `component` to this source
@@ -237,3 +251,24 @@ class PointSource(Source):
         morphology = frame.psf.morphology
 
         super().__init__(center, spectrum, morphology)
+
+
+class SourceValidator(metaclass=ValidationMethodCollector):
+    """A class containing all of the validation checks for Source objects.
+
+    Note that the metaclass is defined as `MethodCollector`, which collects all
+    validation methods in this class into a single class attribute list called
+    `validation_checks`. This allows for easy iteration over all checks."""
+
+    def __init__(self, source: Source):
+        self.source = source
+
+    def check_source_example(self) -> Optional[ValidationError]:
+        """Check that the source is valid.
+
+        Returns
+        -------
+        ValidationError or None
+            Returns a ValidationError if the check fails, otherwise None.
+        """
+        return None
