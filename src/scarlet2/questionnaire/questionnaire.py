@@ -1,14 +1,15 @@
-import importlib
+from importlib.resources import files
 from functools import partial
 import re
-import json
+
+import yaml
 from ipywidgets import VBox, HBox, Button, Label, HTML, Layout, Output
 from IPython.display import display
 from pygments import highlight
 from pygments.lexers import PythonLexer
 from pygments.formatters import HtmlFormatter
 
-from scarlet2.questionnaire.models import Question, Answer, Template, Questionnaire
+from scarlet2.questionnaire.models import Template, Questionnaire
 
 
 class QuestionnaireWidget:
@@ -130,8 +131,9 @@ class QuestionnaireWidget:
 
 
 def load_questions() -> Questionnaire:
-    with importlib.resources.files("scarlet2.questionnaire").joinpath("questions.json").open("r") as f:
-        raw = json.load(f)
+    questions_path = files("scarlet2.questionnaire").joinpath("questions.yaml")
+    with questions_path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
         return Questionnaire.model_validate(raw)
 
 

@@ -1,0 +1,41 @@
+initial_template: '{{code}}'
+questions:
+- question: Single resolution data or multi-resolution imaging data?
+  answers:
+  - answer: Single resolution
+    tooltip: All images the same resolution
+    template:
+      replacement: code
+      code: "obs = scarlet2.Observation(data,\n                               wcs=wcs,\n\
+        \                               psf=scarlet2.ArrayPSF(psf_data),\n       \
+        \                        channels=channels,\n                            \
+        \   weights=obs_weights)"
+      tooltip: ''
+    followups: []
+  - answer: Multiple resolution
+    tooltip: Images with different resolutions
+    template:
+      replacement: code
+      code: "observations = []\nfor i, data in enumerate(datasets):\n\tobservations.append(\n\
+        \t\tscarlet2.Observation(data,\n                               wcs={{wcs}},\n\
+        \                               psf=scarlet2.ArrayPSF(psf_data),\n       \
+        \                        channels=channels,\n                            \
+        \   weights=obs_weights)\n             )"
+      tooltip: ''
+    followups:
+    - question: Are images pre-aligned to the same wcs
+      answers:
+      - answer: 'Yes'
+        tooltip: All images the same WCS
+        template:
+          replacement: wcs
+          code: wcs
+          tooltip: ''
+        followups: []
+      - answer: 'No'
+        tooltip: Images different WCS
+        template:
+          replacement: wcs
+          code: wcs_list[i]
+          tooltip: ''
+        followups: []
