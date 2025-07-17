@@ -29,9 +29,7 @@ class Observation(Module):
     renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
     """Renderer to translate from the model frame the observation frame"""
 
-    def __init__(
-        self, data, weights, psf=None, wcs=None, channels=None, renderer=None, check_observation=False
-    ):
+    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
         self.data = data
         self.weights = weights
         if channels is None:
@@ -41,7 +39,10 @@ class Observation(Module):
             renderer = NoRenderer()
         self.renderer = renderer
 
-        if check_observation:
+        # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
+        from .validation_utils import VALIDATION_SWITCH
+
+        if VALIDATION_SWITCH:
             from .validation import check_observation
 
             validation_errors = check_observation(self)

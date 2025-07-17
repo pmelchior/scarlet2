@@ -1,5 +1,26 @@
+import logging
 from dataclasses import dataclass
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
+
+# A global switch that toggles automated validation checks.
+VALIDATION_SWITCH = True
+
+
+def set_validation(state: bool = True):
+    """Set the global validation switch.
+
+    Parameters
+    ----------
+    state : bool, optional
+        If True, validation checks will be automatically performed. If False,
+        they will be skipped. Defaults to True.
+    """
+
+    global VALIDATION_SWITCH
+    VALIDATION_SWITCH = state
+    logger.info(f"Automated validation checks are now {'enabled' if VALIDATION_SWITCH else 'disabled'}.")
 
 
 @dataclass
