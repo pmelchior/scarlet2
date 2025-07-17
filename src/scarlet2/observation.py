@@ -166,7 +166,7 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         ValidationError or None
             Returns a ValidationError if the check fails, otherwise None.
         """
-        if (self.observation.weights < 0).any():
+        if self.observation.weights is not None and (self.observation.weights < 0).any():
             return ValidationError(
                 "Weights in the observation must be non-negative.",
                 check=self.__class__.__name__,
@@ -183,7 +183,7 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         ValidationError or None
             Returns a ValidationError if the check fails, otherwise None.
         """
-        if jnp.isinf(self.observation.weights).any():
+        if self.observation.weights is not None and jnp.isinf(self.observation.weights).any():
             return ValidationError(
                 "Weights in the observation must be finite.",
                 check=self.__class__.__name__,
