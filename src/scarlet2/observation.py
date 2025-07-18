@@ -168,9 +168,8 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         """
         if self.observation.weights is not None and (self.observation.weights < 0).any():
             return ValidationError(
-                "Weights in the observation must be non-negative.",
+                message="Weights in the observation must be non-negative.",
                 check=self.__class__.__name__,
-                #! Placeholder for a meaningful context
                 context={"observation.weights": self.observation.weights},
             )
         return None
@@ -185,9 +184,97 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         """
         if self.observation.weights is not None and jnp.isinf(self.observation.weights).any():
             return ValidationError(
-                "Weights in the observation must be finite.",
+                message="Weights in the observation must be finite.",
                 check=self.__class__.__name__,
-                #! Placeholder for a meaningful context
                 context={"observation.weights": self.observation.weights},
             )
+        return None
+
+    def check_data_and_weights_shape(self) -> Optional[ValidationError]:
+        """Check that the data and weights have the same shape.
+
+        Returns
+        -------
+        ValidationError or None
+            Returns a ValidationError if the check fails, otherwise None.
+        """
+        if self.observation.data.shape != self.observation.weights.shape:
+            return ValidationError(
+                message="Data and weights must have the same shape.",
+                check=self.__class__.__name__,
+                context={
+                    "observation.data.shape": self.observation.data.shape,
+                    "observation.weights.shape": self.observation.weights.shape,
+                },
+            )
+        return None
+
+    def check_num_channels_matches_data(self) -> Optional[ValidationError]:
+        """Check that the number of channels in the observation matches the data.
+
+        NOTE: It is unlikely that this check will ever fail because there are many assertions
+        in place around Frame and BBox that will raise an error if the number of channels
+        does not match the data shape.
+
+        Returns
+        -------
+        ValidationError or None
+            Returns a ValidationError if the check fails, otherwise None.
+        """
+        if self.observation.frame.channels is not None:
+            num_channels = len(self.observation.frame.channels)
+            if num_channels != self.observation.data.shape[0]:
+                return ValidationError(
+                    message="Number of channels in the observation does not match the data.",
+                    check=self.__class__.__name__,
+                    context={
+                        "observation.frame.channels": self.observation.frame.channels,
+                        "observation.data.shape": self.observation.data.shape,
+                    },
+                )
+        return None
+
+    def check_data_finite_for_non_zero_weights(self) -> Optional[ValidationError]:
+        """Check that the data in the observation is finite where weights are greater
+        than zero.
+
+        Returns
+        -------
+        ValidationError or None
+            Returns a ValidationError if the check fails, otherwise None.
+        """
+        if self.observation.weights is not None and self.observation.data is not None:
+            # Mask self.observation.data where self.observation.weights is 0
+            if jnp.isinf(self.observation.data[self.observation.weights > 0]).any():
+                return ValidationError(
+                    message="Data in the observation must be finite.",
+                    check=self.__class__.__name__,
+                    context={"observation.data": self.observation.data},
+                )
+            return None
+
+    def check_psf_centroid_consistent(self) -> Optional[ValidationError]:
+        """Check that the PSF centroid is consistent with the observation frame.
+
+        Returns
+        -------
+        ValidationError or None
+            Returns a ValidationError if the check fails, otherwise None.
+        """
+        if self.observation.frame.psf is not None:
+            centroids = []
+            for indx in range(self.observation.psf.shape[0]):
+                psf = self.observation.psf[indx]
+                centroids.append(jnp.unravel_index(jnp.argmax(psf), psf.shape))
+
+            psf_centroid = jnp.mean(self.observation.frame.psf, axis=(1, 2))
+            if not jnp.allclose(psf_centroid, self.observation.frame.bbox.center):
+                return ValidationError(
+                    message="PSF centroid is not consistent with the observation frame.",
+                    check=self.__class__.__name__,
+                    context={
+                        "psf_centroid": psf_centroid,
+                        "observation.frame.bbox.center": self.observation.frame.bbox.center,
+                    },
+                )
         return None
