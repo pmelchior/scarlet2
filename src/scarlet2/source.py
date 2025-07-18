@@ -106,7 +106,7 @@ class Source(Component):
     component_ops: list
     """List of operators to combine `components` for the final model"""
 
-    def __init__(self, center, spectrum, morphology, check_source=False):
+    def __init__(self, center, spectrum, morphology):
         """
         Parameters
         ----------
@@ -117,8 +117,6 @@ class Source(Component):
             The spectrum of the source.
         morphology: array, :py:class:`~scarlet2.Morphology`
             The morphology of the source.
-        check_source: bool, optional
-            Whether to run validation checks on the source object. Default is False.
 
         Examples
         --------
@@ -150,7 +148,10 @@ class Source(Component):
             print("Use 'with Scene(frame) as scene: Source(...)'")
             raise
 
-        if check_source:
+        # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
+        from .validation_utils import VALIDATION_SWITCH
+
+        if VALIDATION_SWITCH:
             from .validation import check_source
 
             validation_errors = check_source(self)

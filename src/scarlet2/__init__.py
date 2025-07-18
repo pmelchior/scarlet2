@@ -31,6 +31,7 @@ from .scene import Scene
 from .source import Component, DustComponent, PointSource, Source
 from .spectrum import Spectrum, StaticArraySpectrum, TransientArraySpectrum
 from .validation import check_fit, check_observation, check_scene, check_source
+from .validation_utils import VALIDATION_SWITCH, set_validation
 from .wavelets import Starlet
 
 # for * imports and docs
@@ -67,4 +68,6 @@ __all__ = [
     "check_observation",
     "check_scene",
     "check_source",
+    "VALIDATION_SWITCH",
+    "set_validation",
 ]
