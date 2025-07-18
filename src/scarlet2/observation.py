@@ -35,7 +35,7 @@ class Observation(Module):
         self.data = data
         self.weights = weights
         if channels is None:
-            channels = range(data.shape[0])
+            channels = list(range(data.shape[0]))
         self.frame = Frame(Box(data.shape), psf, wcs, channels)
         if renderer is None:
             renderer = NoRenderer()
