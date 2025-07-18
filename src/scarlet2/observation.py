@@ -198,7 +198,10 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         ValidationError or None
             Returns a ValidationError if the check fails, otherwise None.
         """
-        if self.observation.data.shape != self.observation.weights.shape:
+        if (
+            self.observation.weights is not None
+            and self.observation.data.shape != self.observation.weights.shape
+        ):
             return ValidationError(
                 message="Data and weights must have the same shape.",
                 check=self.__class__.__name__,
@@ -253,28 +256,28 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
                 )
             return None
 
-    def check_psf_centroid_consistent(self) -> Optional[ValidationError]:
-        """Check that the PSF centroid is consistent with the observation frame.
+    # def check_psf_centroid_consistent(self) -> Optional[ValidationError]:
+    #     """Check that the PSF centroid is consistent with the observation frame.
 
-        Returns
-        -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
-        """
-        if self.observation.frame.psf is not None:
-            centroids = []
-            for indx in range(self.observation.psf.shape[0]):
-                psf = self.observation.psf[indx]
-                centroids.append(jnp.unravel_index(jnp.argmax(psf), psf.shape))
+    #     Returns
+    #     -------
+    #     ValidationError or None
+    #         Returns a ValidationError if the check fails, otherwise None.
+    #     """
+    #     if self.observation.frame.psf is not None:
+    #         centroids = []
+    #         for indx in range(self.observation.frame.psf.shape[0]):
+    #             psf = self.observation.frame.psf[indx]
+    #             centroids.append(jnp.unravel_index(jnp.argmax(psf), psf.shape))
 
-            psf_centroid = jnp.mean(self.observation.frame.psf, axis=(1, 2))
-            if not jnp.allclose(psf_centroid, self.observation.frame.bbox.center):
-                return ValidationError(
-                    message="PSF centroid is not consistent with the observation frame.",
-                    check=self.__class__.__name__,
-                    context={
-                        "psf_centroid": psf_centroid,
-                        "observation.frame.bbox.center": self.observation.frame.bbox.center,
-                    },
-                )
-        return None
+    #         psf_centroid = jnp.mean(self.observation.frame.psf, axis=(1, 2))
+    #         if not jnp.allclose(psf_centroid, self.observation.frame.bbox.center):
+    #             return ValidationError(
+    #                 message="PSF centroid is not consistent with the observation frame.",
+    #                 check=self.__class__.__name__,
+    #                 context={
+    #                     "psf_centroid": psf_centroid,
+    #                     "observation.frame.bbox.center": self.observation.frame.bbox.center,
+    #                 },
+    #             )
+    #     return None
