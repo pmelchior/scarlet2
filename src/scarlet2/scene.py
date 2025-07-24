@@ -219,7 +219,6 @@ class Scene(Module):
         e_rel=1e-4,
         progress_bar=True,
         callback=None,
-        check_fit=False,
         **kwargs,
     ):
         """Fit model `parameters` of every source in the scene to match `observations`.
@@ -247,9 +246,6 @@ class Scene(Module):
             Signature `callback(scene, convergence, loss) -> None`, where
             `convergence` is a tree of the same structure as `scene`, and `loss`
             is the current value of the log_posterior.
-        check_fit: bool, optional
-            Whether to run validation checks on the scene after fitting.
-            Default is `False`.
         **kwargs: dict, optional
             Additional keyword arguments passed to the `optax.scale_by_adam` optimizer.
 
@@ -338,7 +334,10 @@ class Scene(Module):
 
         returned_scene = _constraint_replace(scene, parameters)  # transform back to constrained variables
 
-        if check_fit:
+        # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
+        from .validation_utils import VALIDATION_SWITCH
+
+        if VALIDATION_SWITCH:
             from .validation import check_fit
 
             validation_errors = check_fit(returned_scene)

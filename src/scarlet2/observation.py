@@ -31,19 +31,20 @@ class Observation(Module):
     renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
     """Renderer to translate from the model frame the observation frame"""
 
-    def __init__(
-        self, data, weights, psf=None, wcs=None, channels=None, renderer=None, check_observation=False
-    ):
+    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
         self.data = data
         self.weights = weights
         if channels is None:
-            channels = range(data.shape[0])
+            channels = list(range(data.shape[0]))
         self.frame = Frame(Box(data.shape), psf, wcs, channels)
         if renderer is None:
             renderer = NoRenderer()
         self.renderer = renderer
 
-        if check_observation:
+        # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
+        from .validation_utils import VALIDATION_SWITCH
+
+        if VALIDATION_SWITCH:
             from .validation import check_observation
 
             validation_errors = check_observation(self)
@@ -274,7 +275,7 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         ValidationError or None
             Returns a ValidationError if the check fails, otherwise None.
         """
-        if (self.observation.weights < 0).any():
+        if self.observation.weights is not None and (self.observation.weights < 0).any():
             return ValidationError(
                 "Weights in the observation must be non-negative.",
                 check=self.__class__.__name__,
@@ -291,7 +292,7 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         ValidationError or None
             Returns a ValidationError if the check fails, otherwise None.
         """
-        if jnp.isinf(self.observation.weights).any():
+        if self.observation.weights is not None and jnp.isinf(self.observation.weights).any():
             return ValidationError(
                 "Weights in the observation must be finite.",
                 check=self.__class__.__name__,
