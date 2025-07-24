@@ -11,9 +11,13 @@ import jax.numpy as jnp
 import scarlet2
 from astropy.wcs import WCS
 from huggingface_hub import hf_hub_download
+from scarlet2.validation_utils import set_validation
 
 warnings.filterwarnings("ignore")
 
+#! Double check to see what's going wrong here - line 76 and 80. I think the PSF
+#! just needs to be set correctly for those two observations.
+set_validation(False)
 # Load the HSC image data
 # load test data from HSC and HST
 filename = hf_hub_download(

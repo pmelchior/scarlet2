@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from scarlet2.observation import Observation, ObservationValidator
+from scarlet2.psf import ArrayPSF
 from scarlet2.validation_utils import ValidationError, set_validation
 
 
@@ -14,7 +15,12 @@ def setup_validation():
 def bad_obs():
     """Create an observation that should fail multiple validation checks."""
     return Observation(
-        data=np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]), weights=np.array([np.inf, 2.0, -1.0])
+        data=np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
+        weights=np.array([np.inf, 2.0, -1.0]),
+        channels=[0, 1],
+        psf=ArrayPSF(
+            np.array([[0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0]])
+        ),
     )
 
 
@@ -25,6 +31,7 @@ def good_obs():
         data=np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
         weights=np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
         channels=[0, 1],
+        psf=ArrayPSF(np.array([[0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0]])),
     )
 
 
@@ -132,3 +139,30 @@ def test_data_finite_for_non_zero_weights_returns_error_with_infinity():
     assert results is not None
     assert isinstance(results, ValidationError)
     assert results.message == "Data in the observation must be finite."
+
+
+def test_number_of_psf_channels(good_obs):
+    """Test that the number of PSF channels matches the observation channels."""
+    checker = ObservationValidator(good_obs)
+
+    results = checker.check_number_of_psf_channels()
+    assert results is None
+
+
+def test_number_of_psf_channels_returns_error(bad_obs):
+    """Test that the number of PSF channels does not match the observation channels."""
+    checker = ObservationValidator(bad_obs)
+
+    results = checker.check_number_of_psf_channels()
+    assert results is not None
+    assert isinstance(results, ValidationError)
+    assert results.message == "Number of PSF channels does not match the number of data channels."
+
+
+# ! This test isn't working - need to adjust the ndims and shape of the PSF I believe.
+# def test_psf_centroid_consistent(good_obs):
+#     """Test that the PSF centroid is consistent with the observation."""
+#     checker = ObservationValidator(good_obs)
+
+#     results = checker.check_psf_centroid_consistent()
+#     assert results is None

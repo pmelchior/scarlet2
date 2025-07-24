@@ -256,28 +256,53 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
                 )
             return None
 
-    # def check_psf_centroid_consistent(self) -> Optional[ValidationError]:
-    #     """Check that the PSF centroid is consistent with the observation frame.
+    def check_number_of_psf_channels(self) -> Optional[ValidationError]:
+        """Check that the number of PSF channels matches the number of data channels.
 
-    #     Returns
-    #     -------
-    #     ValidationError or None
-    #         Returns a ValidationError if the check fails, otherwise None.
-    #     """
-    #     if self.observation.frame.psf is not None:
-    #         centroids = []
-    #         for indx in range(self.observation.frame.psf.shape[0]):
-    #             psf = self.observation.frame.psf[indx]
-    #             centroids.append(jnp.unravel_index(jnp.argmax(psf), psf.shape))
+        Returns
+        -------
+        ValidationError or None
+            Returns a ValidationError if the check fails, otherwise None.
+        """
+        if self.observation.frame.psf is not None:
+            num_psf_channels = self.observation.frame.psf.morphology.shape[0]
+            num_data_channels = self.observation.data.shape[0]
+            if num_psf_channels != num_data_channels:
+                return ValidationError(
+                    message="Number of PSF channels does not match the number of data channels.",
+                    check=self.__class__.__name__,
+                    context={
+                        "observation.frame.psf.shape": self.observation.frame.psf.morphology.shape,
+                        "observation.data.shape": self.observation.data.shape,
+                    },
+                )
+        return None
 
-    #         psf_centroid = jnp.mean(self.observation.frame.psf, axis=(1, 2))
-    #         if not jnp.allclose(psf_centroid, self.observation.frame.bbox.center):
-    #             return ValidationError(
-    #                 message="PSF centroid is not consistent with the observation frame.",
-    #                 check=self.__class__.__name__,
-    #                 context={
-    #                     "psf_centroid": psf_centroid,
-    #                     "observation.frame.bbox.center": self.observation.frame.bbox.center,
-    #                 },
-    #             )
-    #     return None
+    def check_psf_centroid_consistent(self) -> Optional[ValidationError]:
+        """Check that the PSF centroid is consistent with the observation frame.
+
+        Returns
+        -------
+        ValidationError or None
+            Returns a ValidationError if the check fails, otherwise None.
+        """
+        if self.observation.frame.psf is not None:
+            from .measure import Moments
+
+            moments = Moments(self.observation.frame.psf.morphology)
+            psf_centroid = moments.centroid
+
+            psf_centroid_y, psf_centroid_x = psf_centroid
+
+            tolerance = 1e-4
+            if not jnp.allclose(psf_centroid_y, psf_centroid_y[0], atol=tolerance) or not jnp.allclose(
+                psf_centroid_x, psf_centroid_x[0], atol=tolerance
+            ):
+                return ValidationError(
+                    message="PSF centroid is not the same in all channels.",
+                    check=self.__class__.__name__,
+                    context={
+                        "psf_centroid": psf_centroid,
+                    },
+                )
+        return None
