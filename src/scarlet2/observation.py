@@ -161,7 +161,7 @@ class Observation(Module):
         Returns
         -------
         """
-        print("Chi^2", (self.weights * (self.render(model) - self.data) ** 2).mean())
+        return (self.weights * (self.render(model) - self.data) ** 2).mean()
 
     def eval_chi_square_in_box_and_border(self, scene, border_width=3):
         """
@@ -174,21 +174,20 @@ class Observation(Module):
             Scene containing the sources
         border_width: int
             width of the border around the source box
+
+        Returns
+        -------
+        Dict of sources indices and their corresponding Dict of residuals inside and outside source box.
         """
         residuals = self.render(scene()) - self.data
 
+        chi_dict = {}
         for i, src in enumerate(scene.sources):
             bbox, _ = overlap_slices(self.frame.bbox, src.bbox, return_boxes=True)
             chi_in, chi_out = chi_square_in_box_and_border(residuals, self.weights, bbox, border_width)
-            print(
-                f"Source {i},",
-                "Chi^2 source box:",
-                chi_in,
-                "Chi^2 box border:",
-                chi_out,
-                "Missing flux:",
-                chi_out > 1.5 * chi_in,
-            )
+            chi_dict[i] = {"in": chi_in, "out": chi_out}
+
+        return chi_dict
 
     def measure_residual_centroid(self, scene):
         """
@@ -199,31 +198,30 @@ class Observation(Module):
         ----------
         scene: :py:class:`~scarlet2.Scene`
             Scene containing the sources
+
+        Returns
+        -------
+        Dict of sources indices and their corresponding Dict of residuals moments, flux, centroid and size
         """
         residuals = self.render(scene()) - self.data
 
-        moments = []
+        moments = {}
 
-        for src in scene.sources:
+        for i, src in enumerate(scene.sources):
             bbox, _ = overlap_slices(self.frame.bbox, src.bbox, return_boxes=True)
             source_res = jax.lax.dynamic_slice(residuals, bbox.start, bbox.shape)
-            source_weights = jax.lax.dynamic_slice(self.weights, bbox.start, bbox.shape)
             m = Moments(source_res)
-            moments.append(m)
 
-        print("Remaining flux")
-        for i, m in enumerate(moments):
-            print(f"Source {i}, flux: {abs(m[0, 0].sum())}, std: {(1 / source_weights**0.5).sum()}")
+            residual_moments = {
+                "moments": m,
+                "flux": abs(m[0, 0].sum()),
+                "centroid": m.centroid,
+                "size": m.size,
+            }
 
-        print()
-        print("Residual dipole centroid per band")
-        for i, m in enumerate(moments):
-            print(f"Source {i}, centroid: {m.centroid}")
+            moments[i] = residual_moments
 
-        print()
-        print("Residual dipole size per band")
-        for i, m in enumerate(moments):
-            print(f"Source {i}, size: {m.size}")
+        return moments
 
 
 def chi_square_in_box_and_border(residuals, weights, bbox, border_width):
