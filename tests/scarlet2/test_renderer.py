@@ -11,13 +11,9 @@ import jax.numpy as jnp
 import scarlet2
 from astropy.wcs import WCS
 from huggingface_hub import hf_hub_download
-from scarlet2.validation_utils import set_validation
 
 warnings.filterwarnings("ignore")
 
-#! Double check to see what's going wrong here - line 76 and 80. I think the PSF
-#! just needs to be set correctly for those two observations.
-set_validation(False)
 # Load the HSC image data
 # load test data from HSC and HST
 filename = hf_hub_download(
@@ -40,7 +36,9 @@ filename = hf_hub_download(
 psf_hsc_data = jnp.array(fits.open(filename)[0].data, jnp.float32)
 Np1, Np2 = psf_hsc_data[0].shape
 psf_hsc_data = jnp.pad(psf_hsc_data, ((0, 0), (1, 0), (1, 0)))
+psf_hsc_single_band_ = psf_hsc_data[:1]
 psf_hsc = scarlet2.ArrayPSF(psf_hsc_data)
+psf_hsc_single_band = scarlet2.ArrayPSF(psf_hsc_single_band_)
 
 # Load the HST image data
 filename = hf_hub_download(
@@ -64,7 +62,9 @@ psf_hst = jnp.array(fits.open(filename)[0].data, jnp.float32)
 psf_hst = psf_hst[None, :, :]
 psf_hst = jnp.pad(psf_hst, ((0, 0), (1, 0), (1, 0)))
 psf_hst_ = jnp.repeat(psf_hst, 5, 0)
+psf_hst_single_band_ = psf_hst_[:1]
 psf_hst = scarlet2.ArrayPSF(psf_hst_)
+psf_hst_single_band = scarlet2.ArrayPSF(psf_hst_single_band_)
 
 # Scale the HST data
 n1, n2 = jnp.shape(data_hst)
@@ -75,11 +75,11 @@ r, N1, N2 = data_hsc.shape
 
 # define two observation packages and match to frame
 obs_hst = scarlet2.Observation(
-    data_hst[:1, ...], wcs=wcs_hst, psf=psf_hst, channels=["channel"], weights=None
+    data_hst[:1, ...], wcs=wcs_hst, psf=psf_hst_single_band, channels=["channel"], weights=None
 )
 
 obs_hsc = scarlet2.Observation(
-    data_hsc[:1, ...], wcs=wcs_hsc, psf=psf_hsc, channels=["channel"], weights=None
+    data_hsc[:1, ...], wcs=wcs_hsc, psf=psf_hsc_single_band, channels=["channel"], weights=None
 )
 
 # Building a Frame from hst obs
@@ -136,7 +136,7 @@ assert wcs_hst_rot != wcs_hst
 
 def test_hst_to_hsc_against_galsim_rotated_wcs():
     obs_hsc = scarlet2.Observation(
-        data_hsc[:1, ...], wcs=wcs_hsc, psf=psf_hsc, channels=["channel"], weights=None
+        data_hsc[:1, ...], wcs=wcs_hsc, psf=psf_hsc_single_band, channels=["channel"], weights=None
     )
 
     # Automatically find the difference between observation and model WCSs
@@ -153,7 +153,7 @@ def test_no_channel_axis_in_obs_psf():
     obs_hsc = scarlet2.Observation(
         data_hsc[:1, ...],
         wcs=wcs_hsc,
-        psf=scarlet2.ArrayPSF(psf_hsc_data[0]),
+        psf=scarlet2.ArrayPSF(psf_hsc_data[:1]),
         channels=["channel"],
         weights=None,
     )

@@ -257,7 +257,13 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
             return None
 
     def check_number_of_psf_channels(self) -> Optional[ValidationError]:
-        """Check that the number of PSF channels matches the number of data channels.
+        """Check that the number of PSF channels matches the number of data channels and
+        that the PSF and data have the same number of dimensions. One scenario where
+        the logic becomes challenging is when the data and PSF are single-band, and
+        the PSF is a 2D array, while the data is a 3D array with a single channel.
+
+        i.e. data.shape = (1, N1, N2) and psf.shape = (N1, N2). The logic required
+        to ensure that data and PSF
 
         Returns
         -------
@@ -265,8 +271,21 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
             Returns a ValidationError if the check fails, otherwise None.
         """
         if self.observation.frame.psf is not None:
+            num_psf_dims = self.observation.frame.psf.morphology.ndim
+            num_data_dims = self.observation.data.ndim
+
             num_psf_channels = self.observation.frame.psf.morphology.shape[0]
             num_data_channels = self.observation.data.shape[0]
+
+            # The PSF is 2D and the data is 3D but only 1 channel.
+            # ie. psf.shape = (N1, N2) and data.shape = (1, M1, M2)
+            # Note - the other case of psf.shape = (1, N1, N2) and data.shape = (N1, N2)
+            # is not tested due to assertions made when instantiating the Frame object
+            # during in Observation.__init__.
+            if num_psf_dims == 2 and num_data_dims == 3 and num_data_channels == 1:
+                return None
+
+            # The number of bands is different between the PSF and data
             if num_psf_channels != num_data_channels:
                 return ValidationError(
                     message="Number of PSF channels does not match the number of data channels.",
@@ -292,6 +311,10 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
             moments = Moments(self.observation.frame.psf.morphology)
             psf_centroid = moments.centroid
 
+            # This happens when there is only one channel in the PSF, so there is
+            # no need to check consistency across channels.
+            if psf_centroid.ndim < 2:
+                return None
             psf_centroid_y, psf_centroid_x = psf_centroid
 
             tolerance = 1e-4
