@@ -2,6 +2,7 @@ from importlib.resources import files
 from functools import partial
 import re
 
+import markdown
 import yaml
 from ipywidgets import VBox, HBox, Button, Label, HTML, Layout, Output
 from IPython.display import display
@@ -12,12 +13,17 @@ from pygments.formatters import HtmlFormatter
 from scarlet2.questionnaire.models import Template, Questionnaire
 
 
+FILE_PACKAGE_PATH = "scarlet2.questionnaire"
+FILE_NAME = "questions.yaml"
+
+
 class QuestionnaireWidget:
     def __init__(self, questionnaire):
         self.questions = questionnaire.questions
         self.questions_stack = []
         self.question_answers = []
         self.code_output = questionnaire.initial_template
+        self.commentary = ""
         self.output = Output()
         self.output_container = HTML()
 
@@ -80,17 +86,25 @@ class QuestionnaireWidget:
         return left_box
 
     def _handle_answer(self, question, answer, _=None):
-        self._update_template(answer.template)
+        self._update_template(answer.templates)
+        self.commentary = answer.commentary
         self.questions_stack = answer.followups + self.questions_stack
         self.question_answers.append((question, answer))
         self._render_next_question()
 
-    def _update_template(self, template: Template):
-        pattern = r"\{\{\s*" + re.escape(template.replacement) + r"\s*\}\}"
-        self.code_output = re.sub(pattern, template.code, self.code_output)
+    def _update_template(self, templates: list[Template]):
+        for t in templates:
+            pattern = r"\{\{\s*" + re.escape(t.replacement) + r"\s*\}\}"
+            self.code_output = re.sub(pattern, t.code, self.code_output)
 
     def _show_template(self):
         output_code = re.sub(r"\{\{.*?\}\}", "", self.code_output)
+        commentary_text = markdown.markdown(self.commentary, extensions=["extra"])
+        commentary_text = re.sub(
+            r'<a href="(.*?)">',
+            r'<a href="\1" target="_blank" style="color:#0366d6; text-decoration:underline;">',
+            commentary_text
+        )
 
         formatter = HtmlFormatter(style="monokai", noclasses=True)
         highlighted_code = highlight(output_code, PythonLexer(), formatter)
@@ -123,6 +137,17 @@ class QuestionnaireWidget:
                 </button>
             </div>
         </div>
+        <div style="
+        background-color: #f6f8fa;
+        color: #333;
+        padding: 8px 12px;
+        border-left: 4px solid #0366d6;
+        border-radius: 6px;
+        font-size: 14px;
+        font-family: sans-serif;
+    ">
+        {commentary_text}
+    </div>
         """
         self.output_container.value = html_content
 
@@ -131,7 +156,7 @@ class QuestionnaireWidget:
 
 
 def load_questions() -> Questionnaire:
-    questions_path = files("scarlet2.questionnaire").joinpath("questions.yaml")
+    questions_path = files(FILE_PACKAGE_PATH).joinpath(FILE_NAME)
     with questions_path.open("r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
         return Questionnaire.model_validate(raw)

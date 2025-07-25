@@ -9,8 +9,9 @@ class Template(BaseModel):
 class Answer(BaseModel):
     answer: str
     tooltip: str = ""
-    template: Template
+    templates: list[Template]
     followups: list["Question"] = Field(default_factory=list)
+    commentary: str = ""
 
 class Question(BaseModel):
     question: str

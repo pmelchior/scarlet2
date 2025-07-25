@@ -29,6 +29,8 @@ dependencies = [
     "ipywidgets",
     "pydantic",
     "pyyaml",
+    "markdown",
+    "pygments",
 ]
 
 [project.urls]
