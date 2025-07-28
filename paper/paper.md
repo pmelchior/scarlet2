@@ -70,13 +70,21 @@ package `[@astropy]`. `scarlet2` can also interface with deep learning methods. 
 parameters can be specified with neural networks as data-driven priors, which helps break the degeneracies that arise
 when multiple components are fit simultaneously `[@sampson-2024]`.
 
+![Scene with seven detected sources in multi-band images from the Hyper Suprime-Cam Subaru Strategic Program.
+Each source is modelled with a non-parametric spectrum and morphology (1st panel), the entire scene is then convolved
+with the telescope's point spread function (2nd panel) and compared to the observations (3rd panel).
+The residuals (4th panel) reveal the presence of undetected sources and source components (e.g. in the center of source
+#1).](scarlet2_model.png)
+
 To support the wide range of scientific studies that will be made with large sky surveys, `scarlet2` was designed with
 flexibility and ease of use in mind. Several publications have developed and demonstrated new capabilities, including
-modeling of transient sources such as variable AGN `[@ward-2025]` and of interstellar dust embedded in distant galaxies
-`[@siegel-2025]`.
+modeling of interstellar dust embedded in distant galaxies
+`[@siegel-2025]` and of transient sources such as active galactic nuclei `[@ward-2025]` and tidal disruption events
+`[@yao-2025]`.
 Future developments will integrate into cloud-based science platforms, provide support for users to make effective
 modeling choices and to validate their inference results, and create a robust processing pipeline for joint pixel-level
-analyses of surveys from the Vera C. Rubin Observatory, the Euclid mission, and the Nancy Grace Roman Space Telescope.
+analyses of surveys from the Vera C. Rubin Observatory, the Euclid mission, the Nancy Grace Roman Space Telescope, and
+the La Silla Schmidt Southern Survey.
 
 # Acknowledgements
 
