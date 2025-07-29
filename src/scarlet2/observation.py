@@ -6,7 +6,6 @@ import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
 from .frame import Frame
-from .measure import Moments
 from .module import Module
 from .renderer import (
     AdjustToFrame,
@@ -92,10 +91,32 @@ class Observation(Module):
         # 1 / [(2pi)^1/2 (sigma^2)^1/2]
         # with inverse variance weights: sigma^2 = 1/weight
         # full likelihood is sum over all (unmasked) pixels in data
-        d = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
-        log_norm = d / 2 * jnp.log(2 * jnp.pi)
+        n = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
+        log_norm = n / 2 * jnp.log(2 * jnp.pi)
         log_like = -jnp.sum(self.weights * (model_ - data) ** 2) / 2
         return log_like - log_norm
+
+    def goodness_of_fit(self, model):
+        """Evaluate the goodness of the model fit to the data
+
+        For a Gaussian noise model, the gof is defined as the averaged squared deviation of the model from the
+        data, scaled by the variance of the data, aka mean chi squared
+        :math:`\frac{1}{N}\\sum_i=1^N w_i (m_i - d_i)^2` with inverse variance weights :math:`w_i`.
+
+        Up to a normalization, the gof is identical to :py:class:`~scarlet2.Observation.log-likelihood`.
+
+        Parameters
+        ----------
+        model: array
+            The (pre-rendered) predicted data cube, typically from evaluating :py:class:`~scarlet2.Scene`
+
+        Returns
+        -------
+        float
+        """
+        # only use unmasked pixels in the data
+        n = jnp.prod(jnp.asarray(self.data.shape)) - jnp.sum(self.weights == 0)
+        return (self.weights * (self.render(model) - self.data) ** 2).sum() / n
 
     def match(self, frame, renderer=None):
         """Construct the mapping between `frame` (from the model) and this observation frame
@@ -150,19 +171,6 @@ class Observation(Module):
         object.__setattr__(self, "renderer", renderer)
         return self
 
-    def eval_chi_square(self, model):
-        """Evaluate the weighted mean (weighted by the inverse variance weights) of the squared residuals
-
-        Parameters
-        ----------
-        model: array
-            The (pre-rendered) predicted data cube, typically from evaluating :py:class:`~scarlet2.Scene`
-
-        Returns
-        -------
-        """
-        return (self.weights * (self.render(model) - self.data) ** 2).mean()
-
     def eval_chi_square_in_box_and_border(self, scene, border_width=3):
         """
         Evaluate the weighted mean (weighted by the inverse variance weights) of the squared residuals
@@ -179,6 +187,7 @@ class Observation(Module):
         -------
         Dict of sources indices and their corresponding Dict of residuals inside and outside source box.
         """
+        # TODO: combine with chi_square_in_box_and_border and move this to output validation tests (#148)
         residuals = self.render(scene()) - self.data
 
         chi_dict = {}
@@ -188,40 +197,6 @@ class Observation(Module):
             chi_dict[i] = {"in": chi_in, "out": chi_out}
 
         return chi_dict
-
-    def measure_residual_centroid(self, scene):
-        """
-        Compute moment of the residual image for each source and print the remaining flux,
-        dipole centroid and dipole size
-
-        Parameters
-        ----------
-        scene: :py:class:`~scarlet2.Scene`
-            Scene containing the sources
-
-        Returns
-        -------
-        Dict of sources indices and their corresponding Dict of residuals moments, flux, centroid and size
-        """
-        residuals = self.render(scene()) - self.data
-
-        moments = {}
-
-        for i, src in enumerate(scene.sources):
-            bbox, _ = overlap_slices(self.frame.bbox, src.bbox, return_boxes=True)
-            source_res = jax.lax.dynamic_slice(residuals, bbox.start, bbox.shape)
-            m = Moments(source_res)
-
-            residual_moments = {
-                "moments": m,
-                "flux": abs(m[0, 0].sum()),
-                "centroid": m.centroid,
-                "size": m.size,
-            }
-
-            moments[i] = residual_moments
-
-        return moments
 
 
 def chi_square_in_box_and_border(residuals, weights, bbox, border_width):
