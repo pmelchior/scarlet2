@@ -30,6 +30,24 @@ class NoRenderer(Renderer):
         return model
 
 
+#
+class HashableSlice(eqx.Module):
+    """A slice version that is hashable (for python < 3.12)"""
+
+    start: int
+    stop: int
+    step: int = eqx.field(default=None)
+
+    @classmethod
+    def from_slice(cls, slice):
+        """Create HashableSlice from slice"""
+        return cls(slice.start, slice.stop, slice.step)
+
+    def get_slice(self):
+        """Return standard python slice"""
+        return slice(self.start, self.stop, self.step)
+
+
 class ChannelRenderer(Renderer):
     """Map model to observed channels
 
@@ -37,7 +55,7 @@ class ChannelRenderer(Renderer):
     be combined with spatial renderers for a full transformation to the observed frame.
     """
 
-    channel_map: (None, list, slice, jnp.array) = None
+    channel_map: (None, list, HashableSlice, jnp.array) = None
     """Lookup table or transformation matrix
 
     For every channel in the observed frame, this map contained the index or
@@ -77,7 +95,7 @@ class ChannelRenderer(Renderer):
             min_channel = min(channel_map)
             max_channel = max(channel_map)
             if max_channel + 1 - min_channel == len(channel_map):
-                channel_map = slice(min_channel, max_channel + 1)
+                channel_map = HashableSlice(min_channel, max_channel + 1)
         self.channel_map = channel_map
 
     def __call__(self, model, key=None):
@@ -96,7 +114,9 @@ class ChannelRenderer(Renderer):
         """
         if self.channel_map is None:
             return model
-        if isinstance(self.channel_map, (slice, list)):
+        if isinstance(self.channel_map, HashableSlice):
+            return model[self.channel_map.get_slice(), :, :]
+        if isinstance(self.channel_map, list):
             return model[self.channel_map, :, :]
         # not yet used by any renderer: full matrix mapping between model and observation channels
         return jnp.dot(self.channel_map, model)
@@ -146,7 +166,7 @@ class ConvolutionRenderer(Renderer):
 class AdjustToFrame(Renderer):
     """Extract cutout the observation box from the model frame box"""
 
-    slices: slice
+    slices: HashableSlice
 
     def __init__(self, model_frame, obs_frame):
         obs_coord = obs_frame.convert_pixel_to(model_frame)
@@ -159,12 +179,16 @@ class AdjustToFrame(Renderer):
             (0, num_channels), (int(y_min) + 1, int(y_max) + 1), (int(x_min) + 1, int(x_max) + 1)
         )
 
-        im_slices, sub_slices = overlap_slices(model_frame.bbox, this_box)
-        self.slices = im_slices
+        im_slices, sub_slice = overlap_slices(model_frame.bbox, this_box)
+        self.slices = (
+            HashableSlice.from_slice(im_slices[0]),  # channels
+            HashableSlice.from_slice(im_slices[1]),  # height
+            HashableSlice.from_slice(im_slices[2]),  # width
+        )
 
     def __call__(self, model, key=None):
         """What to run when AdjustToFrame is called"""
-        sub = model[self.slices]
+        sub = model[self.slices[0].get_slice(), self.slices[1].get_slice(), self.slices[2].get_slice()]
         return sub
 
 
@@ -189,15 +213,12 @@ class ResamplingRenderer(Renderer):
     """
 
     padding: int
-    # fft_shape_model_im: jnp.array = eqx.field(repr=False)
-    # fft_shape_model_psf: jnp.array = eqx.field(repr=False)
-    # fft_shape_obs_psf: jnp.array = eqx.field(repr=False)
     fft_shape_target: int = eqx.field(repr=False)
     fft_shape_model_im: int = eqx.field(repr=False)
     res_in: float
     res_out: float
     rotation_angle: (None, float)
-    flip_sign: int
+    flip_sign: jnp.array
     model_kpsf_interp: jnp.array = eqx.field(repr=False)
     obs_kpsf_interp: jnp.array = eqx.field(repr=False)
     real_shape_target: tuple = eqx.field(repr=False)

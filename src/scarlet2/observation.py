@@ -27,7 +27,7 @@ class Observation(Module):
     """Statistical weights (usually inverse variance) for :py:meth:`log_likelihood`"""
     frame: Frame
     """Metadata to describe what view of the sky `data` amounts to"""
-    renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
+    renderer: (Renderer, eqx.nn.Sequential)
     """Renderer to translate from the model frame the observation frame"""
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):

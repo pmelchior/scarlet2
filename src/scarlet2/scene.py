@@ -430,6 +430,8 @@ class Scene(Module):
 
             # update the parameters with the best-fit spectrum solution
             channel_map = ChannelRenderer(self.frame, obs.frame).channel_map
+            if channel_map is not None:
+                channel_map.get_slice()
             noise_bg = 1 / jnp.median(jnp.sqrt(obs.weights), axis=(-2, -1))
             for i in spectrum_parameters:
                 src_ = self.sources[i]
