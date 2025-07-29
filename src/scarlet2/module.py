@@ -324,8 +324,8 @@ class Parameters:
                     if isinstance(attrib, SkyCoord):
                         setattr(field, name, frame.get_pixel(attrib))
                         used_sky_coords_prior = fieldname == "prior"
-                except Exception as e:
-                    print(f"Error processing fieldname '{fieldname}'. - {e}")
+                except Exception:
+                    # jax throws exceptions for deprecated attributes, so we ignore exceptions silently
                     pass
 
             if used_sky_coords_prior:
