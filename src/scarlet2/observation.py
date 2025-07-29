@@ -11,9 +11,9 @@ from .renderer import (
     AdjustToFrame,
     ChannelRenderer,
     ConvolutionRenderer,
-    MultiresolutionRenderer,
     NoRenderer,
     Renderer,
+    ResamplingRenderer,
 )
 from .validation_utils import ValidationError, ValidationMethodCollector
 
@@ -152,7 +152,7 @@ class Observation(Module):
                     # 3)b) Resample at the obs resolution
                     # 3)c) deconvolve with model PSF and re-convolve with obs PSF
                     # 4) Wrap the Fourier image and crop to obs frame
-                    renderers.append(MultiresolutionRenderer(frame, self.frame))
+                    renderers.append(ResamplingRenderer(frame, self.frame))
 
                 else:
                     renderers.append(ConvolutionRenderer(frame, self.frame))

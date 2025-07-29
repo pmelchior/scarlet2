@@ -109,7 +109,7 @@ class ConvolutionRenderer(Renderer):
     between model PSF and observed PSF.
     """
 
-    _diff_kernel_fft: jnp.array = eqx.field(init=False, repr=False)
+    _diff_kernel_fft: jnp.array = eqx.field(repr=False)
 
     def __init__(self, model_frame, obs_frame):
         """Initialize convolution renderer with difference kernel between `model_frame` and `obs_frame`
@@ -146,7 +146,7 @@ class ConvolutionRenderer(Renderer):
 class AdjustToFrame(Renderer):
     """Extract cutout the observation box from the model frame box"""
 
-    im_slices: slice
+    slices: slice
 
     def __init__(self, model_frame, obs_frame):
         obs_coord = obs_frame.convert_pixel_to(model_frame)
@@ -160,15 +160,15 @@ class AdjustToFrame(Renderer):
         )
 
         im_slices, sub_slices = overlap_slices(model_frame.bbox, this_box)
-        self.im_slices = im_slices
+        self.slices = im_slices
 
     def __call__(self, model, key=None):
         """What to run when AdjustToFrame is called"""
-        sub = model[self.im_slices]
+        sub = model[self.slices]
         return sub
 
 
-class MultiresolutionRenderer(Renderer):
+class ResamplingRenderer(Renderer):
     """Renderer to resample image to different image placing or resolution
 
     The renderer comprises three steps
@@ -188,6 +188,20 @@ class MultiresolutionRenderer(Renderer):
 
     """
 
+    padding: int
+    # fft_shape_model_im: jnp.array = eqx.field(repr=False)
+    # fft_shape_model_psf: jnp.array = eqx.field(repr=False)
+    # fft_shape_obs_psf: jnp.array = eqx.field(repr=False)
+    fft_shape_target: int = eqx.field(repr=False)
+    fft_shape_model_im: int = eqx.field(repr=False)
+    res_in: float
+    res_out: float
+    rotation_angle: (None, float)
+    flip_sign: int
+    model_kpsf_interp: jnp.array = eqx.field(repr=False)
+    obs_kpsf_interp: jnp.array = eqx.field(repr=False)
+    real_shape_target: tuple = eqx.field(repr=False)
+
     def __init__(self, model_frame, obs_frame, padding=4):
         """Initialize preprocess renderer in multi-resolution mapping
 
@@ -200,7 +214,7 @@ class MultiresolutionRenderer(Renderer):
         padding: int, optional
             How many times to input image if padded to reduce FFT artifacts.
         """
-        object.__setattr__(self, "_padding", padding)
+        self.padding = padding
 
         # create PSF model
         psf_model = model_frame.psf()
@@ -214,13 +228,9 @@ class MultiresolutionRenderer(Renderer):
         if len(psf_obs.shape) == 2:
             psf_obs = psf_obs[None, ...]
 
-        fft_shape_model_im = good_fft_size(padding * max(model_frame.bbox.shape))
+        self.fft_shape_model_im = good_fft_size(padding * max(model_frame.bbox.shape))
         fft_shape_model_psf = good_fft_size(padding * max(psf_model.shape))
         fft_shape_obs_psf = good_fft_size(padding * max(psf_obs.shape))
-
-        object.__setattr__(self, "fft_shape_model_im", fft_shape_model_im)
-        object.__setattr__(self, "fft_shape_model_psf", fft_shape_model_psf)
-        object.__setattr__(self, "fft_shape_obs_psf", fft_shape_obs_psf)
 
         # Fourier transform model and observation PSFs
         model_kpsf = jnp.fft.fftshift(
@@ -232,19 +242,17 @@ class MultiresolutionRenderer(Renderer):
 
         # getting the smallest grid to perform the interpolation
         # odd shape is required for k-wrapping later
-        fft_shape_target = min(fft_shape_model_im, fft_shape_obs_psf) + 1
-        object.__setattr__(self, "fft_shape_target", fft_shape_target)
-
-        object.__setattr__(self, "res_in", model_frame.pixel_size)
-        object.__setattr__(self, "res_out", obs_frame.pixel_size)
+        self.fft_shape_target = min(self.fft_shape_model_im, fft_shape_obs_psf) + 1
+        self.res_in = model_frame.pixel_size
+        self.res_out = obs_frame.pixel_size
 
         # Extract rotation angle between WCSs using jacobian matrices
         angle_in = get_angle(model_frame.wcs)
         angle_out = get_angle(obs_frame.wcs)
         if angle_out - angle_in == 0:
-            object.__setattr__(self, "rotation_angle", None)
+            self.rotation_angle = None
         else:
-            object.__setattr__(self, "rotation_angle", angle_out - angle_in)
+            self.rotation_angle = angle_out - angle_in
 
         # Get flip sign between WCSs using jacobian matrices
         sign_in = get_sign(model_frame.wcs)
@@ -255,9 +263,9 @@ class MultiresolutionRenderer(Renderer):
                     which is not yet handled by scarlet2"
             )
 
-        object.__setattr__(self, "flip_sign", sign_in * sign_out)
+        self.flip_sign = sign_in * sign_out
 
-        model_kpsf_interp = resample_ops(
+        self.model_kpsf_interp = resample_ops(
             model_kpsf,
             model_kpsf.shape[-2],
             self.fft_shape_target,
@@ -267,13 +275,11 @@ class MultiresolutionRenderer(Renderer):
             flip_sign=self.flip_sign,
         )
 
-        obs_kpsf_interp = resample_ops(
+        self.obs_kpsf_interp = resample_ops(
             obs_kpsf, obs_kpsf.shape[-2], self.fft_shape_target, self.res_out, self.res_out
         )
 
-        object.__setattr__(self, "model_kpsf_interp", model_kpsf_interp)
-        object.__setattr__(self, "obs_kpsf_interp", obs_kpsf_interp)
-        object.__setattr__(self, "real_shape_target", obs_frame.bbox.shape)
+        self.real_shape_target = obs_frame.bbox.shape
 
     def __call__(self, model, key=None):
         """What to run when MultiresolutionRenderer is called"""

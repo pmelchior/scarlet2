@@ -1,7 +1,6 @@
 import operator
 from typing import Optional
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 from astropy.coordinates import SkyCoord
@@ -29,7 +28,7 @@ class Component(Module):
     """Spectrum model"""
     morphology: (jnp.array, Morphology)
     """Morphology model"""
-    bbox: Box = eqx.field(init=False)
+    bbox: Box
     """Bounding box of the model, in pixel coordinates of the model frame"""
 
     def __init__(self, center, spectrum, morphology):
