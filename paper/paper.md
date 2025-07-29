@@ -58,14 +58,15 @@ components, and each component is determined by a spectrum model and a morpholog
 represents the light
 emission in a sky region as a hyperspectral data cube (wavelength $\times$ height $\times$ width). `scarlet2` retains
 the object-oriented paradigm and many classes and functions from `scarlet`, but augments standard Python with the `jax`
-library [@jax2018github] for automatic differentiation and just-in-time compilation.
+library [@jax2018github] and the `equinox` package [@kidger2021equinox] for automatic differentiation and
+just-in-time compilation.
 
 `scarlet2` acts as a flexible, modular, and extendable modeling language for celestial sources that combines parametric
 and non-parametric models to describe complex scenarios such as multi-source blending, strong-lensing systems,
 supernovae and their host galaxies, etc. As a modeling language, `scarlet2` is agnostic about the optimization or
 inference method the user wants to employ, but it also provides methods to optimize the likelihood function or
-sample from
-the posterior, which utilize the `optax` package [@deepmind2020jax] or the `numpyro` inference framework
+sample from the posterior, which utilize the `optax` package [@deepmind2020jax] or the `numpyro` inference
+framework
 [@pyro-2019; @phan-2019], respectively. The likelihood of multiple
 observations (at different resolutions, wavelengths, or observing epochs) can be combined for a joint model of
 static and transient sources. To match the coordinates from different observations, `scarlet2` utilizes the `Astropy`
