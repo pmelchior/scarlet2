@@ -1,7 +1,9 @@
 from pytest import fixture
 
+
 @fixture
 def example_questionnaire_dict():
+    """An example questionnaire dictionary"""
     return {
         "initial_template": "{{code}}",
         "questions": [
@@ -11,9 +13,7 @@ def example_questionnaire_dict():
                     {
                         "answer": "Example answer",
                         "tooltip": "This is an example tooltip.",
-                        "templates": [
-                            {"replacement": "{{code}}", "code": "example_code {{follow}}"}
-                        ],
+                        "templates": [{"replacement": "{{code}}", "code": "example_code {{follow}}"}],
                         "followups": [
                             {
                                 "question": "Follow-up question?",
@@ -21,27 +21,23 @@ def example_questionnaire_dict():
                                     {
                                         "answer": "Follow-up answer",
                                         "tooltip": "This is a follow-up tooltip.",
-                                        "templates": [
-                                            {"replacement": "{{follow}}", "code": "followup_code"}
-                                        ],
+                                        "templates": [{"replacement": "{{follow}}", "code": "followup_code"}],
                                         "followups": [],
-                                        "commentary": ""
+                                        "commentary": "",
                                     }
-                                ]
+                                ],
                             }
                         ],
-                        "commentary": ""
+                        "commentary": "",
                     },
                     {
                         "answer": "Another answer",
                         "tooltip": "This is another tooltip.",
-                        "templates": [
-                            {"replacement": "{{code}}", "code": "another_code"}
-                        ],
+                        "templates": [{"replacement": "{{code}}", "code": "another_code"}],
                         "followups": [],
-                        "commentary": ""
-                    }
-                ]
+                        "commentary": "",
+                    },
+                ],
             }
-        ]
+        ],
     }
