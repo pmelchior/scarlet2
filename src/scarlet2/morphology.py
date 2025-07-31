@@ -28,7 +28,7 @@ class ProfileMorphology(Morphology):
     """
     ellipticity: (None, jnp.array)
     """Ellipticity of the profile"""
-    _shape: tuple = eqx.field(init=False, repr=False)
+    _shape: tuple = eqx.field(repr=False)
 
     def __init__(self, size, ellipticity=None, shape=None):
         if isinstance(size, u.Quantity):

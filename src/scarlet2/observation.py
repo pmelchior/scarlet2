@@ -11,9 +11,9 @@ from .renderer import (
     AdjustToFrame,
     ChannelRenderer,
     ConvolutionRenderer,
-    MultiresolutionRenderer,
     NoRenderer,
     Renderer,
+    ResamplingRenderer,
 )
 from .validation_utils import ValidationError, ValidationMethodCollector
 
@@ -27,7 +27,7 @@ class Observation(Module):
     """Statistical weights (usually inverse variance) for :py:meth:`log_likelihood`"""
     frame: Frame
     """Metadata to describe what view of the sky `data` amounts to"""
-    renderer: (Renderer, eqx.nn.Sequential) = eqx.field(static=True)
+    renderer: (Renderer, eqx.nn.Sequential)
     """Renderer to translate from the model frame the observation frame"""
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
@@ -152,7 +152,7 @@ class Observation(Module):
                     # 3)b) Resample at the obs resolution
                     # 3)c) deconvolve with model PSF and re-convolve with obs PSF
                     # 4) Wrap the Fourier image and crop to obs frame
-                    renderers.append(MultiresolutionRenderer(frame, self.frame))
+                    renderers.append(ResamplingRenderer(frame, self.frame))
 
                 else:
                     renderers.append(ConvolutionRenderer(frame, self.frame))
