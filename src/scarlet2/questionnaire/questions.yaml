@@ -18,14 +18,14 @@ questions:
       - answer: "Yes"
         templates:
           - replacement: code
-            code: "channels=[(‘g’,0)]
-                   \nchannels=[(‘g’,1’)]\
+            code: "channels=[(\"g\",0)]
+                   \nchannels=[(\"g\",1)]\
                    \n\n{{obs}}"
         commentary: "For each image, the channels should be a list of tuples where each tuple provides the filter and an epoch identifier which is unique for each image of a particular filter. For example, you might have two g-band images from different times, which would be initialized separately with channels=[(‘g’,0)] and channels=[(‘g’,1’)]. You might have two other r-band images taken at different times again. These would be initialized with channels=[(‘r’,0)] and channels=[(‘r’,1’)]. You may wish to take note of any epochs where the transient is known to be ‘off’ - you can add this constraint later if desired. Each image can be initialized"
       - answer: "No"
         templates:
         - replacement: code
-          code: "channels=['g', 'r', 'i', 'z', 'y']\n\n{{obs}}"
+          code: "channels=[\"g\", \"r\", \"i\", \"z\", \"y\"]\n\n{{obs}}"
         commentary: "For each image, the channels in the image can be specified as a list of the filters, like in the above example."
     - question: Are your images at the same resolution
       answers:
