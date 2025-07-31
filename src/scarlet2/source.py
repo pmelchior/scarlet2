@@ -272,3 +272,21 @@ class SourceValidator(metaclass=ValidationMethodCollector):
             Returns a ValidationError if the check fails, otherwise None.
         """
         return None
+
+    def check_source_has_positive_contribution(self) -> Optional[ValidationError]:
+        """Check that the source has a positive contribution i.e. that the result
+        of evaluating self.source() does not contain negative values.
+
+        Returns
+        -------
+        ValidationError or None
+            Returns a ValidationError if the check fails, otherwise None.
+        """
+        model = self.source()
+        if jnp.any(model < 0):
+            return ValidationError(
+                "Source model has negative contributions.",
+                check=self.__class__.__name__,
+                context={"source": self.source},
+            )
+        return None
