@@ -340,7 +340,11 @@ class Scene(Module):
         if VALIDATION_SWITCH:
             from .validation import check_fit
 
-            validation_errors = check_fit(returned_scene)
+            validation_errors = []
+            for i, obs in enumerate(observations):
+                print(f"Running validation checks on the fit of the scene for observation {i}.")
+                validation_errors.extend(check_fit(returned_scene, obs))
+
             if validation_errors:
                 raise ValueError(
                     "Fit validation failed. The following errors were found:\n"
@@ -526,15 +530,112 @@ class FitValidator(metaclass=ValidationMethodCollector):
     validation methods in this class into a single class attribute list called
     `validation_checks`. This allows for easy iteration over all checks."""
 
-    def __init__(self, scene: Scene):
-        self.scene = scene
+    def __init__(self, scene: Scene, observation):
+        """Initialize the FitValidator.
 
-    def check_fit_example(self) -> Optional[ValidationError]:
-        """Check that the fit was successful.
+        Parameters
+        ----------
+        scene : Scene
+            The scene object to validate.
+        observation : Observation
+            The observation object containing the data to validate against.
+        """
+        self.scene = scene
+        self.observation = observation
+        self.chi2_tolerable_threshold = 2.5
+        self.chi2_critical_threshold = 5.0
+
+    def check_goodness_of_fit(self) -> Optional[ValidationError]:
+        """Evaluate the goodness of the model fit to the data by calling the Observation
+        class's `goodness_of_fit` method.
+
+        For a Gaussian noise model, the gof is defined as the averaged squared deviation of the model from the
+        data, scaled by the variance of the data, aka mean chi squared
+        :math:`\frac{1}{N}\\sum_i=1^N w_i (m_i - d_i)^2` with inverse variance weights :math:`w_i`.
+
+        Up to a normalization, the gof is identical to :py:class:`~scarlet2.Observation.log-likelihood`.
+
+        Parameters
+        ----------
+        model: array
+            The (pre-rendered) predicted data cube, typically from evaluating :py:class:`~scarlet2.Scene`
 
         Returns
         -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
+        float
         """
-        return None
+        obs = self.observation
+
+        chi2 = obs.goodness_of_fit(self.scene())
+
+        ret_val = None
+        if chi2 < self.chi2_tolerable_threshold:
+            ret_val = None
+        elif self.chi2_tolerable_threshold <= chi2 < self.chi2_critical_threshold:
+            ret_val = ValidationError(
+                "The model fit is acceptable, but the goodness of fit is not optimal.",
+                check=self.__class__.__name__,
+                context={"chi2": chi2},
+            )
+        else:  # chi2 >= critical_threshold:
+            ret_val = ValidationError(
+                "The model fit is poor.", check=self.__class__.__name__, context={"chi2": chi2}
+            )
+
+        return ret_val
+
+    def check_chi_square_in_box_and_border(self) -> Optional[list[ValidationError]]:
+        """Evaluate the weighted mean (weighted by the inverse variance weights)
+        of the squared residuals for each source. Chi square is also computed for
+        the perimeter outside the box of with `border_width`.
+
+        Returns
+        -------
+        None or ValidationError
+            If the chi-square is above the tolerable threshold, returns a ValidationError.
+            Otherwise, returns None.
+        """
+        obs = self.observation
+
+        chi2_per_source = obs.eval_chi_square_in_box_and_border(self.scene)
+
+        validation_errors = []
+        for i, chi2 in chi2_per_source.items():
+            chi2_inside = chi2["in"]
+            chi2_outside = chi2["out"]
+
+            if self.chi2_tolerable_threshold <= chi2_inside < self.chi2_critical_threshold:
+                validation_errors.append(
+                    ValidationError(
+                        f"The chi-square in the box for source {i} is acceptable, but not optimal.",
+                        check=self.__class__.__name__,
+                        context={"chi2_in": chi2_inside, "source": i},
+                    )
+                )
+            elif chi2_inside >= self.chi2_critical_threshold:
+                validation_errors.append(
+                    ValidationError(
+                        f"The chi-square in the box for source {i} is poor.",
+                        check=self.__class__.__name__,
+                        context={"chi2_in": chi2_inside, "source": i},
+                    )
+                )
+
+            if self.chi2_tolerable_threshold <= chi2_outside < self.chi2_critical_threshold:
+                validation_errors.append(
+                    ValidationError(
+                        f"The chi-square in the border for source {i} is acceptable, but not optimal.",
+                        check=self.__class__.__name__,
+                        context={"chi2_border": chi2_outside, "source": i},
+                    )
+                )
+            elif chi2_outside >= self.chi2_critical_threshold:
+                validation_errors.append(
+                    ValidationError(
+                        f"The chi-square in the border for source {i} is poor.",
+                        check=self.__class__.__name__,
+                        context={"chi2_border": chi2_outside, "source": i},
+                    )
+                )
+
+        return validation_errors if validation_errors else None
