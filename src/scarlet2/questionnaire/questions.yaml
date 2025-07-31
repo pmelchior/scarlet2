@@ -26,7 +26,7 @@ questions:
         templates:
         - replacement: code
           code: "channels=['g', 'r', 'i', 'z', 'y']\n\n{{obs}}"
-        commentary: "For each image, the channels in the image can be specified as a list of the filters"
+        commentary: "For each image, the channels in the image can be specified as a list of the filters, like in the above example."
     - question: Are your images at the same resolution
       answers:
       - answer: "Yes"
