@@ -184,27 +184,7 @@ def test_number_of_psf_channels_returns_error(bad_obs):
     results = checker.check_number_of_psf_channels()
     assert results is not None
     assert isinstance(results, ValidationError)
-    assert results.message == "Number of PSF channels does not match the number of data channels."
-
-
-def test_psf_2d_and_data_3d_channels():
-    """Test that the PSF is 2D and the data is 3D with a single channel."""
-    psf = np.random.rand(5, 5)  # 2D PSF
-    data = np.random.rand(1, 10, 10)  # 3D data with a single channel
-
-    obs = Observation(data=data, psf=ArrayPSF(psf), channels=["channel"], weights=None)
-    checker = ObservationValidator(obs)
-
-    results = checker.check_number_of_psf_channels()
-    assert results is None
-
-
-def test_psf_centroid_consistent(good_obs):
-    """Test that the PSF centroid is consistent with the observation."""
-    checker = ObservationValidator(good_obs)
-
-    results = checker.check_psf_centroid_consistent()
-    assert results is None
+    assert results.message == "PSF must be 3-dimensional."
 
 
 def test_validation_on_runs_observation_checks():
@@ -220,8 +200,7 @@ def test_validation_on_runs_observation_checks():
     assert exc_info.value is not None
 
 
-@pytest.mark.skip(reason="Unsure of how to create a PSF with inconsistent centroids.")
-def test_psf_centroid_consistent_returns_error(data_file):
+def test_psf_centroid_inconsistent_returns_error(data_file):
     """Test that when the PSF centroids are not consistent across bands, an error
     is raised."""
 
@@ -229,7 +208,7 @@ def test_psf_centroid_consistent_returns_error(data_file):
     channels = [str(f) for f in data_file["filters"]]
     weights = np.asarray(1 / data_file["variance"])
     psf = np.asarray(data_file["psfs"])
-    psf[0][10:, :] = psf[0][:-10, :]  # Shift the PSF to create an inconsistency
+    psf[0][1:, :] = psf[0][:-1, :]  # Shift the PSF to create an inconsistency
 
     bad_obs = Observation(
         data=data,
@@ -244,3 +223,26 @@ def test_psf_centroid_consistent_returns_error(data_file):
     assert results is not None
     assert isinstance(results, ValidationError)
     assert results.message == "PSF centroid is not the same in all channels."
+
+
+def test_psf_centroid_consistent_no_error(data_file):
+    """Test that when the PSF centroids are consistent across bands, no errors
+    are raised."""
+
+    data = np.asarray(data_file["images"])
+    channels = [str(f) for f in data_file["filters"]]
+    weights = np.asarray(1 / data_file["variance"])
+    psf = np.zeros_like(data)
+    psf[:, 1, 1] = 1
+
+    bad_obs = Observation(
+        data=data,
+        weights=weights,
+        channels=channels,
+        psf=ArrayPSF(psf),
+    )
+
+    checker = ObservationValidator(bad_obs)
+
+    results = checker.check_psf_centroid_consistent()
+    assert results is None

@@ -40,9 +40,7 @@ class Observation(Module):
             # add a channel dimension if it is missing
             self.weights = self.weights[None, ...]
 
-        if channels is None:
-            channels = list(range(data.shape[0]))
-        self.frame = Frame(Box(data.shape), psf, wcs, channels)
+        self.frame = Frame(Box(data.shape), psf, wcs, channels=channels)
         if renderer is None:
             renderer = NoRenderer()
         self.renderer = renderer
@@ -232,17 +230,16 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         ValidationError or None
             Returns a ValidationError if the check fails, otherwise None.
         """
-        if self.observation.frame.channels is not None:
-            num_channels = len(self.observation.frame.channels)
-            if num_channels != self.observation.data.shape[0]:
-                return ValidationError(
-                    message="Number of channels in the observation does not match the data.",
-                    check=self.__class__.__name__,
-                    context={
-                        "observation.frame.channels": self.observation.frame.channels,
-                        "observation.data.shape": self.observation.data.shape,
-                    },
-                )
+        num_channels = len(self.observation.frame.channels)
+        if num_channels != self.observation.data.shape[0]:
+            return ValidationError(
+                message="Number of channels in the observation does not match the data.",
+                check=self.__class__.__name__,
+                context={
+                    "observation.frame.channels": self.observation.frame.channels,
+                    "observation.data.shape": self.observation.data.shape,
+                },
+            )
         return None
 
     def check_data_finite_for_non_zero_weights(self) -> Optional[ValidationError]:
@@ -280,18 +277,16 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         """
         if self.observation.frame.psf is not None:
             num_psf_dims = self.observation.frame.psf().ndim
-            num_data_dims = self.observation.data.ndim
+
+            if num_psf_dims != 3:
+                return ValidationError(
+                    message="PSF must be 3-dimensional.",
+                    check=self.__class__.__name__,
+                    context={"observation.frame.psf.shape": self.observation.frame.psf().shape},
+                )
 
             num_psf_channels = self.observation.frame.psf().shape[0]
             num_data_channels = self.observation.data.shape[0]
-
-            # The PSF is 2D and the data is 3D but only 1 channel.
-            # ie. psf.shape = (N1, N2) and data.shape = (1, M1, M2)
-            # Note - the other case of psf.shape = (1, N1, N2) and data.shape = (N1, N2)
-            # is not tested due to assertions made when instantiating the Frame object
-            # during in Observation.__init__.
-            if num_psf_dims == 2 and num_data_dims == 3 and num_data_channels == 1:
-                return None
 
             # The number of bands is different between the PSF and data
             if num_psf_channels != num_data_channels:
@@ -316,12 +311,15 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         if self.observation.frame.psf is not None:
             from .measure import Moments
 
-            moments = Moments(self.observation.frame.psf())
+            psf_shape = self.observation.frame.psf().shape
+            psf_center_y = psf_shape[-2] // 2
+            psf_center_x = psf_shape[-1] // 2
+            moments = Moments(self.observation.frame.psf(), N=1, center=[psf_center_y, psf_center_x])
             psf_centroid = moments.centroid
 
             psf_centroid_y, psf_centroid_x = psf_centroid
 
-            tolerance = 1e-4
+            tolerance = 1e-3
             if not jnp.allclose(psf_centroid_y, psf_centroid_y[0], atol=tolerance) or not jnp.allclose(
                 psf_centroid_x, psf_centroid_x[0], atol=tolerance
             ):

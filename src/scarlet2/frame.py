@@ -30,7 +30,6 @@ class Frame(eqx.Module):
         self.wcs = wcs
         if channels is None:
             channels = list(range(bbox.shape[0]))
-        assert len(channels) == bbox.shape[0]
 
         self.channels = channels
 
