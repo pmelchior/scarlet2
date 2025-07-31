@@ -41,13 +41,16 @@ class ValidationError:
 
 
 class ValidationMethodCollector(type):
-    """Metaclass that collects all validation methods in a class into a single"""
+    """Metaclass that collects all validation methods in a class into a single list.
+    For any class that uses this metaclass, all methods that start with "check_"
+    will be automatically collected into a class attribute named `validation_checks`.
+    """
 
     def __new__(cls, name, bases, namespace):
         """Creates a list of callable methods when a new instances of a class is
         created."""
         cls = super().__new__(cls, name, bases, namespace)
         cls.validation_checks = [
-            attr for attr, value in namespace.items() if callable(value) and not attr.startswith("__")
+            attr for attr, value in namespace.items() if callable(value) and attr.startswith("check_")
         ]
         return cls
