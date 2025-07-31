@@ -14,7 +14,7 @@ class Answer(BaseModel):
     answer: str
     tooltip: str = ""
     templates: list[Template]
-    followups: list["Question"] = Field(default_factory=list)
+    followups: list["Question"] = Field(default_factory=list)  # Forward reference to Question
     commentary: str = ""
 
 
@@ -25,6 +25,7 @@ class Question(BaseModel):
     answers: list[Answer]
 
 
+# Rebuild the models to update the forward references
 Question.model_rebuild()
 Answer.model_rebuild()
 
