@@ -31,7 +31,15 @@ class Observation(Module):
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
         self.data = data
+        if self.data.ndim == 2:
+            # add a channel dimension if it is missing
+            self.data = self.data[None, ...]
+
         self.weights = weights
+        if self.weights is not None and self.weights.ndim == 2:
+            # add a channel dimension if it is missing
+            self.weights = self.weights[None, ...]
+
         if channels is None:
             channels = list(range(data.shape[0]))
         self.frame = Frame(Box(data.shape), psf, wcs, channels)
@@ -271,10 +279,10 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
             Returns a ValidationError if the check fails, otherwise None.
         """
         if self.observation.frame.psf is not None:
-            num_psf_dims = self.observation.frame.psf.morphology.ndim
+            num_psf_dims = self.observation.frame.psf().ndim
             num_data_dims = self.observation.data.ndim
 
-            num_psf_channels = self.observation.frame.psf.morphology.shape[0]
+            num_psf_channels = self.observation.frame.psf().shape[0]
             num_data_channels = self.observation.data.shape[0]
 
             # The PSF is 2D and the data is 3D but only 1 channel.
@@ -291,7 +299,7 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
                     message="Number of PSF channels does not match the number of data channels.",
                     check=self.__class__.__name__,
                     context={
-                        "observation.frame.psf.shape": self.observation.frame.psf.morphology.shape,
+                        "observation.frame.psf.shape": self.observation.frame.psf().shape,
                         "observation.data.shape": self.observation.data.shape,
                     },
                 )
@@ -308,13 +316,9 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         if self.observation.frame.psf is not None:
             from .measure import Moments
 
-            moments = Moments(self.observation.frame.psf.morphology)
+            moments = Moments(self.observation.frame.psf())
             psf_centroid = moments.centroid
 
-            # This happens when there is only one channel in the PSF, so there is
-            # no need to check consistency across channels.
-            if psf_centroid.ndim < 2:
-                return None
             psf_centroid_y, psf_centroid_x = psf_centroid
 
             tolerance = 1e-4
