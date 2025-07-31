@@ -263,12 +263,8 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
 
     def check_number_of_psf_channels(self) -> Optional[ValidationError]:
         """Check that the number of PSF channels matches the number of data channels and
-        that the PSF and data have the same number of dimensions. One scenario where
-        the logic becomes challenging is when the data and PSF are single-band, and
-        the PSF is a 2D array, while the data is a 3D array with a single channel.
-
-        i.e. data.shape = (1, N1, N2) and psf.shape = (N1, N2). The logic required
-        to ensure that data and PSF
+        that the PSF and data have the same number of dimensions. The PSF should be
+        3-dimensional, and number of channels should match the data.
 
         Returns
         -------
@@ -301,7 +297,8 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         return None
 
     def check_psf_centroid_consistent(self) -> Optional[ValidationError]:
-        """Check that the PSF centroid is consistent with the observation frame.
+        """Check that the pixel location of the PSF centroid is consistent across
+        channels.
 
         Returns
         -------
