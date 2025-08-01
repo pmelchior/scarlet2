@@ -363,5 +363,5 @@ def make_ps_map(power_spectrum, size, kps=None, zero_freq_val=1e7):
   
   ps_map = jnp.interp(k.flatten(), kps, power_spectrum).reshape([size,size])
   ps_map = ps_map
-  #ps_map[0,0] = zero_freq_val
-  return ps_map # Carefull, this is not fftshifted
+  ps_map.at[0,0].set(zero_freq_val)
+  return ps_map
