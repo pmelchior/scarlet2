@@ -95,4 +95,6 @@ def print_validation_results(preamble: str, results: list[ValidationResult]):
         A list of validation results to print.
     """
 
-    print(f"{preamble}:\n" + "\n".join(f"[{i}] {str(result)}" for i, result in enumerate(results)))
+    print(
+        f"{preamble}:\n" + "\n".join(f"[{str(i).zfill(3)}] {str(result)}" for i, result in enumerate(results))
+    )

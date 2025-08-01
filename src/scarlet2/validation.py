@@ -1,5 +1,5 @@
 from .observation import ObservationValidator
-from .scene import FitValidator
+from .scene import FitValidator, SceneValidator
 from .source import SourceValidator
 from .validation_utils import ValidationError
 
@@ -72,13 +72,17 @@ def check_observation(observation) -> list[ValidationError]:
     return _check(validation_class=ObservationValidator, **{"observation": observation})
 
 
-def check_scene(scene) -> list[ValidationError]:
+def check_scene(scene, observation, parameters) -> list[ValidationError]:
     """Check the scene against the various validation rules.
 
     Parameters
     ----------
     scene : Scene
         The scene object to check.
+    observation : Observation
+        The observation object containing the data to validate against.
+    parameters : Parameters
+        The parameters of the scene to validate.
 
     Returns
     -------
@@ -91,10 +95,17 @@ def check_scene(scene) -> list[ValidationError]:
     for source in scene.sources:
         validation_errors.extend(check_source(source))
 
+    validation_errors.extend(
+        _check(
+            validation_class=SceneValidator,
+            **{"scene": scene, "observation": observation, "parameters": parameters},
+        )
+    )
+
     return validation_errors
 
 
-def check_source(source, scene) -> list[ValidationError]:
+def check_source(source) -> list[ValidationError]:
     """Check the source against the various validation rules.
 
     Parameters
@@ -111,4 +122,4 @@ def check_source(source, scene) -> list[ValidationError]:
         If no errors are found, the list is empty.
     """
 
-    return _check(validation_class=SourceValidator, **{"source": source, "scene": scene})
+    return _check(validation_class=SourceValidator, **{"source": source})

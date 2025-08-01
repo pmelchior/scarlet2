@@ -158,7 +158,7 @@ class Source(Component):
         if VALIDATION_SWITCH:
             from .validation import check_source
 
-            validation_results = check_source(self, Scenery.scene)
+            validation_results = check_source(self)
             print_validation_results("Source validation results", validation_results)
 
     def add_component(self, component, op):
