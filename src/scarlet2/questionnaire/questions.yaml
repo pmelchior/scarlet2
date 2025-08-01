@@ -1,0 +1,91 @@
+initial_template: '{{code}}'
+questions:
+- question: Do you have a single image, or multiple images?
+  answers:
+  - answer: Single image
+    tooltip: A single image to model
+    templates:
+      - replacement: code
+        code: "channels=['g', 'r', 'i', 'z', 'y']\n\n{{obs}}"
+    followups: []
+    commentary: "We start with initializing the channels for the observation. The channels in the image can be specified as a list of the filters, like the above example."
+  - answer: Multiple images
+    tooltip: A single image to model
+    templates: []
+    followups:
+    - question: Do you wish to model transient or variable sources across multiple epochs?
+      answers:
+      - answer: "Yes"
+        templates:
+          - replacement: code
+            code: "channels=[(\"g\",0)]
+                   \nchannels=[(\"g\",1)]\
+                   \n\n{{obs}}"
+        commentary: "For each image, the channels should be a list of tuples where each tuple provides the filter and an epoch identifier which is unique for each image of a particular filter. For example, you might have two g-band images from different times, which would be initialized separately with channels=[(‘g’,0)] and channels=[(‘g’,1’)]. You might have two other r-band images taken at different times again. These would be initialized with channels=[(‘r’,0)] and channels=[(‘r’,1’)]. You may wish to take note of any epochs where the transient is known to be ‘off’ - you can add this constraint later if desired. Each image can be initialized"
+      - answer: "No"
+        templates:
+        - replacement: code
+          code: "channels=[\"g\", \"r\", \"i\", \"z\", \"y\"]\n\n{{obs}}"
+        commentary: "For each image, the channels in the image can be specified as a list of the filters, like in the above example."
+    - question: Are your images at the same resolution
+      answers:
+      - answer: "Yes"
+        templates: []
+        commentary: "If you find performance or memory issues for a large number of epochs, you might consider pre-aligning them with a tool such as swarp to improve modeling speed."
+    commentary: "We start with initializing the channels for the observation. The channels in the image can be specified as a list of the filters, like the above example."
+- question: Click to continue
+  answers:
+  - answer: Continue
+    templates:
+    - replacement: obs
+      code: "obs = scarlet2.Observation(
+            \n    jnp.array(data).astype(float),
+            \n    weights=jnp.array(weight).astype(float),
+            \n    psf=scarlet2.ArrayPSF(jnp.array(psf).astype(float)),
+            \n    wcs=wcs,
+            \n    channels=channels,
+            \n)
+            \n\n{{frame}}"
+    followups: []
+    commentary: "One you have specified channels for each observation, each one can be set up by initializing an `Observation` object."
+- question: Click to continue
+  answers:
+  - answer: Continue
+    templates:
+    - replacement: frame
+      code: "model_frame = scarlet2.Frame.from_observations(
+            \n    observations=obs,
+            \n    coverage=\"union\",  # or \"intersection\"
+            \n)
+            \n
+            \n{{plot}}"
+    followups: []
+    commentary: "The list of observations can then be supplied to create a `Frame`."
+- question: Click to continue
+  answers:
+  - answer: Continue
+    templates:
+    - replacement: plot
+      code: "norm = scarlet2.plot.AsinhAutomaticNorm(obs)
+            \nscarlet2.plot.observation(
+            \n     obs, norm=norm, sky_coords=ra_dec, show_psf=True, label_kwargs={\"color\": \"red\"}
+            \n)
+            \n
+            \n{{source_init}}"
+    followups: []
+    commentary: "The observations and PSF models can be plotted as above."
+- question: Do you have a position catalog of the sources in the image you wish to model?
+  answers:
+    - answer: No, I don't have positions
+      templates:
+        - replacement: source_init
+          code: "# Run source detection to get positions
+                \n
+                \n{{source_init}}"
+      followups: []
+      commentary: "We recommend running [sep](https://sep.readthedocs.io/en/stable/) or another source detection algorithm on your images to find their positions for initialization."
+    - answer: Yes, I have positions
+      templates: []
+      followups: []
+      commentary: "Great, these positions will be used for source initialization."
+

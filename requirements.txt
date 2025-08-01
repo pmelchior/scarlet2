@@ -1,4 +1,0 @@
-optax
-numpyro
-h5py
-huggingface_hub

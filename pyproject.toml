@@ -1,0 +1,115 @@
+
+[project]
+name = "scarlet2"
+license = {file = "LICENSE"}
+readme = "README.md"
+authors = [
+    { name = "Peter Melchior", email = "peter.m.melchior@gmail.com" }
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+]
+dynamic = ["version"]
+requires-python = ">=3.10"
+dependencies = [
+    "equinox",
+    "jax==0.6.2",
+    "astropy",
+    "numpy",
+    "matplotlib",
+    "varname",
+    "optax",
+    "numpyro",
+    "h5py",
+    "pydantic",
+    "pyyaml",
+]
+
+[project.urls]
+"Source Code" = "https://github.com/pmelchior/scarlet2"
+
+# On a mac, install optional dependencies with `pip install '.[dev]'` (include the single quotes)
+[project.optional-dependencies]
+dev = [
+    "asv==0.6.4", # Used to compute performance benchmarks
+    "huggingface_hub", # Pulls down example data for testing
+    "jupyter", # Clears output from Jupyter notebooks
+    "pre-commit", # Used to run checks before finalizing a git commit
+    "pytest",
+    "pytest-cov", # Used to report total code coverage
+    "ruff", # Used for static linting of files
+]
+
+[build-system]
+requires = [
+    "setuptools>=62", # Used to build and package the Python project
+    "setuptools_scm>=6.2", # Gets release version from git. Makes it available programmatically
+]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+write_to = "src/scarlet2/_version.py"
+
+[tool.setuptools.package-data]
+"scarlet2.questionnaire" = ["questions.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+]
+addopts = "--doctest-modules --doctest-glob=*.rst"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    "W",
+    # Pyflakes
+    "F",
+    # pep8-naming
+    "N",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+    # docstrings
+    "D101",
+    "D102",
+    "D103",
+    "D106",
+    "D206",
+    "D207",
+    "D208",
+    "D300",
+    "D417",
+    "D419",
+    # Numpy v2.0 compatibility
+    "NPY201",
+]
+ignore = [
+    "UP006", # Allow non standard library generics in type hints
+    "UP007", # Allow Union in type hints
+    "SIM114", # Allow if with same arms
+    "B028", # Allow default warning level
+    "SIM117", # Allow nested with
+    "UP015", # Allow redundant open parameters
+    "UP028", # Allow yield in for loop
+    "UP038", # Allow tuple in `isinstance`
+    "E731", # Allow assignment of lambda expressions
+]
+
+
+[tool.coverage.run]
+omit=["src/scarlet2/_version.py"]

@@ -7,9 +7,9 @@
 
 # -- Project information -----------------------------------------------------
 
-project = 'scarlet2'
-copyright = '2025, Peter Melchior'
-author = 'Peter Melchior'
+project = "scarlet2"
+copyright = "2025, Peter Melchior"
+author = "Peter Melchior"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -21,6 +21,7 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
+    "sphinx.ext.doctest",
     "sphinx_issues",
     "myst_nb",
 ]
@@ -30,14 +31,14 @@ source_suffix = {
     ".ipynb": "myst-nb",
 }
 
-templates_path = ['_templates']
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+templates_path = ["_templates"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "jupyter_execute"]
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'sphinx_book_theme'
-html_static_path = ['_static']
+html_theme = "sphinx_book_theme"
+html_static_path = ["_static"]
 html_title = "scarlet2"
 html_favicon = "_static/icon.png"
 html_show_sourcelink = False
@@ -49,18 +50,16 @@ html_theme_options = {
         "image_light": "_static/logo_light.svg",
         "image_dark": "_static/logo_dark.svg",
     },
-    "launch_buttons": {
-        "colab_url": "https://colab.research.google.com"
-    },
+    "launch_buttons": {"colab_url": "https://colab.research.google.com"},
     "use_edit_page_button": True,
     "use_issues_button": True,
     "use_repository_button": True,
     "use_download_button": True,
-    "show_toc_level": 3
+    "show_toc_level": 3,
 }
 html_baseurl = "https://scarlet2.readthedocs.io/en/latest/"
 
-autoclass_content = 'both'
+autoclass_content = "both"
 autosummary_generate = True
 autosummary_imported_members = False
 autosummary_ignore_module_all = False
@@ -69,12 +68,16 @@ autodoc_type_aliases = {
     "jnp.ndarray": "jax.numpy.array",
 }
 
-intersphinx_mapping = {'astropy': ('https://docs.astropy.org/en/stable/', None),
-                       'optax': ('https://optax.readthedocs.io/en/latest/', None),
-                       'numpyro': ('https://num.pyro.ai/en/stable/', None),
-                       }
+intersphinx_mapping = {
+    "astropy": ("https://docs.astropy.org/en/stable/", None),
+    "optax": ("https://optax.readthedocs.io/en/latest/", None),
+    "numpyro": ("https://num.pyro.ai/en/stable/", None),
+}
 
 issues_github_path = "pmelchior/scarlet2"
+
+nb_execution_timeout = 60
+nb_execution_excludepatterns = ["_build", "jupyter_execute"]
 
 # Napoleon settings
 napoleon_google_docstring = False
