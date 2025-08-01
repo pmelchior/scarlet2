@@ -339,22 +339,23 @@ def _wrap_hermitian_x(im, im_xmin, im_ymin, wrap_xmin, wrap_ymin, wrap_nx, wrap_
         return im[:, im.shape[1] // 2 :]
 
     im_exp = expand_hermitian_x(im)
-    im_exp = wrap_nonhermitian(
-        im_exp, wrap_xmin - im_xmin, wrap_ymin - im_ymin, wrap_nx, wrap_ny
-    )
+    im_exp = wrap_nonhermitian(im_exp, wrap_xmin - im_xmin, wrap_ymin - im_ymin, wrap_nx, wrap_ny)
     return contract_hermitian_x(im_exp)
 
+
 def make_ps_map(power_spectrum, size, kps=None, zero_freq_val=1e7):
-  
-  k1 = jnp.fft.fftfreq(size)
-  k2 = jnp.fft.fftfreq(size)
-  kcoords = jnp.meshgrid(k1,k2)
-  
-  k = jnp.sqrt(kcoords[0]**2 + kcoords[1]**2)  
-  if kps is None:
-    kps = jnp.linspace(0,0.5,len(power_spectrum))
-  
-  ps_map = jnp.interp(k.flatten(), kps, power_spectrum).reshape([size,size])
-  ps_map = ps_map
-  ps_map.at[0,0].set(zero_freq_val)
-  return ps_map
+    """
+    Interpolate the 1-d power spectrum to a 2-d isotropic map
+    """
+    k1 = jnp.fft.fftfreq(size)
+    k2 = jnp.fft.fftfreq(size)
+    kcoords = jnp.meshgrid(k1, k2)
+
+    k = jnp.sqrt(kcoords[0] ** 2 + kcoords[1] ** 2)
+    if kps is None:
+        kps = jnp.linspace(0, 0.5, len(power_spectrum))
+
+    ps_map = jnp.interp(k.flatten(), kps, power_spectrum).reshape([size, size])
+    ps_map = ps_map
+    ps_map.at[0, 0].set(zero_freq_val)
+    return ps_map

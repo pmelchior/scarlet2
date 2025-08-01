@@ -4,8 +4,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from .fft import make_ps_map
 from .bbox import Box, overlap_slices
+from .fft import make_ps_map
 from .frame import Frame
 from .module import Module
 from .renderer import (
@@ -46,7 +46,7 @@ class Observation(Module):
 
         if noise_ps is not None:
             self.fourier_noise_var = make_ps_map(noise_ps, data.shape[-1])
-        
+
         self.frame = Frame(Box(data.shape), psf, wcs, channels=channels)
         if renderer is None:
             renderer = NoRenderer()
@@ -101,18 +101,18 @@ class Observation(Module):
 
         if self.fourier_noise_var is not None:
             res_fft = jnp.fft.fft2(model_ - data)
-            log_like = - 0.5 * jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.fourier_noise_var)
-    
-        else:            
+            log_like = -0.5 * jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.fourier_noise_var)
+
+        else:
             # normalization of the single-pixel likelihood:
             # 1 / [(2pi)^1/2 (sigma^2)^1/2]
             # with inverse variance weights: sigma^2 = 1/weight
             # full likelihood is sum over all (unmasked) pixels in data
-            D = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
-            log_norm = D / 2 * jnp.log(2 * jnp.pi)
+            d = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
+            log_norm = d / 2 * jnp.log(2 * jnp.pi)
             log_like = -jnp.sum(self.weights * (model_ - data) ** 2) / 2
             log_norm += log_norm
-        
+
         return log_like
 
     def goodness_of_fit(self, model):
