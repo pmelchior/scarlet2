@@ -26,8 +26,11 @@ dependencies = [
     "optax",
     "numpyro",
     "h5py",
+    "ipywidgets",
     "pydantic",
     "pyyaml",
+    "markdown",
+    "pygments",
 ]
 
 [project.urls]
