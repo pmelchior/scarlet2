@@ -4,14 +4,14 @@ import re
 
 import markdown
 import yaml
+from charset_normalizer.cli import query_yes_no
 from ipywidgets import VBox, HBox, Button, Label, HTML, Layout, Output
 from IPython.display import display
 from pygments import highlight
 from pygments.lexers import PythonLexer
 from pygments.formatters import HtmlFormatter
 
-from scarlet2.questionnaire.models import Template, Questionnaire
-
+from scarlet2.questionnaire.models import Template, Questionnaire, Switch, Question
 
 FILE_PACKAGE_PATH = "scarlet2.questionnaire"
 FILE_NAME = "questions.yaml"
@@ -22,6 +22,7 @@ class QuestionnaireWidget:
         self.questions = questionnaire.questions
         self.questions_stack = []
         self.question_answers = []
+        self.variables = {}
         self.code_output = questionnaire.initial_template
         self.commentary = ""
         self.output = Output()
@@ -34,9 +35,34 @@ class QuestionnaireWidget:
     def _add_questions_to_stack(self, questions):
         self.questions_stack = questions + self.questions_stack
 
+    def _get_next_question(self):
+        if len(self.questions_stack) > 0:
+            question = self.questions_stack.pop(0)
+            if isinstance(question, Question):
+                return question
+            if isinstance(question, Switch):
+                variable_value = self.variables.get(question.variable, None)
+                if variable_value is not None:
+                    for case in question.cases:
+                        if case.value == variable_value:
+                            self._add_questions_to_stack(case.questions)
+                            break
+                    else:
+                        for case in question.cases:
+                            if case.value is None:
+                                self._add_questions_to_stack(case.questions)
+                                break
+                else:
+                    for case in question.cases:
+                        if case.value is None:
+                            self._add_questions_to_stack(case.questions)
+                            break
+                return self._get_next_question()
+        return None
+
     def _render_next_question(self):
         # Custom styled HTML container for right panel
-        question = self.questions_stack.pop(0) if len(self.questions_stack) > 0 else None
+        question = self._get_next_question()
 
         left_box = self._render_question_box(question)
 
@@ -90,6 +116,8 @@ class QuestionnaireWidget:
         self.commentary = answer.commentary
         self.questions_stack = answer.followups + self.questions_stack
         self.question_answers.append((question, answer))
+        if question.variable is not None:
+            self.variables[question.variable] = answer.answer
         self._render_next_question()
 
     def _update_template(self, templates: list[Template]):

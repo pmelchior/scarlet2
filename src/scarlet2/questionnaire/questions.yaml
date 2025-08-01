@@ -1,44 +1,48 @@
 initial_template: '{{code}}'
 questions:
-- question: Do you have a single image, or multiple images?
-  answers:
-  - answer: Single image
-    tooltip: A single image to model
-    templates:
-      - replacement: code
-        code: "channels=['g', 'r', 'i', 'z', 'y']\n\n{{obs}}"
-    followups: []
-    commentary: "We start with initializing the channels for the observation. The channels in the image can be specified as a list of the filters, like the above example."
-  - answer: Multiple images
-    tooltip: A single image to model
-    templates: []
-    followups:
-    - question: Do you wish to model transient or variable sources across multiple epochs?
-      answers:
-      - answer: "Yes"
+  - question: Do you have a single image, or multiple images?
+    answers:
+      - answer: Single image
+        tooltip: A single image to model
         templates:
           - replacement: code
-            code: "channels=[(‘g’,0)]
-                   \nchannels=[(‘g’,1’)]\
-                   \n\n{{obs}}"
-        commentary: "For each image, the channels should be a list of tuples where each tuple provides the filter and an epoch identifier which is unique for each image of a particular filter. For example, you might have two g-band images from different times, which would be initialized separately with channels=[(‘g’,0)] and channels=[(‘g’,1’)]. You might have two other r-band images taken at different times again. These would be initialized with channels=[(‘r’,0)] and channels=[(‘r’,1’)]. You may wish to take note of any epochs where the transient is known to be ‘off’ - you can add this constraint later if desired. Each image can be initialized"
-      - answer: "No"
+            code: "channels=[\"g\", \"r\", \"i\", \"z\", \"y\"]\n\n{{obs}}"
+        commentary: "We start with initializing the channels for the observation. The channels in the image can be specified as a list of the filters, like the above example."
+      - answer: Multiple images
+        tooltip: A single image to model
+        followups:
+          - question: Do you wish to model transient or variable sources across multiple epochs?
+            variable: "transient"
+            answers:
+              - answer: "Yes"
+                templates:
+                  - replacement: code
+                    code: "channels=[(\"g\",0)]
+                           \nchannels=[(\"g\",1)]
+                           \n\n{{obs}}"
+                commentary: "For each image, the channels should be a list of tuples where each tuple provides the filter and an epoch identifier which is unique for each image of a particular filter. For example, you might have two g-band images from different times, which would be initialized separately with channels=[(‘g’,0)] and channels=[(‘g’,1’)]. You might have two other r-band images taken at different times again. These would be initialized with channels=[(‘r’,0)] and channels=[(‘r’,1’)]. You may wish to take note of any epochs where the transient is known to be ‘off’ - you can add this constraint later if desired. Each image can be initialized"
+              - answer: "No"
+                templates:
+                  - replacement: code
+                    code: "channels=[\"g\", \"r\", \"i\", \"z\", \"y\"]\n\n{{obs}}"
+                commentary: "For each image, the channels in the image can be specified as a list of the filters"
+          - question: Are your images at the same resolution
+            answers:
+              - answer: "Yes"
+                followups:
+                  - question: Are your images pre-aligned to the same wcs?
+                    answers:
+                      - answer: "Yes"
+                      - answer: "No"
+                        commentary: "If you find performance or memory issues for a large number of epochs, you might consider pre-aligning them with a tool such as swarp to improve modeling speed."
+              - answer: "No"
+        commentary: "We start with initializing the channels for the observation. The channels in the image can be specified as a list of the filters, like the above example."
+  - question: Click to continue
+    answers:
+      - answer: Continue
         templates:
-        - replacement: code
-          code: "channels=['g', 'r', 'i', 'z', 'y']\n\n{{obs}}"
-        commentary: "For each image, the channels in the image can be specified as a list of the filters"
-    - question: Are your images at the same resolution
-      answers:
-      - answer: "Yes"
-        templates: []
-        commentary: "If you find performance or memory issues for a large number of epochs, you might consider pre-aligning them with a tool such as swarp to improve modeling speed."
-    commentary: "We start with initializing the channels for the observation. The channels in the image can be specified as a list of the filters, like the above example."
-- question: Click to continue
-  answers:
-  - answer: Continue
-    templates:
-    - replacement: obs
-      code: "obs = scarlet2.Observation(
+          - replacement: obs
+            code: "obs = scarlet2.Observation(
             \n    jnp.array(data).astype(float),
             \n    weights=jnp.array(weight).astype(float),
             \n    psf=scarlet2.ArrayPSF(jnp.array(psf).astype(float)),
@@ -46,46 +50,180 @@ questions:
             \n    channels=channels,
             \n)
             \n\n{{frame}}"
-    followups: []
-    commentary: "One you have specified channels for each observation, each one can be set up by initializing an `Observation` object."
-- question: Click to continue
-  answers:
-  - answer: Continue
-    templates:
-    - replacement: frame
-      code: "model_frame = scarlet2.Frame.from_observations(
-            \n    observations=obs,
-            \n    coverage=\"union\",  # or \"intersection\"
-            \n)
-            \n
-            \n{{plot}}"
-    followups: []
-    commentary: "The list of observations can then be supplied to create a `Frame`."
-- question: Click to continue
-  answers:
-  - answer: Continue
-    templates:
-    - replacement: plot
-      code: "norm = scarlet2.plot.AsinhAutomaticNorm(obs)
+        commentary: "One you have specified channels for each observation, each one can be set up by initializing an `Observation` object."
+  - question: Click to continue
+    answers:
+    - answer: Continue
+      templates:
+        - replacement: frame
+          code: "model_frame = scarlet2.Frame.from_observations(
+          \n    observations=obs,
+          \n    coverage=\"union\",  # or \"intersection\"
+          \n)
+          \n
+          \n{{plot}}"
+      commentary: "The list of observations can then be supplied to create a `Frame`."
+  - question: Click to continue
+    answers:
+      - answer: Continue
+        templates:
+          - replacement: plot
+            code: "norm = scarlet2.plot.AsinhAutomaticNorm(obs)
             \nscarlet2.plot.observation(
             \n     obs, norm=norm, sky_coords=ra_dec, show_psf=True, label_kwargs={\"color\": \"red\"}
             \n)
             \n
             \n{{source_init}}"
-    followups: []
-    commentary: "The observations and PSF models can be plotted as above."
-- question: Do you have a position catalog of the sources in the image you wish to model?
-  answers:
+        commentary: "The observations and PSF models can be plotted as above."
+  - question: Do you have a position catalog of the sources in the image you wish to model?
+    answers:
     - answer: No, I don't have positions
       templates:
         - replacement: source_init
           code: "# Run source detection to get positions
-                \n
-                \n{{source_init}}"
-      followups: []
+              \n
+              \n{{source_init}}"
       commentary: "We recommend running [sep](https://sep.readthedocs.io/en/stable/) or another source detection algorithm on your images to find their positions for initialization."
     - answer: Yes, I have positions
-      templates: []
-      followups: []
       commentary: "Great, these positions will be used for source initialization."
+  - variable: transient
+    cases:
+      - value: "Yes"
+        questions:
+          - question: Click to continue
+            answers:
+              - answer: Continue
+                templates:
+                  - replacement: source_init
+                    code: "bands = [\"g\", \"r\"]
+                  \nband_selector = lambda channel: channel[0]
+                  \nepoch_selector = lambda channel: channel[1]
+                  \n
+                  \n{{source_init}}"
+                commentary: "Before initializing sources as ‘static’ or ‘variable’, we need to set up the ability to parse the filters and epochs of the channels. We can do that by defining the following. Let’s say our observations were given channels like (‘g’,0). Then we would set up the following like above."
 
+  - question: Do you have any galaxies or extended sources to model?
+    answers:
+    - answer: "Yes"
+      followups:
+      - variable: transient
+        cases:
+        - value: "Yes"
+          questions:
+          - question: Would you like to model galaxies with?
+            answers:
+            - answer: flexible non-parametric morphology models (starlets)
+              templates:
+              - replacement: source_init
+                code: "# 1) Host galaxy that is static across epochs
+                      \ntry:
+                      \n    spectrum, morph = scarlet2.init.from_gaussian_moments(obs, center, box_sizes=[15, 21])
+                      \nexcept IndexError:
+                      \n    morph = scarlet2.init.compact_morphology()
+                      \n# the host is barely resolved and the data are noisy:
+                      \n# use a starlet morphology for extra stability (esp to noise)
+                      \nmorph = scarlet2.StarletMorphology.from_image(morph)
+                      
+                      \n# Select the transient-free epochs to initialize amplitudes for the static source
+                      \n# These will be shared across all epochs. Make sure this matches the number of filters included in the modeling!
+                      \nspectrum = spectrum[0:2]
+                      
+                      \nscarlet2.Source(
+                      \n    center, scarlet2.StaticArraySpectrum(spectrum, bands=bands, band_selector=band_selector), morph
+                      \n)
+                      \n\n{{source_init}}"
+              commentary: "Galaxies with starlet morphologies with a constant flux across epochs can be initialized as follows"
+            - answer: non-parametric models guided by a prior for HSC or ZTF galaxies
+              templates:
+                - replacement: source_init
+                  code: "import scarlet2.init as init
+                      \n
+                      \nwith scarlet2.Scene(model_frame) as scene:
+                      \n    for i, center in enumerate(ra_dec):
+                      \n        try:
+                      \n            spectrum, morph = init.from_gaussian_moments([obs_hst, obs_hsc], center, min_corr=0.99)
+                      \n        except ValueError:
+                      \n            spectrum = init.pixel_spectrum([obs_hst, obs_hsc], center)
+                      \nmorph = init.compact_morphology()
+                      \n      scarlet2.Source(center, spectrum, morph)
+                      \n)
+                      \n\n{{source_init}}"
+              commentary: "Galaxies with starlet morphologies with a constant flux across epochs can be initialized as follows"
+            - answer: Sersic profiles?
+              templates:
+                - replacement: source_init
+                  code: "# 1) Host galaxy that is static across epochs
+                      \nspectrum = scarlet2.init.pixel_spectrum(obs_sc2, center)
+                      \nsersic = scarlet2.SersicMorphology(
+                      \n                                    ellipticity = jnp.asarray([0.2,-0.5]),        
+                      \n                                    size= jnp.asarray(3.5),
+                      \n                                    n=jnp.asarray(2.2),
+                      \n                    )
+                      \nscarlet2.Source(
+                      \n            center,
+                      \n            flux,sersic)
+                      \n
+                      \n# Select the transient-free epochs to initialize amplitudes for the static source. Make sure this matches the number of filters included in the modeling!
+                      \n# These will be shared across all epochs
+                      \nspectrum = spectrum[0:2]
+                      \n
+                      \nscarlet2.Source(
+                      \n    center, scarlet2.StaticArraySpectrum(spectrum, bands=bands, band_selector=band_selector), sersic
+                      \n)
+                      \n)
+                      \n\n{{source_init}}"
+              commentary: "Galaxies with starlet morphologies with a constant flux across epochs can be initialized as follows"
+        - questions:
+            - question: Would you like to model galaxies with?
+              answers:
+                - answer: flexible non-parametric morphology models (starlets)
+                  templates:
+                    - replacement: source_init
+                      code: "import scarlet2.init as init
+                            \n
+                            \nwith scarlet2.Scene(model_frame) as scene:
+                            \n    for i, center in enumerate(ra_dec):
+                            \n        try:
+                            \n            spectrum, morph = init.from_gaussian_moments([obs_hst, obs_hsc], center, min_corr=0.99)
+                            \n        except ValueError:
+                            \n            spectrum = init.pixel_spectrum([obs_hst, obs_hsc], center)
+                            \nmorph = init.compact_morphology()
+                            \n    morph = scarlet2.StarletMorphology.from_image(morph
+                            \n      scarlet2.Source(center, spectrum, morph)
+                            \n)
+                            \n\n{{source_init}}"
+                  commentary: "Galaxies with starlet morphologies can be initialized as follows"
+                - answer: non-parametric models guided by a prior for HSC or ZTF galaxies
+                  templates:
+                    - replacement: source_init
+                      code: "import scarlet2.init as init
+                      \n
+                      \nwith scarlet2.Scene(model_frame) as scene:
+                      \n    for i, center in enumerate(ra_dec):
+                      \n        try:
+                      \n            spectrum, morph = init.from_gaussian_moments([obs_hst, obs_hsc], center, min_corr=0.99)
+                      \n        except ValueError:
+                      \n            spectrum = init.pixel_spectrum([obs_hst, obs_hsc], center)
+                      \nmorph = init.compact_morphology()
+                      \n      scarlet2.Source(center, spectrum, morph)
+                      \n)
+                      \n\n{{source_init}}"
+                  commentary: "Galaxies with starlet morphologies with a constant flux across epochs can be initialized as follows"
+                - answer: Sersic profiles?
+                  templates:
+                    - replacement: source_init
+                      code: "# 1) Host galaxy that is static across epochs
+                      \nspectrum = initialization.pixel_spectrum(obs_sc2, center)
+                      \nsersic = scarlet2.SersicMorphology(
+                      \n                                    ellipticity = jnp.asarray([0.2,-0.5]),        
+                      \n                                    size= jnp.asarray(3.5),
+                      \n                                    n=jnp.asarray(2.2),
+                      \n                    )
+                      \nscarlet2.Source(
+                      \n    center, spectrum, sersic
+                      \n)
+                      \n)
+                      \n\n{{source_init}}"
+                  commentary: "Galaxies with starlet morphologies with a constant flux across epochs can be initialized as follows"
+
+    - answer: "No"
