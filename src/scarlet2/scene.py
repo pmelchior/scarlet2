@@ -1,5 +1,4 @@
 from collections import defaultdict
-from typing import Optional
 
 import equinox as eqx
 import jax
@@ -10,7 +9,14 @@ from .bbox import overlap_slices
 from .frame import Frame
 from .module import Module, Parameters
 from .renderer import ChannelRenderer
-from .validation_utils import ValidationError, ValidationMethodCollector
+from .validation_utils import (
+    ValidationError,
+    ValidationInfo,
+    ValidationMethodCollector,
+    ValidationResult,
+    ValidationWarning,
+    print_validation_results,
+)
 
 
 class Scene(Module):
@@ -340,16 +346,12 @@ class Scene(Module):
         if VALIDATION_SWITCH:
             from .validation import check_fit
 
-            validation_errors = []
+            validation_results = []
             for i, obs in enumerate(observations):
                 print(f"Running validation checks on the fit of the scene for observation {i}.")
-                validation_errors.extend(check_fit(returned_scene, obs))
+                validation_results.extend(check_fit(returned_scene, obs))
 
-            if validation_errors:
-                raise ValueError(
-                    "Fit validation failed. The following errors were found:\n"
-                    + "\n".join(str(error) for error in validation_errors)
-                )
+            print_validation_results("Fit validation results", validation_results)
 
         return returned_scene
 
@@ -542,10 +544,13 @@ class FitValidator(metaclass=ValidationMethodCollector):
         """
         self.scene = scene
         self.observation = observation
-        self.chi2_tolerable_threshold = 2.5
+
+        # These are placeholders, waiting for the actual width of distribution to be
+        # implemented - see issue https://github.com/pmelchior/scarlet2/issues/192
+        self.chi2_tolerable_threshold = 1.5
         self.chi2_critical_threshold = 5.0
 
-    def check_goodness_of_fit(self) -> Optional[ValidationError]:
+    def check_goodness_of_fit(self) -> ValidationResult:
         """Evaluate the goodness of the model fit to the data by calling the Observation
         class's `goodness_of_fit` method.
 
@@ -568,11 +573,12 @@ class FitValidator(metaclass=ValidationMethodCollector):
 
         chi2 = obs.goodness_of_fit(self.scene())
 
-        ret_val = None
-        if chi2 < self.chi2_tolerable_threshold:
-            ret_val = None
-        elif self.chi2_tolerable_threshold <= chi2 < self.chi2_critical_threshold:
-            ret_val = ValidationError(
+        ret_val: ValidationResult = ValidationInfo(
+            "The chi^2 of the model fit is good.",
+            check=self.__class__.__name__,
+        )
+        if self.chi2_tolerable_threshold <= chi2 < self.chi2_critical_threshold:
+            ret_val = ValidationWarning(
                 "The model fit is acceptable, but the goodness of fit is not optimal.",
                 check=self.__class__.__name__,
                 context={"chi2": chi2},
@@ -584,7 +590,7 @@ class FitValidator(metaclass=ValidationMethodCollector):
 
         return ret_val
 
-    def check_chi_square_in_box_and_border(self) -> Optional[list[ValidationError]]:
+    def check_chi_square_in_box_and_border(self) -> list[ValidationResult]:
         """Evaluate the weighted mean (weighted by the inverse variance weights)
         of the squared residuals for each source. Chi square is also computed for
         the perimeter outside the box of with `border_width`.
@@ -599,21 +605,28 @@ class FitValidator(metaclass=ValidationMethodCollector):
 
         chi2_per_source = obs.eval_chi_square_in_box_and_border(self.scene)
 
-        validation_errors = []
+        validation_results: list[ValidationResult] = []
         for i, chi2 in chi2_per_source.items():
             chi2_inside = chi2["in"]
             chi2_outside = chi2["out"]
 
-            if self.chi2_tolerable_threshold <= chi2_inside < self.chi2_critical_threshold:
-                validation_errors.append(
-                    ValidationError(
+            if chi2_inside < self.chi2_tolerable_threshold:
+                validation_results.append(
+                    ValidationInfo(
+                        f"The chi-square in the box for source {i} is good.",
+                        check=self.__class__.__name__,
+                    )
+                )
+            elif self.chi2_tolerable_threshold <= chi2_inside < self.chi2_critical_threshold:
+                validation_results.append(
+                    ValidationWarning(
                         f"The chi-square in the box for source {i} is acceptable, but not optimal.",
                         check=self.__class__.__name__,
                         context={"chi2_in": chi2_inside, "source": i},
                     )
                 )
             elif chi2_inside >= self.chi2_critical_threshold:
-                validation_errors.append(
+                validation_results.append(
                     ValidationError(
                         f"The chi-square in the box for source {i} is poor.",
                         check=self.__class__.__name__,
@@ -621,16 +634,23 @@ class FitValidator(metaclass=ValidationMethodCollector):
                     )
                 )
 
-            if self.chi2_tolerable_threshold <= chi2_outside < self.chi2_critical_threshold:
-                validation_errors.append(
-                    ValidationError(
+            if chi2_outside < self.chi2_tolerable_threshold:
+                validation_results.append(
+                    ValidationInfo(
+                        f"The chi-square in the border for source {i} is good.",
+                        check=self.__class__.__name__,
+                    )
+                )
+            elif self.chi2_tolerable_threshold <= chi2_outside < self.chi2_critical_threshold:
+                validation_results.append(
+                    ValidationWarning(
                         f"The chi-square in the border for source {i} is acceptable, but not optimal.",
                         check=self.__class__.__name__,
                         context={"chi2_border": chi2_outside, "source": i},
                     )
                 )
             elif chi2_outside >= self.chi2_critical_threshold:
-                validation_errors.append(
+                validation_results.append(
                     ValidationError(
                         f"The chi-square in the border for source {i} is poor.",
                         check=self.__class__.__name__,
@@ -638,4 +658,4 @@ class FitValidator(metaclass=ValidationMethodCollector):
                     )
                 )
 
-        return validation_errors if validation_errors else None
+        return validation_results

@@ -94,13 +94,15 @@ def check_scene(scene) -> list[ValidationError]:
     return validation_errors
 
 
-def check_source(source) -> list[ValidationError]:
+def check_source(source, scene) -> list[ValidationError]:
     """Check the source against the various validation rules.
 
     Parameters
     ----------
     source : Source
         The source object to check.
+    scene : Scene
+        The scene that the source is part of.
 
     Returns
     -------
@@ -109,4 +111,4 @@ def check_source(source) -> list[ValidationError]:
         If no errors are found, the list is empty.
     """
 
-    return _check(validation_class=SourceValidator, **{"source": source})
+    return _check(validation_class=SourceValidator, **{"source": source, "scene": scene})
