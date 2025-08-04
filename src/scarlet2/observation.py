@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
+from .fft import make_ps_map
 from .frame import Frame
 from .module import Module
 from .renderer import (
@@ -25,12 +26,14 @@ class Observation(Module):
     """Observed data"""
     weights: jnp.ndarray
     """Statistical weights (usually inverse variance) for :py:meth:`log_likelihood`"""
+    fourier_noise_var: jnp.ndarray = None
+    """Noise power spectrum for :py:meth:`log_likelihood`"""
     frame: Frame
     """Metadata to describe what view of the sky `data` amounts to"""
     renderer: (Renderer, eqx.nn.Sequential)
     """Renderer to translate from the model frame the observation frame"""
 
-    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
+    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None, noise_ps=None):
         self.data = data
         if self.data.ndim == 2:
             # add a channel dimension if it is missing
@@ -40,6 +43,9 @@ class Observation(Module):
         if self.weights is not None and self.weights.ndim == 2:
             # add a channel dimension if it is missing
             self.weights = self.weights[None, ...]
+
+        if noise_ps is not None:
+            self.fourier_noise_var = make_ps_map(noise_ps, data.shape[-1])
 
         self.frame = Frame(Box(data.shape), psf, wcs, channels=channels)
         if renderer is None:
@@ -93,14 +99,21 @@ class Observation(Module):
         # rendered model
         model_ = self.render(model)
 
-        # normalization of the single-pixel likelihood:
-        # 1 / [(2pi)^1/2 (sigma^2)^1/2]
-        # with inverse variance weights: sigma^2 = 1/weight
-        # full likelihood is sum over all (unmasked) pixels in data
-        n = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
-        log_norm = n / 2 * jnp.log(2 * jnp.pi)
-        log_like = -jnp.sum(self.weights * (model_ - data) ** 2) / 2
-        return log_like - log_norm
+        if self.fourier_noise_var is not None:
+            res_fft = jnp.fft.fft2(model_ - data)
+            log_like = -0.5 * jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.fourier_noise_var)
+
+        else:
+            # normalization of the single-pixel likelihood:
+            # 1 / [(2pi)^1/2 (sigma^2)^1/2]
+            # with inverse variance weights: sigma^2 = 1/weight
+            # full likelihood is sum over all (unmasked) pixels in data
+            d = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
+            log_norm = d / 2 * jnp.log(2 * jnp.pi)
+            log_like = -jnp.sum(self.weights * (model_ - data) ** 2) / 2
+            log_norm += log_norm
+
+        return log_like
 
     def goodness_of_fit(self, model):
         """Evaluate the goodness of the model fit to the data
