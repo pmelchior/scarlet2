@@ -164,8 +164,8 @@ def dia_source_to_scene(cutout_size_pix, dia_src, service):
     i = 0
     cutout_size_pix = 131
     cutout_size = cutout_size_pix * 0.2 / 3600.0
-    ra = dia_src["ra"]
-    dec = dia_src["decl"]
+    ra = dia_src["ra"][0]
+    dec = dia_src["decl"][0]
 
     observations = []
     channels_sc2 = []
