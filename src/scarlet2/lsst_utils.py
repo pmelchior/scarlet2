@@ -250,3 +250,4 @@ def dia_source_to_scene(cutout_size_pix, dia_src, service):
             )
             channels_sc2.append((band, str(i)))
             observations.append(obs)
+    return observations, channels_sc2
