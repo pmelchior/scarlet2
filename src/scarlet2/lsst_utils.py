@@ -1,7 +1,8 @@
+import os
+
 import jax.numpy as jnp
 import lsst.afw.geom as afwGeom
 import lsst.geom as geom
-import matplotlib.pyplot as plt
 import numpy as np
 from astropy import units as u
 from astropy.io import fits
@@ -14,8 +15,6 @@ from lsst.pipe.tasks.registerImage import RegisterConfig, RegisterTask
 from pyvo.dal.adhoc import DatalinkResults, SodaQuery
 
 import scarlet2
-
-import os
 
 
 def warp_img(ref_img, img_to_warp, ref_wcs, wcs_to_warp):
@@ -182,7 +181,7 @@ def dia_source_to_scene(cutout_size_pix, dia_src, service, tempdir):
         img_ref = None
 
         img = make_image_cutout(
-                service, ra, dec, cutout_size=cutout_size * 50.0, imtype="calexp", dataId=dataId_calexp
+            service, ra, dec, cutout_size=cutout_size * 50.0, imtype="calexp", dataId=dataId_calexp
         )
         if i == 0:
             img_ref = img
@@ -215,9 +214,9 @@ def dia_source_to_scene(cutout_size_pix, dia_src, service, tempdir):
         psf_sc2 = psf_warped.array.reshape(1, N1, N2)
         # this is required to get the WCS, we should figure out a better
         # way to do this without writing to disk
-        filename = os.path.join(tempdir, 'cutout_' + str(i) + '.fits')
+        filename = os.path.join(tempdir, "cutout_" + str(i) + ".fits")
         img_ref.writeFits(filename)
-        f=fits.open(filename)
+        f = fits.open(filename)
         wcs = WCS(f[1].header)
         obs = scarlet2.Observation(
             jnp.array(image_sc2).astype(float),
