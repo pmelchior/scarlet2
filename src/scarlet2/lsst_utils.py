@@ -163,8 +163,8 @@ def make_image_cutout(tap_service, ra, dec, dataId, cutout_size=0.01, imtype=Non
 
 
 def dia_source_to_scene(cutout_size_pix, dia_src, service, tempdir):
-    i = 0
-    cutout_size_pix = 131
+    # TODO: - add back in the plotting functionality?
+    # - figure out how to get the WCS from the cutout without writing to disk
     cutout_size = cutout_size_pix * 0.2 / 3600.0
     ra = dia_src["ra"][0]
     dec = dia_src["decl"][0]
@@ -179,81 +179,53 @@ def dia_source_to_scene(cutout_size_pix, dia_src, service, tempdir):
         visit = int(visit)
         detector = int(detector)
         dataId_calexp = {"visit": visit, "detector": detector}
+        img_ref = None
 
-        if i == 0:
-            img_ref = make_image_cutout(
-                service, ra, dec, cutout_size=cutout_size, imtype="calexp", dataId=dataId_calexp
-            )
-            im_arr = img_ref.image.array
-            var_arr = img_ref.variance.array
-            N1, N2 = im_arr.shape
-            image_sc2 = im_arr.reshape(1, N1, N2)
-            N1, N2 = var_arr.shape
-            weight_sc2 = 1 / var_arr.reshape(1, N1, N2)
-            info_calexp = img_ref.getInfo()
-            psf_calexp = info_calexp.getPsf()
-            point_tuple = (int(img_ref.image.array.shape[0] / 2), int(img_ref.image.array.shape[1] / 2))
-            point_image = Point2D(point_tuple)
-            psf_ref = psf_calexp.computeImage(point_image).convertF()
-            N1, N2 = psf_ref.array.shape
-            psf_sc2 = psf_ref.array.reshape(1, N1, N2)
-            # this is required to get the WCS, we should figure out a better
-            # way to do this without writing to disk
-            # maybe we can we have an option to cache the coutouts
-            filename = os.path.join(tempdir,'cutout_' + str(i) + '.fits')
-            img_ref.writeFits(filename)
-            f = fits.open(filename)
-            wcs_ref = WCS(f[1].header)
-
-            obs = scarlet2.Observation(
-                jnp.array(image_sc2).astype(float),
-                weights=jnp.array(weight_sc2).astype(float),
-                psf=scarlet2.ArrayPSF(jnp.array(psf_sc2).astype(float)),
-                wcs=wcs_ref,
-                channels=[(band, str(i))],
-            )
-            channels_sc2.append((band, str(i)))
-            observations.append(obs)
-        else:
-            img = make_image_cutout(
+        img = make_image_cutout(
                 service, ra, dec, cutout_size=cutout_size * 50.0, imtype="calexp", dataId=dataId_calexp
-            )
+        )
+        if i == 0:
+            img_ref = img
+            # no warping is needed for the reference
+            img_warped = img_ref
+        else:
             img_warped = warp_img(img_ref, img, img_ref.getWcs(), img.getWcs())
-            fig, ax = plt.subplots(1, 1, figsize=(2, 2))
-            im_arr = img_warped.image.array
-            var_arr = img_warped.variance.array
-            N1, N2 = im_arr.shape
-            image_sc2 = im_arr.reshape(1, N1, N2)
-            N1, N2 = var_arr.shape
-            weight_sc2 = 1 / var_arr.reshape(1, N1, N2)
-            info_calexp = img.getInfo()
-            psf_calexp = info_calexp.getPsf()
-            point_tuple = (int(img_warped.image.array.shape[0] / 2), int(img_warped.image.array.shape[1] / 2))
-            point_image = Point2D(point_tuple)
-            psf = psf_calexp.computeImage(point_image).convertF()
-            xyTransform = afwGeom.makeWcsPairTransform(img.wcs, img_warped.wcs)
-            psf_w = WarpedPsf(img.getPsf(), xyTransform)
-            point_tuple = (int(img_warped.image.array.shape[0] / 2), int(img_warped.image.array.shape[1] / 2))
-            point_image = Point2D(point_tuple)
-            psf_warped = psf_w.computeImage(point_image).convertF()
-            if np.sum(psf_warped.array) == 0:
-                print("PSF model unavailable, skipping")
-                continue
-            N1, N2 = psf_warped.array.shape
-            psf_sc2 = psf_warped.array.reshape(1, N1, N2)
-            # this is required to get the WCS, we should figure out a better
-            # way to do this without writing to disk
-            filename = os.path.join(tempdir, 'cutout_' + str(i) + '.fits')
-            img_ref.writeFits(filename)
-            f=fits.open(filename)
-            wcs = WCS(f[1].header)
-            obs = scarlet2.Observation(
-                jnp.array(image_sc2).astype(float),
-                weights=jnp.array(weight_sc2).astype(float),
-                psf=scarlet2.ArrayPSF(jnp.array(psf_sc2).astype(float)),
-                wcs=wcs,
-                channels=[(band, str(i))],
-            )
-            channels_sc2.append((band, str(i)))
-            observations.append(obs)
+        img_warped = warp_img(img_ref, img, img_ref.getWcs(), img.getWcs())
+        # fig, ax = plt.subplots(1, 1, figsize=(2, 2))
+        im_arr = img_warped.image.array
+        var_arr = img_warped.variance.array
+        N1, N2 = im_arr.shape
+        image_sc2 = im_arr.reshape(1, N1, N2)
+        N1, N2 = var_arr.shape
+        weight_sc2 = 1 / var_arr.reshape(1, N1, N2)
+        info_calexp = img.getInfo()
+        psf_calexp = info_calexp.getPsf()
+        point_tuple = (int(img_warped.image.array.shape[0] / 2), int(img_warped.image.array.shape[1] / 2))
+        point_image = Point2D(point_tuple)
+        psf = psf_calexp.computeImage(point_image).convertF()
+        xyTransform = afwGeom.makeWcsPairTransform(img.wcs, img_warped.wcs)
+        psf_w = WarpedPsf(img.getPsf(), xyTransform)
+        point_tuple = (int(img_warped.image.array.shape[0] / 2), int(img_warped.image.array.shape[1] / 2))
+        point_image = Point2D(point_tuple)
+        psf_warped = psf_w.computeImage(point_image).convertF()
+        if np.sum(psf_warped.array) == 0:
+            print("PSF model unavailable, skipping")
+            continue
+        N1, N2 = psf_warped.array.shape
+        psf_sc2 = psf_warped.array.reshape(1, N1, N2)
+        # this is required to get the WCS, we should figure out a better
+        # way to do this without writing to disk
+        filename = os.path.join(tempdir, 'cutout_' + str(i) + '.fits')
+        img_ref.writeFits(filename)
+        f=fits.open(filename)
+        wcs = WCS(f[1].header)
+        obs = scarlet2.Observation(
+            jnp.array(image_sc2).astype(float),
+            weights=jnp.array(weight_sc2).astype(float),
+            psf=scarlet2.ArrayPSF(jnp.array(psf_sc2).astype(float)),
+            wcs=wcs,
+            channels=[(band, str(i))],
+        )
+        channels_sc2.append((band, str(i)))
+        observations.append(obs)
     return observations, channels_sc2
