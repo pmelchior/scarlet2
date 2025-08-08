@@ -15,6 +15,8 @@ from pyvo.dal.adhoc import DatalinkResults, SodaQuery
 
 import scarlet2
 
+import os
+
 
 def warp_img(ref_img, img_to_warp, ref_wcs, wcs_to_warp):
     """Warp and rotate an image onto the coordinate system of another image
@@ -160,7 +162,7 @@ def make_image_cutout(tap_service, ra, dec, dataId, cutout_size=0.01, imtype=Non
     return exposure
 
 
-def dia_source_to_scene(cutout_size_pix, dia_src, service):
+def dia_source_to_scene(cutout_size_pix, dia_src, service, tempdir):
     i = 0
     cutout_size_pix = 131
     cutout_size = cutout_size_pix * 0.2 / 3600.0
@@ -195,10 +197,12 @@ def dia_source_to_scene(cutout_size_pix, dia_src, service):
             psf_ref = psf_calexp.computeImage(point_image).convertF()
             N1, N2 = psf_ref.array.shape
             psf_sc2 = psf_ref.array.reshape(1, N1, N2)
+            # this is required to get the WCS, we should figure out a better
+            # way to do this without writing to disk
             # maybe we can we have an option to cache the coutouts
-            # filename = os.path.join(tempdir,'cutout_' + str(i) + '.fits')
-            # img_ref.writeFits(filename)
-            # f = fits.open(filename)
+            filename = os.path.join(tempdir,'cutout_' + str(i) + '.fits')
+            img_ref.writeFits(filename)
+            f = fits.open(filename)
             wcs_ref = WCS(f[1].header)
 
             obs = scarlet2.Observation(
@@ -237,9 +241,11 @@ def dia_source_to_scene(cutout_size_pix, dia_src, service):
                 continue
             N1, N2 = psf_warped.array.shape
             psf_sc2 = psf_warped.array.reshape(1, N1, N2)
-            # filename = os.path.join(tempdir, 'cutout_' + str(i) + '.fits')
-            # img_ref.writeFits(filename)
-            # f=fits.open(filename)
+            # this is required to get the WCS, we should figure out a better
+            # way to do this without writing to disk
+            filename = os.path.join(tempdir, 'cutout_' + str(i) + '.fits')
+            img_ref.writeFits(filename)
+            f=fits.open(filename)
             wcs = WCS(f[1].header)
             obs = scarlet2.Observation(
                 jnp.array(image_sc2).astype(float),
