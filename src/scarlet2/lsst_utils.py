@@ -197,8 +197,8 @@ def dia_source_to_scene(cutout_size_pix, dia_src, service):
             psf_sc2 = psf_ref.array.reshape(1, N1, N2)
             # maybe we can we have an option to cache the coutouts
             # filename = os.path.join(tempdir,'cutout_' + str(i) + '.fits')
-            img_ref.writeFits(filename)
-            f = fits.open(filename)
+            # img_ref.writeFits(filename)
+            # f = fits.open(filename)
             wcs_ref = WCS(f[1].header)
 
             obs = scarlet2.Observation(
