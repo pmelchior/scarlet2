@@ -261,4 +261,7 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service, plot_images=Fa
                 .1, .9, r'$\Delta$t='
                     + str(round(src['midPointTai']-first_time, 2)),
                     color='white', fontsize=12)
+            plt.show()
+            plt.close()
+
     return observations, channels_sc2
