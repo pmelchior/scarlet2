@@ -138,7 +138,6 @@ def make_image_cutout(tap_service, ra, dec, dataId, cutout_size=0.01, imtype=Non
     # Get datalink
     dataLinkUrl = results[0].getdataurl()
     auth_session = tap_service._session
-    print(dataLinkUrl)
     dl = DatalinkResults.from_result_url(dataLinkUrl, session=auth_session)
 
     # from_resource: creates a instance from
@@ -161,7 +160,28 @@ def make_image_cutout(tap_service, ra, dec, dataId, cutout_size=0.01, imtype=Non
     return exposure
 
 
-def dia_source_to_scene(cutout_size_pix, dia_src, service, tempdir):
+def dia_source_to_observations(cutout_size_pix, dia_src, service):
+    """Convert a DIA source to a list of scarlet2 Observations
+
+    Parameters
+    ----------
+    cutout_size_pix : 'int'
+        the size of the cutout in pixels
+    dia_src : `astropy.table.Table`
+        the DIA source table containing the sources to make cutouts for
+    service : `pyvo.dal.tap.TAPService`
+        the TAP service to use for querying the cutouts
+        i.e. the result from lsst.rsp.get_tap_service()
+    tempdir : 'str'
+        the temporary directory to write the cutouts to
+
+    Returns
+    -------
+    observations : 'list of scarlet2.Observation'
+        a list of scarlet2 Observations, one for each DIA source
+    channels_sc2 : 'list of tuples'
+        a list of tuples containing the band and channel number for each observation
+    """
     # TODO: - add back in the plotting functionality?
     # - figure out how to get the WCS from the cutout without writing to disk
     cutout_size = cutout_size_pix * 0.2 / 3600.0
@@ -179,6 +199,7 @@ def dia_source_to_scene(cutout_size_pix, dia_src, service, tempdir):
         detector = int(detector)
         dataId_calexp = {"visit": visit, "detector": detector}
         img_ref = None
+        wcs_ref = None
 
         img = make_image_cutout(
             service, ra, dec, cutout_size=cutout_size * 50.0, imtype="calexp", dataId=dataId_calexp
@@ -187,6 +208,9 @@ def dia_source_to_scene(cutout_size_pix, dia_src, service, tempdir):
             img_ref = img
             # no warping is needed for the reference
             img_warped = img_ref
+            offset = geom.Extent2D(geom.Point2I(0, 0) - img_ref.getXY0())
+            shifted_wcs = img_ref.getWcs().copyAtShiftedPixelOrigin(offset)
+            wcs_ref = WCS(shifted_wcs.getFitsMetadata())
         else:
             img_warped = warp_img(img_ref, img, img_ref.getWcs(), img.getWcs())
         img_warped = warp_img(img_ref, img, img_ref.getWcs(), img.getWcs())
@@ -197,11 +221,8 @@ def dia_source_to_scene(cutout_size_pix, dia_src, service, tempdir):
         image_sc2 = im_arr.reshape(1, N1, N2)
         N1, N2 = var_arr.shape
         weight_sc2 = 1 / var_arr.reshape(1, N1, N2)
-        info_calexp = img.getInfo()
-        psf_calexp = info_calexp.getPsf()
         point_tuple = (int(img_warped.image.array.shape[0] / 2), int(img_warped.image.array.shape[1] / 2))
         point_image = Point2D(point_tuple)
-        psf = psf_calexp.computeImage(point_image).convertF()
         xyTransform = afwGeom.makeWcsPairTransform(img.wcs, img_warped.wcs)
         psf_w = WarpedPsf(img.getPsf(), xyTransform)
         point_tuple = (int(img_warped.image.array.shape[0] / 2), int(img_warped.image.array.shape[1] / 2))
@@ -214,15 +235,11 @@ def dia_source_to_scene(cutout_size_pix, dia_src, service, tempdir):
         psf_sc2 = psf_warped.array.reshape(1, N1, N2)
         # this is required to get the WCS, we should figure out a better
         # way to do this without writing to disk
-        filename = os.path.join(tempdir, "cutout_" + str(i) + ".fits")
-        img_ref.writeFits(filename)
-        f = fits.open(filename)
-        wcs = WCS(f[1].header)
         obs = scarlet2.Observation(
             jnp.array(image_sc2).astype(float),
             weights=jnp.array(weight_sc2).astype(float),
             psf=scarlet2.ArrayPSF(jnp.array(psf_sc2).astype(float)),
-            wcs=wcs,
+            wcs=wcs_ref,
             channels=[(band, str(i))],
         )
         channels_sc2.append((band, str(i)))
