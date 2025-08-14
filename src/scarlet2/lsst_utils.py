@@ -190,6 +190,8 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service):
 
     observations = []
     channels_sc2 = []
+    img_ref = None
+    wcs_ref = None
     for i, src in enumerate(dia_src):
         ccdvisitID = src["ccdVisitId"]
         band = str(src["filterName"])
@@ -198,8 +200,6 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service):
         visit = int(visit)
         detector = int(detector)
         dataId_calexp = {"visit": visit, "detector": detector}
-        img_ref = None
-        wcs_ref = None
 
         img = make_image_cutout(
             service, ra, dec, cutout_size=cutout_size * 50.0, imtype="calexp", dataId=dataId_calexp
