@@ -1,11 +1,8 @@
-import os
-
 import jax.numpy as jnp
 import lsst.afw.geom as afwGeom
 import lsst.geom as geom
 import numpy as np
 from astropy import units as u
-from astropy.io import fits
 from astropy.wcs import WCS
 from lsst.afw.fits import MemFileManager
 from lsst.afw.image import ExposureF
@@ -13,6 +10,7 @@ from lsst.geom import Point2D
 from lsst.meas.algorithms import WarpedPsf
 from lsst.pipe.tasks.registerImage import RegisterConfig, RegisterTask
 from pyvo.dal.adhoc import DatalinkResults, SodaQuery
+import matplotlib.pyplot as plt
 
 import scarlet2
 
@@ -160,7 +158,7 @@ def make_image_cutout(tap_service, ra, dec, dataId, cutout_size=0.01, imtype=Non
     return exposure
 
 
-def dia_source_to_observations(cutout_size_pix, dia_src, service):
+def dia_source_to_observations(cutout_size_pix, dia_src, service, plot_images=False):
     """Convert a DIA source to a list of scarlet2 Observations
 
     Parameters
@@ -192,6 +190,14 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service):
     channels_sc2 = []
     img_ref = None
     wcs_ref = None
+
+    first_time = dia_src["midPointTai"][0]
+    vmin = -200
+    vmax = 300
+
+    if plot_images:
+        fig, ax = plt.subplots(1, 1, figsize=(2, 2))
+
     for i, src in enumerate(dia_src):
         ccdvisitID = src["ccdVisitId"]
         band = str(src["filterName"])
@@ -244,4 +250,15 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service):
         )
         channels_sc2.append((band, str(i)))
         observations.append(obs)
+
+        if plot_images:
+            plt.imshow(im_arr, origin='lower', cmap='gray', vmin=vmin, vmax=vmax)
+            ax.set_xticklabels([])
+            ax.set_yticklabels([])
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.text(
+                .1, .9, r'$\Delta$t='
+                    + str(round(src['midPointTai']-first_time, 2)),
+                    color='white', fontsize=12)
     return observations, channels_sc2
