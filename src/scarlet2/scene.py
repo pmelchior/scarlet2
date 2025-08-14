@@ -696,8 +696,8 @@ class SceneValidator(metaclass=ValidationMethodCollector):
         """
         validation_results: list[ValidationResult] = []
         for i, source in enumerate(self.scene.sources):
-            source_and_observation_box = source.bbox and self.observation.frame.bbox
-            if source_and_observation_box == self.observation.frame.bbox:
+            source_and_observation_box = source.bbox & self.observation.frame.bbox
+            if source_and_observation_box == source.bbox:
                 validation_results.append(
                     ValidationInfo(
                         f"Source {i} has a bounding box inside the observation.",
@@ -705,7 +705,7 @@ class SceneValidator(metaclass=ValidationMethodCollector):
                         context={"bbox": source.bbox, "observation_bbox": self.observation.frame.bbox},
                     )
                 )
-            elif source_and_observation_box.D == 0:
+            elif source_and_observation_box.spatial.get_extent() == [0, 0, 0, 0]:
                 validation_results.append(
                     ValidationWarning(
                         f"Source {i} has a bounding box outside of the observation.",
