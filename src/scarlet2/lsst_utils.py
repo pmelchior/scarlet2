@@ -218,8 +218,7 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service, plot_images=Fa
             shifted_wcs = img_ref.getWcs().copyAtShiftedPixelOrigin(offset)
             wcs_ref = WCS(shifted_wcs.getFitsMetadata())
         else:
-            img_warped = warp_img(img_ref, img, wcs_ref, img.getWcs())
-        # fig, ax = plt.subplots(1, 1, figsize=(2, 2))
+            img_warped = warp_img(img_ref, img, img_ref.getWcs(), img.getWcs())
         im_arr = img_warped.image.array
         var_arr = img_warped.variance.array
         N1, N2 = im_arr.shape
