@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import lsst.afw.geom as afwGeom
 import lsst.geom as geom
+import matplotlib.pyplot as plt
 import numpy as np
 from astropy import units as u
 from astropy.wcs import WCS
@@ -10,7 +11,6 @@ from lsst.geom import Point2D
 from lsst.meas.algorithms import WarpedPsf
 from lsst.pipe.tasks.registerImage import RegisterConfig, RegisterTask
 from pyvo.dal.adhoc import DatalinkResults, SodaQuery
-import matplotlib.pyplot as plt
 
 import scarlet2
 
@@ -251,15 +251,18 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service, plot_images=Fa
         observations.append(obs)
 
         if plot_images:
-            plt.imshow(im_arr, origin='lower', cmap='gray', vmin=vmin, vmax=vmax)
+            plt.imshow(im_arr, origin="lower", cmap="gray", vmin=vmin, vmax=vmax)
             ax.set_xticklabels([])
             ax.set_yticklabels([])
             ax.set_xticks([])
             ax.set_yticks([])
             ax.text(
-                .1, .9, r'$\Delta$t='
-                    + str(round(src['midPointTai']-first_time, 2)),
-                    color='white', fontsize=12)
+                0.1,
+                0.9,
+                r"$\Delta$t=" + str(round(src["midPointTai"] - first_time, 2)),
+                color="white",
+                fontsize=12,
+            )
             plt.show()
             plt.close()
 
