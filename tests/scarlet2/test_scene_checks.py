@@ -12,6 +12,7 @@ from scarlet2.psf import ArrayPSF
 from scarlet2.scene import Scene, SceneValidator
 from scarlet2.source import PointSource, Source
 from scarlet2.validation_utils import (
+    ValidationError,
     ValidationInfo,
     ValidationWarning,
     set_validation,
@@ -114,30 +115,57 @@ def no_overlap_scene(good_obs):
 
 
 @pytest.fixture()
-def parameters(scene):
+def parameters(full_overlap_scene, good_obs):
     """Create parameters for the scene."""
     spec_step = partial(relative_step, factor=0.05)
     morph_step = partial(relative_step, factor=1e-3)
 
-    parameters = scene.make_parameters()
-    for i in range(len(scene.sources)):
+    parameters = full_overlap_scene.make_parameters()
+    for i in range(len(full_overlap_scene.sources)):
         parameters += Parameter(
-            scene.sources[i].spectrum,
+            full_overlap_scene.sources[i].spectrum,
             name=f"spectrum:{i}",
             constraint=constraints.positive,
             stepsize=spec_step,
         )
         if i == 0:
-            parameters += Parameter(scene.sources[i].center, name=f"center:{i}", stepsize=0.1)
+            parameters += Parameter(full_overlap_scene.sources[i].center, name=f"center:{i}", stepsize=0.1)
         else:
             parameters += Parameter(
-                scene.sources[i].morphology,
+                full_overlap_scene.sources[i].morphology,
                 name=f"morph:{i}",
                 constraint=constraints.unit_interval,
                 stepsize=morph_step,
             )
 
-    scene.set_spectra_to_match(good_obs, parameters)
+    full_overlap_scene.set_spectra_to_match(good_obs, parameters)
+    return parameters
+
+
+@pytest.fixture()
+def bad_parameters(full_overlap_scene, good_obs):
+    """Create faulty parameters for a scene."""
+
+    parameters = full_overlap_scene.make_parameters()
+    for i in range(len(full_overlap_scene.sources)):
+        parameters += Parameter(
+            full_overlap_scene.sources[i].spectrum,
+            name=f"spectrum:{i}",
+            constraint=constraints.positive,
+            stepsize=None,
+        )
+        if i == 0:
+            parameters += Parameter(full_overlap_scene.sources[i].center, name=f"center:{i}", stepsize=0.1)
+        else:
+            parameters += Parameter(
+                full_overlap_scene.sources[i].morphology,
+                name=f"morph:{i}",
+                constraint=constraints.unit_interval,
+                stepsize=None,
+                prior=None,
+            )
+
+    full_overlap_scene.set_spectra_to_match(good_obs, parameters)
     return parameters
 
 
@@ -171,3 +199,20 @@ def test_check_source_boxes_comparable_to_observation_partial_overlap(partial_ov
 
     assert isinstance(results[0], ValidationWarning)
     assert "partially inside" in results[0].message
+
+
+def test_check_parameters_have_necessary_fields(parameters):
+    """Test that all parameters have the necessary fields set."""
+    checker = SceneValidator(scene=None, parameters=parameters, observation=None)
+    results = checker.check_parameters_have_necessary_fields()
+
+    assert isinstance(results[0], ValidationInfo)
+
+
+def test_check_parameters_have_necessary_fields_both_prior_and_stepsize(bad_parameters):
+    """Test that all parameters have the necessary fields set."""
+    checker = SceneValidator(scene=None, parameters=bad_parameters, observation=None)
+    results = checker.check_parameters_have_necessary_fields()
+
+    assert isinstance(results[0], ValidationError)
+    assert "does not have prior or stepsize" in results[0].message

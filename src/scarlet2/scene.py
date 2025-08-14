@@ -738,7 +738,8 @@ class SceneValidator(metaclass=ValidationMethodCollector):
             or `ValidationError`.
         """
         validation_results: list[ValidationResult] = []
-        for param in self.parameters:
+        for i in range(len(self.parameters)):
+            param = self.parameters[i]
             prior_is_none = param.prior is None
             stepsize_is_none = param.stepsize is None
             if (prior_is_none and not stepsize_is_none) or (not prior_is_none and stepsize_is_none):
