@@ -207,10 +207,10 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service, plot_images=Fa
         detector = int(detector)
         dataId_calexp = {"visit": visit, "detector": detector}
 
-        img = make_image_cutout(
-            service, ra, dec, cutout_size=cutout_size * 50.0, imtype="calexp", dataId=dataId_calexp
-        )
         if i == 0:
+            img = make_image_cutout(
+                service, ra, dec, cutout_size=cutout_size, imtype="calexp", dataId=dataId_calexp
+            )
             img_ref = img
             # no warping is needed for the reference
             img_warped = img_ref
@@ -218,6 +218,9 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service, plot_images=Fa
             shifted_wcs = img_ref.getWcs().copyAtShiftedPixelOrigin(offset)
             wcs_ref = WCS(shifted_wcs.getFitsMetadata())
         else:
+            img = make_image_cutout(
+                service, ra, dec, cutout_size=cutout_size * 50.0, imtype="calexp", dataId=dataId_calexp
+            )
             img_warped = warp_img(img_ref, img, img_ref.getWcs(), img.getWcs())
         im_arr = img_warped.image.array
         var_arr = img_warped.variance.array
