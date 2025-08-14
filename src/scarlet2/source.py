@@ -264,16 +264,6 @@ class SourceValidator(metaclass=ValidationMethodCollector):
     def __init__(self, source: Source):
         self.source = source
 
-    def check_source_example(self) -> ValidationResult:
-        """Check that the source is valid.
-
-        Returns
-        -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
-        """
-        return None
-
     def check_source_has_positive_contribution(self) -> ValidationResult:
         """Check that the source has a positive contribution i.e. that the result
         of evaluating self.source() does not contain negative values.
