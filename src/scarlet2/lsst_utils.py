@@ -195,9 +195,6 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service, plot_images=Fa
     vmin = -200
     vmax = 300
 
-    if plot_images:
-        fig, ax = plt.subplots(1, 1, figsize=(2, 2))
-
     for i, src in enumerate(dia_src):
         ccdvisitID = src["ccdVisitId"]
         band = str(src["filterName"])
@@ -253,6 +250,7 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service, plot_images=Fa
         observations.append(obs)
 
         if plot_images:
+            _, ax = plt.subplots(1, 1, figsize=(2, 2))
             plt.imshow(im_arr, origin="lower", cmap="gray", vmin=vmin, vmax=vmax)
             ax.set_xticklabels([])
             ax.set_yticklabels([])
@@ -267,5 +265,4 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service, plot_images=Fa
             )
             plt.show()
             plt.close()
-
     return observations, channels_sc2
