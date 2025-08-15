@@ -28,6 +28,7 @@ dependencies = [
     "h5py",
     "pydantic",
     "pyyaml",
+    "colorama",
 ]
 
 [project.urls]
