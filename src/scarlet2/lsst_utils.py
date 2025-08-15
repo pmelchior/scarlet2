@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-import lsst.afw.geom as afwGeom
+import lsst.afw.geom as afw_geom
 import lsst.geom as geom
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,14 +30,14 @@ def warp_img(ref_img, img_to_warp, ref_wcs, wcs_to_warp):
         the wcs of the image to warp (i.e. img_to_warp.getWcs() )
     Returns
     -------
-    warpedExp: 'ExposureF'
+    warped_exp: 'ExposureF'
         a reprojected, rotated image that is aligned and matched to ref_image
     """
     config = RegisterConfig()
     task = RegisterTask(name="register", config=config)
-    warpedExp = task.warpExposure(img_to_warp, wcs_to_warp, ref_wcs, ref_img.getBBox())
+    warped_exp = task.warpExposure(img_to_warp, wcs_to_warp, ref_wcs, ref_img.getBBox())
 
-    return warpedExp
+    return warped_exp
 
 
 def read_cutout_mem(sq):
@@ -63,15 +63,16 @@ def read_cutout_mem(sq):
     return exposure
 
 
-def make_image_cutout(tap_service, ra, dec, dataId, cutout_size=0.01, imtype=None, filename=None):
+def make_image_cutout(tap_service, ra, dec, data_id, cutout_size=0.01, imtype=None):
     """Wrapper function to generate a cutout using the cutout tool
 
     Parameters
     ----------
-    tap_service : an instance of the TAP service
+    tap_service : `pyvo.dal.tap.TAPService`
+        the TAP service to use for querying the cutouts
     ra, dec : 'float'
         the ra and dec of the cutout center
-    dataId : 'dict'
+    data_id : 'dict'
         the dataId of the image to make a cutout from. The format
         must correspond to that provided for parameter 'imtype'
     cutout_size : 'float', optional
@@ -80,8 +81,6 @@ def make_image_cutout(tap_service, ra, dec, dataId, cutout_size=0.01, imtype=Non
         string containing the type of LSST image to generate
         a cutout of (e.g. deepCoadd, calexp). If imtype=None,
         the function will assume a deepCoadd.
-    filename : 'string', optional
-        filename of the resulting cutout (which has fits format)
 
     Returns
     -------
@@ -89,7 +88,7 @@ def make_image_cutout(tap_service, ra, dec, dataId, cutout_size=0.01, imtype=Non
         the cutout in exposureF format
     """
 
-    spherePoint = geom.SpherePoint(ra * geom.degrees, dec * geom.degrees)
+    sphere_point = geom.SpherePoint(ra * geom.degrees, dec * geom.degrees)
 
     if imtype == "calexp":
         query = (
@@ -99,20 +98,20 @@ def make_image_cutout(tap_service, ra, dec, dataId, cutout_size=0.01, imtype=Non
             + "AND obs_collection = 'LSST.DP02' "
             + "AND dataproduct_subtype = 'lsst.calexp' "
             + "AND lsst_visit = "
-            + str(dataId["visit"])
+            + str(data_id["visit"])
             + " "
             + "AND lsst_detector = "
-            + str(dataId["detector"])
+            + str(data_id["detector"])
         )
         results = tap_service.search(query)
 
     else:
         # Find the tract and patch that contain this point
-        tract = dataId["tract"]
-        patch = dataId["patch"]
+        tract = data_id["tract"]
+        patch = data_id["patch"]
 
-        # add optional default band if it is not contained in the dataId
-        band = dataId["band"]
+        # add optional default band if it is not contained in the data_id
+        band = data_id["band"]
 
         query = (
             "SELECT access_format, access_url, dataproduct_subtype, "
@@ -134,26 +133,21 @@ def make_image_cutout(tap_service, ra, dec, dataId, cutout_size=0.01, imtype=Non
         results = tap_service.search(query)
 
     # Get datalink
-    dataLinkUrl = results[0].getdataurl()
+    data_link_url = results[0].getdataurl()
     auth_session = tap_service._session
-    dl = DatalinkResults.from_result_url(dataLinkUrl, session=auth_session)
+    dl = DatalinkResults.from_result_url(data_link_url, session=auth_session)
 
     # from_resource: creates a instance from
     # a number of records and a Datalink Resource.
     sq = SodaQuery.from_resource(dl, dl.get_adhocservice_by_id("cutout-sync"), session=auth_session)
 
     sq.circle = (
-        spherePoint.getRa().asDegrees() * u.deg,
-        spherePoint.getDec().asDegrees() * u.deg,
+        sphere_point.getRa().asDegrees() * u.deg,
+        sphere_point.getDec().asDegrees() * u.deg,
         cutout_size * u.deg,
     )
 
     exposure = read_cutout_mem(sq)
-
-    # cutout_bytes = sq.execute_stream().read()
-    # mem = MemFileManager(len(cutout_bytes))
-    # mem.setData(cutout_bytes, len(cutout_bytes))
-    # exposure = ExposureF(mem)
 
     return exposure
 
@@ -170,8 +164,9 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service, plot_images=Fa
     service : `pyvo.dal.tap.TAPService`
         the TAP service to use for querying the cutouts
         i.e. the result from lsst.rsp.get_tap_service()
-    tempdir : 'str'
-        the temporary directory to write the cutouts to
+    plot_images : 'bool', optional
+        whether to plot the images as they are processed
+        (default is False)
 
     Returns
     -------
@@ -196,17 +191,17 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service, plot_images=Fa
     vmax = 300
 
     for i, src in enumerate(dia_src):
-        ccdvisitID = src["ccdVisitId"]
+        ccd_visit_id = src["ccdVisitId"]
         band = str(src["filterName"])
-        visit = str(ccdvisitID)[:-3]
-        detector = str(ccdvisitID)[-3:]
+        visit = str(ccd_visit_id)[:-3]
+        detector = str(ccd_visit_id)[-3:]
         visit = int(visit)
         detector = int(detector)
-        dataId_calexp = {"visit": visit, "detector": detector}
+        data_id_calexp = {"visit": visit, "detector": detector}
 
         if i == 0:
             img = make_image_cutout(
-                service, ra, dec, cutout_size=cutout_size, imtype="calexp", dataId=dataId_calexp
+                service, ra, dec, cutout_size=cutout_size, imtype="calexp", dataId=data_id_calexp
             )
             img_ref = img
             # no warping is needed for the reference
@@ -216,29 +211,38 @@ def dia_source_to_observations(cutout_size_pix, dia_src, service, plot_images=Fa
             wcs_ref = WCS(shifted_wcs.getFitsMetadata())
         else:
             img = make_image_cutout(
-                service, ra, dec, cutout_size=cutout_size * 50.0, imtype="calexp", dataId=dataId_calexp
+                service, ra, dec, cutout_size=cutout_size * 50.0, imtype="calexp", dataId=data_id_calexp
             )
             img_warped = warp_img(img_ref, img, img_ref.getWcs(), img.getWcs())
         im_arr = img_warped.image.array
         var_arr = img_warped.variance.array
-        N1, N2 = im_arr.shape
-        image_sc2 = im_arr.reshape(1, N1, N2)
-        N1, N2 = var_arr.shape
-        weight_sc2 = 1 / var_arr.reshape(1, N1, N2)
+
+        # reshape image array
+        n1, n2 = im_arr.shape
+        image_sc2 = im_arr.reshape(1, n1, n2)
+
+        # reshape variance array
+        n1, n2 = var_arr.shape
+        weight_sc2 = 1 / var_arr.reshape(1, n1, n2)
+
+        # other transformations
         point_tuple = (int(img_warped.image.array.shape[0] / 2), int(img_warped.image.array.shape[1] / 2))
         point_image = Point2D(point_tuple)
-        xyTransform = afwGeom.makeWcsPairTransform(img.wcs, img_warped.wcs)
-        psf_w = WarpedPsf(img.getPsf(), xyTransform)
+        xy_transform = afw_geom.makeWcsPairTransform(img.wcs, img_warped.wcs)
+        psf_w = WarpedPsf(img.getPsf(), xy_transform)
         point_tuple = (int(img_warped.image.array.shape[0] / 2), int(img_warped.image.array.shape[1] / 2))
         point_image = Point2D(point_tuple)
         psf_warped = psf_w.computeImage(point_image).convertF()
+
+        # filter out images with no overlapping data at point
         if np.sum(psf_warped.array) == 0:
             print("PSF model unavailable, skipping")
             continue
-        N1, N2 = psf_warped.array.shape
-        psf_sc2 = psf_warped.array.reshape(1, N1, N2)
-        # this is required to get the WCS, we should figure out a better
-        # way to do this without writing to disk
+
+        # reshape psf array
+        n1, n2 = psf_warped.array.shape
+        psf_sc2 = psf_warped.array.reshape(1, n1, n2)
+
         obs = scarlet2.Observation(
             jnp.array(image_sc2).astype(float),
             weights=jnp.array(weight_sc2).astype(float),
