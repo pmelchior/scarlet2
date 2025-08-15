@@ -1,6 +1,7 @@
 from functools import partial
+from unittest.mock import patch
 
-import numpy as np
+import jax.numpy as jnp
 import pytest
 from huggingface_hub import hf_hub_download
 from numpyro.distributions import constraints
@@ -12,6 +13,9 @@ from scarlet2.psf import ArrayPSF
 from scarlet2.scene import FitValidator, Scene
 from scarlet2.source import PointSource, Source
 from scarlet2.validation_utils import (
+    ValidationError,
+    ValidationInfo,
+    ValidationWarning,
     set_validation,
 )
 
@@ -31,39 +35,16 @@ def data_file():
     filename = hf_hub_download(
         repo_id="astro-data-lab/scarlet-test-data", filename="hsc_cosmos_35.npz", repo_type="dataset"
     )
-    return np.load(filename)
-
-
-# @pytest.fixture()
-# def bad_obs(data_file):
-#     """Create an observation that should fail multiple validation checks."""
-
-#     data = np.asarray(data_file["images"])
-#     channels = [str(f) for f in data_file["filters"]]
-#     weights = np.asarray(1 / data_file["variance"])
-#     psf = np.asarray(data_file["psfs"])
-
-#     weights = weights[:-1]  # Remove the last weight to create a mismatch in dimensions
-#     weights[0][0] = np.inf  # Set one weight to infinity
-#     weights[1][0] = -1.0  # Set one weight to a negative value
-#     psf = psf[:-1]  # Remove the last PSF to create a mismatch in dimensions
-#     psf = psf[0] + 0.001
-
-#     return Observation(
-#         data=data,
-#         weights=weights,
-#         channels=channels,
-#         psf=ArrayPSF(psf),
-#     )
+    return jnp.load(filename)
 
 
 @pytest.fixture()
 def good_obs(data_file):
     """Create an observation that should pass all validation checks."""
-    data = np.asarray(data_file["images"])
+    data = jnp.asarray(data_file["images"])
     channels = [str(f) for f in data_file["filters"]]
-    weights = np.asarray(1 / data_file["variance"])
-    psf = np.asarray(data_file["psfs"])
+    weights = jnp.asarray(1 / data_file["variance"])
+    psf = jnp.asarray(data_file["psfs"])
 
     return Observation(
         data=data,
@@ -77,7 +58,7 @@ def good_obs(data_file):
 def scene(good_obs, data_file):
     """Assemble a scene from the good observation and the data file."""
     model_frame = Frame.from_observations(good_obs)
-    centers = np.array([(src["y"], src["x"]) for src in data_file["catalog"]])  # Note: y/x convention!
+    centers = jnp.array([(src["y"], src["x"]) for src in data_file["catalog"]])  # Note: y/x convention!
 
     with Scene(model_frame) as scene:
         for i, center in enumerate(centers):
@@ -97,7 +78,7 @@ def scene(good_obs, data_file):
 
 
 @pytest.fixture()
-def parameters(scene):
+def parameters(scene, good_obs):
     """Create parameters for the scene."""
     spec_step = partial(relative_step, factor=0.05)
     morph_step = partial(relative_step, factor=1e-3)
@@ -124,13 +105,42 @@ def parameters(scene):
     return parameters
 
 
-@pytest.mark.skip(reason="This test is not implemented yet")
-def test_something(scene, parameters, good_obs):
-    """Placeholder test to ensure the scene can be fit."""
-    maxiter = 100
-    scene_ = scene.fit(good_obs, parameters, max_iter=maxiter, e_rel=1e-4, progress_bar=True)
+@pytest.mark.parametrize(
+    "mocked_chi_value,expected",
+    [
+        (0.1, ValidationInfo),
+        (2.0, ValidationWarning),
+        (10.0, ValidationError),
+    ],
+)
+def test_check_goodness_of_fit(scene, parameters, good_obs, mocked_chi_value, expected):
+    """Mocked goodness_of_fit return to produces the expected ValidationResult type"""
+    scene_ = scene.fit(good_obs, parameters, max_iter=1, e_rel=1e-4, progress_bar=True)
+
     checker = FitValidator(scene_, good_obs)
 
-    results = checker.check_goodness_of_fit()
+    with patch.object(type(good_obs), "goodness_of_fit", return_value=mocked_chi_value) as _:
+        results = checker.check_goodness_of_fit()
 
-    assert results
+    assert isinstance(results, expected)
+
+
+@pytest.mark.parametrize(
+    "mocked_chi_value,expected",
+    [
+        (0.1, ValidationInfo),
+        (2.0, ValidationWarning),
+        (10.0, ValidationError),
+    ],
+)
+def test_check_chi_squared_in_box_and_border(scene, parameters, good_obs, mocked_chi_value, expected):
+    """Mocked chi-squared evaluation in box and border."""
+
+    scene_ = scene.fit(good_obs, parameters, max_iter=1, e_rel=1e-4, progress_bar=True)
+    checker = FitValidator(scene_, good_obs)
+    mock_return = {0: {"in": mocked_chi_value, "out": mocked_chi_value}}
+
+    with patch.object(type(good_obs), "eval_chi_square_in_box_and_border", return_value=mock_return) as _:
+        results = checker.check_chi_square_in_box_and_border()
+
+    assert all(isinstance(res, expected) for res in results)
