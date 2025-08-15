@@ -1,6 +1,5 @@
 import numpy as np
 import pytest
-from huggingface_hub import hf_hub_download
 from scarlet2.observation import Observation, ObservationValidator
 from scarlet2.psf import ArrayPSF
 from scarlet2.validation_utils import ValidationError, ValidationInfo, set_validation
@@ -11,56 +10,6 @@ def setup_validation():
     """Automatically disable validation for all tests. This permits the creation
     of intentionally invalid Observation objects."""
     set_validation(False)
-
-
-@pytest.fixture()
-def data_file():
-    """Download and load a realistic test file. This is the same data used in the
-    quickstart notebook. The data will be manipulated to create invalid inputs for
-    the `bad_obs` fixture."""
-    filename = hf_hub_download(
-        repo_id="astro-data-lab/scarlet-test-data", filename="hsc_cosmos_35.npz", repo_type="dataset"
-    )
-    return np.load(filename)
-
-
-@pytest.fixture()
-def bad_obs(data_file):
-    """Create an observation that should fail multiple validation checks."""
-
-    data = np.asarray(data_file["images"])
-    channels = [str(f) for f in data_file["filters"]]
-    weights = np.asarray(1 / data_file["variance"])
-    psf = np.asarray(data_file["psfs"])
-
-    weights = weights[:-1]  # Remove the last weight to create a mismatch in dimensions
-    weights[0][0] = np.inf  # Set one weight to infinity
-    weights[1][0] = -1.0  # Set one weight to a negative value
-    psf = psf[:-1]  # Remove the last PSF to create a mismatch in dimensions
-    psf = psf[0] + 0.001
-
-    return Observation(
-        data=data,
-        weights=weights,
-        channels=channels,
-        psf=ArrayPSF(psf),
-    )
-
-
-@pytest.fixture()
-def good_obs(data_file):
-    """Create an observation that should pass all validation checks."""
-    data = np.asarray(data_file["images"])
-    channels = [str(f) for f in data_file["filters"]]
-    weights = np.asarray(1 / data_file["variance"])
-    psf = np.asarray(data_file["psfs"])
-
-    return Observation(
-        data=data,
-        weights=weights,
-        channels=channels,
-        psf=ArrayPSF(psf),
-    )
 
 
 def test_weights_non_negative_returns_error(bad_obs):

@@ -1,14 +1,10 @@
-from functools import partial
-
+import jax.numpy as jnp
 import numpy as np
 import pytest
-from huggingface_hub import hf_hub_download
 from numpyro.distributions import constraints
 from scarlet2 import init
 from scarlet2.frame import Frame
-from scarlet2.module import Parameter, relative_step
-from scarlet2.observation import Observation
-from scarlet2.psf import ArrayPSF
+from scarlet2.module import Parameter
 from scarlet2.scene import Scene, SceneValidator
 from scarlet2.source import PointSource, Source
 from scarlet2.validation_utils import (
@@ -27,60 +23,10 @@ def setup_validation():
 
 
 @pytest.fixture()
-def data_file():
-    """Download and load a realistic test file. This is the same data used in the
-    quickstart notebook. The data will be manipulated to create invalid inputs for
-    the `bad_obs` fixture."""
-    filename = hf_hub_download(
-        repo_id="astro-data-lab/scarlet-test-data", filename="hsc_cosmos_35.npz", repo_type="dataset"
-    )
-    return np.load(filename)
-
-
-@pytest.fixture()
-def bad_obs(data_file):
-    """Create an observation that should fail multiple validation checks."""
-
-    data = np.asarray(data_file["images"])
-    channels = [str(f) for f in data_file["filters"]]
-    weights = np.asarray(1 / data_file["variance"])
-    psf = np.asarray(data_file["psfs"])
-
-    weights = weights[:-1]  # Remove the last weight to create a mismatch in dimensions
-    weights[0][0] = np.inf  # Set one weight to infinity
-    weights[1][0] = -1.0  # Set one weight to a negative value
-    psf = psf[:-1]  # Remove the last PSF to create a mismatch in dimensions
-    psf = psf[0] + 0.001
-
-    return Observation(
-        data=data,
-        weights=weights,
-        channels=channels,
-        psf=ArrayPSF(psf),
-    )
-
-
-@pytest.fixture()
-def good_obs(data_file):
-    """Create an observation that should pass all validation checks."""
-    data = np.asarray(data_file["images"])
-    channels = [str(f) for f in data_file["filters"]]
-    weights = np.asarray(1 / data_file["variance"])
-    psf = np.asarray(data_file["psfs"])
-
-    return Observation(
-        data=data,
-        weights=weights,
-        channels=channels,
-        psf=ArrayPSF(psf),
-    )
-
-
-@pytest.fixture()
 def full_overlap_scene(good_obs, data_file):
     """Assemble a scene from the good observation and the data file."""
     model_frame = Frame.from_observations(good_obs)
-    centers = np.array([(src["y"], src["x"]) for src in data_file["catalog"]])  # Note: y/x convention!
+    centers = jnp.array([(src["y"], src["x"]) for src in data_file["catalog"]])  # Note: y/x convention!
 
     with Scene(model_frame) as scene:
         spectrum = init.pixel_spectrum(good_obs, centers[0], correct_psf=True)
@@ -115,57 +61,30 @@ def no_overlap_scene(good_obs):
 
 
 @pytest.fixture()
-def parameters(full_overlap_scene, good_obs):
-    """Create parameters for the scene."""
-    spec_step = partial(relative_step, factor=0.05)
-    morph_step = partial(relative_step, factor=1e-3)
+def bad_parameters(scene, good_obs):
+    """Create faulty parameters for a scene. Namely 1) stepsize=None and no prior
+    is defined. 2) stepsize and prior both explicitly = None."""
 
-    parameters = full_overlap_scene.make_parameters()
-    for i in range(len(full_overlap_scene.sources)):
+    parameters = scene.make_parameters()
+    for i in range(len(scene.sources)):
         parameters += Parameter(
-            full_overlap_scene.sources[i].spectrum,
-            name=f"spectrum:{i}",
-            constraint=constraints.positive,
-            stepsize=spec_step,
-        )
-        if i == 0:
-            parameters += Parameter(full_overlap_scene.sources[i].center, name=f"center:{i}", stepsize=0.1)
-        else:
-            parameters += Parameter(
-                full_overlap_scene.sources[i].morphology,
-                name=f"morph:{i}",
-                constraint=constraints.unit_interval,
-                stepsize=morph_step,
-            )
-
-    full_overlap_scene.set_spectra_to_match(good_obs, parameters)
-    return parameters
-
-
-@pytest.fixture()
-def bad_parameters(full_overlap_scene, good_obs):
-    """Create faulty parameters for a scene."""
-
-    parameters = full_overlap_scene.make_parameters()
-    for i in range(len(full_overlap_scene.sources)):
-        parameters += Parameter(
-            full_overlap_scene.sources[i].spectrum,
+            scene.sources[i].spectrum,
             name=f"spectrum:{i}",
             constraint=constraints.positive,
             stepsize=None,
         )
         if i == 0:
-            parameters += Parameter(full_overlap_scene.sources[i].center, name=f"center:{i}", stepsize=0.1)
+            parameters += Parameter(scene.sources[i].center, name=f"center:{i}", stepsize=0.1)
         else:
             parameters += Parameter(
-                full_overlap_scene.sources[i].morphology,
+                scene.sources[i].morphology,
                 name=f"morph:{i}",
                 constraint=constraints.unit_interval,
                 stepsize=None,
                 prior=None,
             )
 
-    full_overlap_scene.set_spectra_to_match(good_obs, parameters)
+    scene.set_spectra_to_match(good_obs, parameters)
     return parameters
 
 
