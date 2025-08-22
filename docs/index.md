@@ -33,6 +33,7 @@ optimizer/sampler. If you want a fully fledged library out of the box, you need 
 
 0-quickstart
 1-howto
+2-validation
 api
 ```
 
