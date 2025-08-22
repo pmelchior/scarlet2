@@ -550,22 +550,13 @@ class FitValidator(metaclass=ValidationMethodCollector):
 
     def check_goodness_of_fit(self) -> ValidationResult:
         """Evaluate the goodness of the model fit to the data by calling the Observation
-        class's `goodness_of_fit` method.
-
-        For a Gaussian noise model, the gof is defined as the averaged squared deviation of the model from the
-        data, scaled by the variance of the data, aka mean chi squared
-        :math:`\frac{1}{N}\\sum_i=1^N w_i (m_i - d_i)^2` with inverse variance weights :math:`w_i`.
-
-        Up to a normalization, the gof is identical to :py:class:`~scarlet2.Observation.log-likelihood`.
-
-        Parameters
-        ----------
-        model: array
-            The (pre-rendered) predicted data cube, typically from evaluating :py:class:`~scarlet2.Scene`
+        class's `goodness_of_fit` method. Please see the docstring for that method
+        for details.
 
         Returns
         -------
-        float
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
         """
         obs = self.observation
 
@@ -592,9 +583,10 @@ class FitValidator(metaclass=ValidationMethodCollector):
 
         Returns
         -------
-        None or ValidationError
-            If the chi-square is above the tolerable threshold, returns a ValidationError.
-            Otherwise, returns None.
+        ValidationResult
+            If the chi-square is above the critical threshold, returns a ValidationError.
+            If the chi-square is below the tolerable threshold, returns a ValidationInfo.
+            If the chi-square is between the two thresholds, returns a ValidationWarning.
         """
         obs = self.observation
 

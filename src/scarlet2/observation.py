@@ -252,8 +252,8 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
 
         Returns
         -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
         """
         if self.observation.weights is not None and (self.observation.weights < 0).any():
             return ValidationError(
@@ -272,8 +272,8 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
 
         Returns
         -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
         """
         if self.observation.weights is not None and jnp.isinf(self.observation.weights).any():
             return ValidationError(
@@ -292,8 +292,8 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
 
         Returns
         -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
         """
         if (
             self.observation.weights is not None
@@ -322,8 +322,8 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
 
         Returns
         -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
         """
         num_channels = len(self.observation.frame.channels)
         if num_channels != self.observation.data.shape[0]:
@@ -347,8 +347,8 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
 
         Returns
         -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
         """
         if self.observation.weights is not None and self.observation.data is not None:
             # Mask self.observation.data where self.observation.weights is 0
@@ -378,8 +378,8 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
 
         Returns
         -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
         """
         if self.observation.frame.psf is not None:
             psf = self.observation.frame.psf()
@@ -408,8 +408,8 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
 
         Returns
         -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
         """
         return_value: ValidationResult = ValidationInfo(
             message="Number of PSF channels matches the number of data channels.",
@@ -445,8 +445,8 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
 
         Returns
         -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
         """
         return_value: ValidationResult = ValidationInfo(
             message="PSF centroid is consistent across channels.",
