@@ -7,6 +7,7 @@ def test_validate_model(example_questionnaire_dict):
     """Test that the Questionnaire model validates correctly."""
     questionnaire = Questionnaire.model_validate(example_questionnaire_dict)
     assert questionnaire.initial_template == "{{code}}"
+    assert questionnaire.initial_commentary == "This is an example commentary."
     assert len(questionnaire.questions) == 1
     question = questionnaire.questions[0]
     assert question.question == "Example question?"

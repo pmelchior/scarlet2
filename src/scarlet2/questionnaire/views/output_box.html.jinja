@@ -1,0 +1,12 @@
+<div class="code-output">
+    {{highlighted_code | safe}}
+    <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
+        <button onclick='navigator.clipboard.writeText({{ raw_code | tojson | safe }})'
+                class="copy_button">
+            📋 Copy
+        </button>
+    </div>
+</div>
+<div class="commentary-box">
+    {{commentary_html | safe}}
+</div>
