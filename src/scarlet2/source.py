@@ -270,8 +270,8 @@ class SourceValidator(metaclass=ValidationMethodCollector):
 
         Returns
         -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
         """
         model = self.source()
         if jnp.any(model < 0):
