@@ -583,14 +583,13 @@ class FitValidator(metaclass=ValidationMethodCollector):
 
         Returns
         -------
-        ValidationResult
-            If the chi-square is above the critical threshold, returns a ValidationError.
-            If the chi-square is below the tolerable threshold, returns a ValidationInfo.
         list[ValidationResult]
-            A list of ValidationResult subclasses for each source. For each source:
-            - If the chi-square is above the critical threshold, returns a ValidationError.
-            - If the chi-square is below the tolerable threshold, returns a ValidationInfo.
-            - If the chi-square is between the two thresholds, returns a ValidationWarning.
+            A list of ValidationResult subclasses for each source. For each source
+            there will be two results. One for inside the bounding box and one
+            for the border. The ValidationResults will each be one of the following:
+            - If the chi-square is above the critical threshold, a ValidationError.
+            - If the chi-square is below the tolerable threshold, a ValidationInfo.
+            - If the chi-square is between the two thresholds, a ValidationWarning.
         """
         obs = self.observation
 
