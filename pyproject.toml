@@ -32,6 +32,7 @@ dependencies = [
     "colorama",
     "markdown",
     "pygments",
+    "jinja2"
 ]
 
 [project.urls]
@@ -58,9 +59,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools_scm]
 write_to = "src/scarlet2/_version.py"
-
-[tool.setuptools.package-data]
-"scarlet2.questionnaire" = ["questions.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = [

@@ -6,6 +6,7 @@ def example_questionnaire_dict():
     """An example questionnaire dictionary"""
     return {
         "initial_template": "{{code}}",
+        "initial_commentary": "This is an example commentary.",
         "questions": [
             {
                 "question": "Example question?",

@@ -34,4 +34,5 @@ class Questionnaire(BaseModel):
     """Represents a questionnaire with an initial template and a list of questions."""
 
     initial_template: str
+    initial_commentary: str = ""
     questions: list[Question]

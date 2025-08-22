@@ -1,6 +1,7 @@
 from importlib.resources import files
 import re
 
+import jinja2
 import markdown
 import yaml
 from ipywidgets import VBox, HBox, Button, Label, HTML, Layout
@@ -12,8 +13,12 @@ from pygments.formatters import HtmlFormatter
 from scarlet2.questionnaire.models import Template, Questionnaire
 
 
-FILE_PACKAGE_PATH = "scarlet2.questionnaire"
-FILE_NAME = "questions.yaml"
+PACKAGE_PATH = "scarlet2.questionnaire"
+QUESTIONS_FILE_NAME = "questions.yaml"
+
+VIEWS_PACKAGE_PATH = "scarlet2.questionnaire.views"
+OUTPUT_BOX_TEMPLATE_FILE = "output_box.html.jinja"
+OUTPUT_BOX_STYLE_FILE = "output_box.css"
 
 
 QUESTION_BOX_LAYOUT = Layout(
@@ -34,7 +39,7 @@ class QuestionnaireWidget:
     def __init__(self, questionnaire):
         self.questions = questionnaire.questions
         self.code_output = questionnaire.initial_template
-        self.commentary = ""
+        self.commentary = questionnaire.initial_commentary
 
         self._init_questions()
         self._init_ui()
@@ -49,7 +54,7 @@ class QuestionnaireWidget:
 
     def _init_ui(self):
         self.output_container = HTML()
-        self.question_box = VBox(layout=QUESTION_BOX_LAYOUT)
+        self.question_box = VBox([], layout=QUESTION_BOX_LAYOUT)
         self.output_box = VBox([self.output_container], layout=OUTPUT_BOX_LAYOUT)
 
         self.ui = HBox([self.question_box, self.output_box])
@@ -63,16 +68,11 @@ class QuestionnaireWidget:
         self._render_question_box()
 
     def _render_question_box(self):
-        previous_qs = [HTML(f"<div style='background_color: #111'><span style='color: #888; padding-right: 10px'>{q.question}</span><span style='color: #555'>{a.answer}</span></div>") for q, a in self.question_answers]
+        previous_qs = self._generate_previous_questions()
 
         if self.current_question is None:
-            return VBox(previous_qs + [Label("🎉 You're done!")], layout=Layout(
-            padding="12px",
-            backgroundColor="#f9f9f9",
-            border="1px solid #ddd",
-            borderRadius="10px",
-            width="45%",
-        ))
+            self.question_box.children = previous_qs + [Label("🎉 You're done!")]
+            return
 
         q_label = HTML(f"<b>{self.current_question.question}</b>")
 
@@ -82,7 +82,6 @@ class QuestionnaireWidget:
                 description=answer.answer,
                 tooltip=answer.tooltip,
                 layout=Layout(width="auto", margin="4px 0"),
-                button_style="",
             )
 
             def on_click_handler(btn, index=i):
@@ -94,6 +93,9 @@ class QuestionnaireWidget:
 
         self.question_box.children = previous_qs + [q_label] + buttons
 
+    def _generate_previous_questions(self):
+        return [HTML(f"<div style='background_color: #111'><span style='color: #888; padding-right: 10px'>{q.question}</span><span style='color: #555'>{q.answers[ans_ind].answer}</span></div>") for q, ans_ind in self.question_answers]
+
     def _handle_answer(self, answer_index):
         answer = self.current_question.answers[answer_index]
 
@@ -101,7 +103,7 @@ class QuestionnaireWidget:
         self.commentary = answer.commentary
         self._render_output_box()
 
-        self.questions_stack = answer.followups + self.questions_stack
+        self._add_questions_to_stack(answer.followups)
         self.question_answers.append((self.current_question, answer_index))
         self._render_next_question()
 
@@ -111,57 +113,29 @@ class QuestionnaireWidget:
             self.code_output = re.sub(pattern, t.code, self.code_output)
 
     def _render_output_box(self):
-        output_code = re.sub(r"\{\{.*?\}\}", "", self.code_output)
-        commentary_text = markdown.markdown(self.commentary, extensions=["extra"])
-        commentary_text = re.sub(
-            r'<a href="(.*?)">',
-            r'<a href="\1" target="_blank" style="color:#0366d6; text-decoration:underline;">',
-            commentary_text
-        )
+        output_code = re.sub(r"\{\{\s*\w+\s*\}\}", "", self.code_output)
+        commentary_html = markdown.markdown(self.commentary, extensions=["extra"])
 
         formatter = HtmlFormatter(style="monokai", noclasses=True)
         highlighted_code = highlight(output_code, PythonLexer(), formatter)
 
-        escaped_code = output_code.replace("\\", "\\\\").replace("`", "\\`")
+        # Load Jinja template
+        template_file = files(VIEWS_PACKAGE_PATH).joinpath(OUTPUT_BOX_TEMPLATE_FILE)
+        with template_file.open("r") as f:
+            template_source = f.read()
+        template = jinja2.Template(template_source)
 
-        html_content = f"""
-        <div style="
-            background-color: #272822;
-            color: #f1f1f1;
-            padding: 10px;
-            border-radius: 10px;
-            border: 1px solid #444;
-            font-family: monospace;
-            overflow-x: auto;
-        ">
-            {highlighted_code}
-            <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
-                <button onclick="navigator.clipboard.writeText(`{escaped_code}`)"
-                    style="
-                        font-size: 12px;
-                        padding: 4px 8px;
-                        background-color: #272822;
-                        color: white;
-                        border: none;
-                        border-radius: 4px;
-                        cursor: pointer;
-                    ">
-                    📋 Copy
-                </button>
-            </div>
-        </div>
-        <div style="
-        background-color: #f6f8fa;
-        color: #333;
-        padding: 8px 12px;
-        border-left: 4px solid #0366d6;
-        border-radius: 6px;
-        font-size: 14px;
-        font-family: sans-serif;
-    ">
-        {commentary_text}
-    </div>
-        """
+        # Load additional CSS for styling
+        css_file = files(VIEWS_PACKAGE_PATH).joinpath(OUTPUT_BOX_STYLE_FILE)
+        with css_file.open("r") as f:
+            css_content = f.read()
+
+        html_content = f"<style>{css_content}</style>\n" + template.render(
+            highlighted_code=highlighted_code,
+            raw_code=output_code,
+            commentary_html=commentary_html,
+        )
+
         self.output_container.value = html_content
 
     def show(self):
@@ -174,7 +148,7 @@ def load_questions() -> Questionnaire:
     Returns:
         Questionnaire: The loaded questionnaire model.
     """
-    questions_path = files(FILE_PACKAGE_PATH).joinpath(FILE_NAME)
+    questions_path = files(PACKAGE_PATH).joinpath(QUESTIONS_FILE_NAME)
     with questions_path.open("r") as f:
         raw = yaml.safe_load(f)
         return Questionnaire.model_validate(raw)
