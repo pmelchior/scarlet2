@@ -1,8 +1,3 @@
-# To be removed as part of issue #169
-# ruff: noqa: D101
-# ruff: noqa: D102
-# ruff: noqa: D103
-
 """Plotting functions"""
 
 from abc import ABC, abstractmethod
@@ -131,6 +126,8 @@ class Norm(ABC):
 
 
 class LinearNorm(Norm):
+    """Class for linear normalization"""
+
     def __init__(self, minimum, maximum):
         """Linear norm, mapping the interval [`minimum`, `maximum`] to [0,1]
 
@@ -145,10 +142,13 @@ class LinearNorm(Norm):
         super().__init__()
 
     def __call__(self, im):
+        """Compute linear normalized image"""
         return self.clip(im, self.min_value, self.max_value) / (self.max_value - self.min_value)
 
 
 class LinearPercentileNorm(LinearNorm):
+    """Class for linear normalization based on percentiles"""
+
     def __init__(self, img, percentiles=(1, 99)):
         """Norm that is linear between the two elements of `percentiles` of `img`
 
@@ -250,6 +250,8 @@ class AsinhPercentileNorm(AsinhNorm):
 
 
 class AsinhAutomaticNorm(AsinhNorm):
+    """AsinhAutomaticNorm class"""
+
     def __init__(
         self,
         observation,
@@ -595,6 +597,7 @@ def cut_square_box(arr, center, size):
 
 @jax.grad
 def neural_grad(galaxy, src):
+    """Calculate the gradient of the neural network"""
     parameters = src.get_parameters(return_info=True)
     prior = 2 * sum(
         info["prior"].log_prob(galaxy) for name, (p, info) in parameters.items() if info["prior"] is not None
@@ -603,6 +606,7 @@ def neural_grad(galaxy, src):
 
 
 def log_like(morph, spectrum, data, weights):
+    """Calculate the log-likelihood of the model given the data"""
     model = morph[None, :, :] * spectrum[:, None, None]
     d = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(weights == 0)
     log_norm = d / 2 * jnp.log(2 * jnp.pi)
@@ -618,11 +622,13 @@ def log_like(morph, spectrum, data, weights):
 
 # for regular functions f
 def hvp(f, primals, tangents):
+    """Calculate the Hessian-vector product of a function f"""
     return jvp(grad(f), primals, tangents)[1]
 
 
 # for score functions
 def hvp_grad(grad_f, primals, tangents):
+    """Calculate the Hessian-vector product of a gradient function grad_f"""
     return jvp(grad_f, primals, tangents)[1]
 
 
