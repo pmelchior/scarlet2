@@ -1,31 +1,88 @@
 # Validation
 
-## Automatic validation
-There are validation checks that run automatically at various points in a ``scarlet2``
-workflow.
-* Observation class checks
-* Scene class checks
-* Scene.fit output checks
-* Source class checks
+## User guide - Automatic validation
+Working with ``scarlet2`` provides users significant freedom when working with
+``Observation``, ``Source`` and ``Scene`` objects.
+In an attempt to provide guidance without restriction, we've implemented
+a suite of validation checks that will run automatically at various points in a
+``scarlet2`` workflow.
 
-All the validation checks are enabled by default, they run quickly, so there is
-minimal time penalty for leaving them on by default.
+> Note: These validation checks are designed to be efficient.
+> If a validation check is performing poorly, please let us know by creating a
+> [GitHub issue](https://github.com/pmelchior/scarlet2/issues) explaining what you're
+> experiencing. 
 
-Three tiers Info, Warn, Error. When validation runs, every check will return some result.
-The results are written out as log lines.
-None of the results of validation checks will cause the program to halt.
-i.e. even a ValidationError will not cause the execution of ``scarlet2`` to stop.
+Currently automatic validation occurs when:
+* An instance of the ``Observation`` class is created
+* An instance of the ``Source`` class is created
+* A user calls ``Scene.fit()``
 
-If you want to turn off automatic validation, run: 
+
+### Validation results
+Every individual validation check will return at least one ``ValidationResult``
+object which will one of the following types: Info, Warning, or Error.
+All of the results will be printed along with information about the results of
+the check.
+
+Below is an example screen shot from a jupyter notebook showing the creation of
+a ``Observation`` object. All the checks returned ``ValidationInfo`` results with
+the exception of the last, which returned a ``ValidationError``.
+
+![Automatic validation after creating an Observation object.](_static/example_obs_validation.png)
+
+> Note: Validation checks will NEVER cause the program to halt.
+> i.e. Even a ``ValidationError`` will not stop the execution of ``scarlet2``.
+
+### Toggling automatic validation checks
+Automatic validation checks are enabled by default, and because the results of
+validation checks will not halt the program, it is generally fine to leave them
+enabled.
+
+However, if you're running ``scarlet2`` in a way that the logged output of
+validation checks won't be seen, or you feel that the checks are bothersome, they
+can be togged as shown here:
+
 ```
-set_validation=False
+from scarlet2.validation_utils import set_validation
+
+# turn off automatic validation checks
+set_validation(False)
+
+# turn on automatic validation checks
+set_validation(True)
 ```
 
-If you would like to run validation checks manually, use one of the following:
+> Note: Turning off validation is not persistent. i.e. restarting ``scarlet2``
+> will re-enable automatic validation.
+
+### Running validation checks manually
+If automatic checks are disabled, or you would like to run validation checks
+manually, the following functions are available:
+
 * ``check_fit(scene, observation)``
 * ``check_observation(observation)``
 * ``check_scene(scene, observation, parameters)``
 * ``check_source(source)``
+
+To nicely print the validation results, you can use the `print_validation_results`
+function. An example of using ``check_observation`` to run Observation validation
+checks together with `print_validation_results` to view the results would look
+like this:
+
+```
+from scarlet2.validation import check_observation
+from scarlet2.validation_utils import print_validation_results
+
+# Assuming the automatic validation is toggled off, we'll create an Observation
+observation = Observation(...)
+
+# Run the Observation validation checks
+validation_results = check_observation(observation)
+
+# Pretty-print the results
+print_validation_results(validation_results)
+```
+
 
 ## Dev guide - Implementing validation checks
 The goal of the validation checks is to provide guidance for users as they work with ``scarlet2``.
