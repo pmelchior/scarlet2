@@ -10,8 +10,7 @@ from pygments import highlight
 from pygments.lexers import PythonLexer
 from pygments.formatters import HtmlFormatter
 
-from scarlet2.questionnaire.models import Template, Questionnaire
-
+from scarlet2.questionnaire.models import Template, Questionnaire, Question
 
 PACKAGE_PATH = "scarlet2.questionnaire"
 QUESTIONS_FILE_NAME = "questions.yaml"
@@ -36,7 +35,7 @@ OUTPUT_BOX_LAYOUT = Layout(
 
 
 class QuestionnaireWidget:
-    def __init__(self, questionnaire):
+    def __init__(self, questionnaire: Questionnaire):
         self.questions = questionnaire.questions
         self.code_output = questionnaire.initial_template
         self.commentary = questionnaire.initial_commentary
@@ -44,6 +43,7 @@ class QuestionnaireWidget:
         self._init_questions()
         self._init_ui()
 
+        self._render_output_box()
         self._render_next_question()
 
     def _init_questions(self):
@@ -59,11 +59,10 @@ class QuestionnaireWidget:
 
         self.ui = HBox([self.question_box, self.output_box])
 
-    def _add_questions_to_stack(self, questions):
+    def _add_questions_to_stack(self, questions: list[Question]):
         self.questions_stack = questions + self.questions_stack
 
     def _render_next_question(self):
-        # Custom styled HTML container for right panel
         self.current_question = self.questions_stack.pop(0) if len(self.questions_stack) > 0 else None
         self._render_question_box()
 
@@ -94,9 +93,18 @@ class QuestionnaireWidget:
         self.question_box.children = previous_qs + [q_label] + buttons
 
     def _generate_previous_questions(self):
-        return [HTML(f"<div style='background_color: #111'><span style='color: #888; padding-right: 10px'>{q.question}</span><span style='color: #555'>{q.answers[ans_ind].answer}</span></div>") for q, ans_ind in self.question_answers]
+        children = []
+        for q, ans_ind in self.question_answers:
+            html_str = f"""
+            <div style="background_color: #111">
+                <span style="color: #888; padding-right: 10px;">{q.question}</span>
+                <span style="color: #555;">{q.answers[ans_ind].answer}</span>
+            </div>
+            """
+            children.append(HTML(html_str))
+        return children
 
-    def _handle_answer(self, answer_index):
+    def _handle_answer(self, answer_index: int):
         answer = self.current_question.answers[answer_index]
 
         self._update_template(answer.templates)
