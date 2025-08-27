@@ -2,7 +2,7 @@ from scarlet2.questionnaire import QuestionnaireWidget
 
 
 def test_questionnaire_widget_init(example_questionnaire, helpers):
-
+    """Test that the widget initializes correctly with the example questionnaire."""
     widget = QuestionnaireWidget(example_questionnaire)
     assert widget.questions == example_questionnaire.questions
     assert widget.code_output == example_questionnaire.initial_template
@@ -23,30 +23,12 @@ def test_questionnaire_show(example_questionnaire, mocker):
     widget.show()
 
     from scarlet2.questionnaire.questionnaire import display
+
     display.assert_called_once_with(widget.ui)
 
 
 def test_questionnaire_handle_answer_selection(example_questionnaire, helpers):
-    widget = QuestionnaireWidget(example_questionnaire)
-
-    first_question = example_questionnaire.questions[0]
-    first_answer = first_question.answers[0]
-    first_button = widget.question_box.children[1]  # First button after question label
-
-    first_button.click()
-
-    assert widget.code_output == "example_code {{follow}}"
-    assert widget.commentary == "This is some commentary."
-
-    assert widget.question_answers == [(first_question, 0)]
-
-    assert widget.current_question == first_answer.followups[0]
-    assert widget.questions_stack == first_answer.followups[1:] + example_questionnaire.questions[1:]
-
-    helpers.assert_widget_ui_matches_state(widget)
-
-
-def test_questionnaire_handle_answer_selection(example_questionnaire, helpers):
+    """Test that selecting an answer updates the widget correctly."""
     widget = QuestionnaireWidget(example_questionnaire)
 
     first_question = example_questionnaire.questions[0]
@@ -67,6 +49,7 @@ def test_questionnaire_handle_answer_selection(example_questionnaire, helpers):
 
 
 def test_questionnaire_complete_all_questions(example_questionnaire, helpers):
+    """Test completing the entire questionnaire."""
     widget = QuestionnaireWidget(example_questionnaire)
 
     answer_inds = [0, 1, 0, 0]
@@ -81,12 +64,12 @@ def test_questionnaire_complete_all_questions(example_questionnaire, helpers):
     for i, ans_ind in enumerate(answer_inds):
         current_question = widget.current_question
         assert current_question == expected_questions[i]
-        assert widget.question_answers == list(zip(expected_questions[:i], answer_inds[:i]))
+        assert widget.question_answers == list(zip(expected_questions[:i], answer_inds[:i], strict=False))
         helpers.assert_widget_ui_matches_state(widget)
 
         button = widget.question_box.children[i + 1 + ans_ind]
         button.click()
 
     assert widget.current_question is None
-    assert widget.question_answers == list(zip(expected_questions, answer_inds))
+    assert widget.question_answers == list(zip(expected_questions, answer_inds, strict=False))
     helpers.assert_widget_ui_matches_state(widget)

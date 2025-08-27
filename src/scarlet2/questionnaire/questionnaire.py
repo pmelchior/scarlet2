@@ -1,16 +1,16 @@
-from importlib.resources import files
 import re
+from importlib.resources import files
 
 import jinja2
 import markdown
 import yaml
-from ipywidgets import VBox, HBox, Button, Label, HTML, Layout
 from IPython.display import display
+from ipywidgets import HTML, Button, HBox, Label, Layout, VBox
 from pygments import highlight
-from pygments.lexers import PythonLexer
 from pygments.formatters import HtmlFormatter
+from pygments.lexers import PythonLexer
 
-from scarlet2.questionnaire.models import Template, Questionnaire, Question
+from scarlet2.questionnaire.models import Question, Questionnaire, Template
 
 PACKAGE_PATH = "scarlet2.questionnaire"
 QUESTIONS_FILE_NAME = "questions.yaml"
@@ -35,6 +35,8 @@ OUTPUT_BOX_LAYOUT = Layout(
 
 
 class QuestionnaireWidget:
+    """A widget to run an interactive questionnaire in a Jupyter notebook."""
+
     def __init__(self, questionnaire: Questionnaire):
         self.questions = questionnaire.questions
         self.code_output = questionnaire.initial_template
@@ -147,6 +149,7 @@ class QuestionnaireWidget:
         self.output_container.value = html_content
 
     def show(self):
+        """Display the widget in a Jupyter notebook."""
         display(self.ui)
 
 
@@ -163,6 +166,15 @@ def load_questions() -> Questionnaire:
 
 
 def run_questionnaire():
+    """Run the Scarlet2 initialization questionnaire in a Jupyter notebook.
+
+    The questionnaire guides the user through a series of questions to set up
+    the initialization of a Scarlet2 project that fits their use case.
+
+    The user will be presented with questions and multiple-choice answers, and
+    at the end of the questionnaire, a code snippet that can be used as a
+    template for initializing Scarlet2 will be generated.
+    """
     questions = load_questions()
     app = QuestionnaireWidget(questions)
     app.show()

@@ -2,16 +2,18 @@ import json
 import re
 from importlib.resources import files
 
+from ipywidgets import HTML, Button, HBox, Label, VBox
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.python import PythonLexer
 from pytest import fixture
-
-from ipywidgets import HTML, HBox, VBox, Button, Label
-
 from scarlet2.questionnaire.models import Questionnaire
-from scarlet2.questionnaire.questionnaire import OUTPUT_BOX_LAYOUT, QUESTION_BOX_LAYOUT, VIEWS_PACKAGE_PATH, \
-    OUTPUT_BOX_STYLE_FILE
+from scarlet2.questionnaire.questionnaire import (
+    OUTPUT_BOX_LAYOUT,
+    OUTPUT_BOX_STYLE_FILE,
+    QUESTION_BOX_LAYOUT,
+    VIEWS_PACKAGE_PATH,
+)
 
 
 @fixture
@@ -35,15 +37,22 @@ def example_questionnaire_dict():
                                     {
                                         "answer": "Follow-up answer",
                                         "tooltip": "This is a follow-up tooltip.",
-                                        "templates": [{"replacement": "follow", "code": "followup_code\n{{code}}"}],
+                                        "templates": [
+                                            {"replacement": "follow", "code": "followup_code\n{{code}}"}
+                                        ],
                                         "followups": [],
                                         "commentary": "",
                                     },
                                     {
                                         "answer": "Second follow-up answer",
                                         "tooltip": "This is a second follow-up tooltip.",
-                                        "templates": [{"replacement": "follow", "code": "second_followup_code\n{{code}}"}],
-                                    }
+                                        "templates": [
+                                            {
+                                                "replacement": "follow",
+                                                "code": "second_followup_code\n{{code}}",
+                                            }
+                                        ],
+                                    },
                                 ],
                             },
                             {
@@ -54,7 +63,7 @@ def example_questionnaire_dict():
                                         "templates": [],
                                     }
                                 ],
-                            }
+                            },
                         ],
                         "commentary": "This is some commentary.",
                     },
@@ -78,18 +87,23 @@ def example_questionnaire_dict():
                         "commentary": "Next commentary.",
                     }
                 ],
-            }
+            },
         ],
     }
 
+
 @fixture
 def example_questionnaire(example_questionnaire_dict):
+    """An example Questionnaire model instance"""
     return Questionnaire.model_validate(example_questionnaire_dict)
 
+
 class Helpers:
+    """Helper functions for testing the QuestionnaireWidget"""
 
     @staticmethod
     def assert_widget_ui_matches_state(widget):
+        """Assert that the widget's UI matches its internal state."""
         assert isinstance(widget.ui, HBox)
         assert widget.ui.children == (widget.question_box, widget.output_box)
 
@@ -144,7 +158,9 @@ class Helpers:
             assert isinstance(widget.question_box.children[qs_ind], HTML)
             assert widget.current_question.question in widget.question_box.children[qs_ind].value
 
-            for btn, ans in zip(widget.question_box.children[qs_ind + 1:], widget.current_question.answers):
+            for btn, ans in zip(
+                widget.question_box.children[qs_ind + 1 :], widget.current_question.answers, strict=False
+            ):
                 assert isinstance(btn, Button)
                 assert btn.description == ans.answer
                 assert btn.tooltip == ans.tooltip
@@ -156,4 +172,5 @@ class Helpers:
 
 @fixture
 def helpers():
+    """Provide helper functions for testing."""
     return Helpers()
