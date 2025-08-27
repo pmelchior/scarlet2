@@ -8,15 +8,15 @@ def test_validate_model(example_questionnaire_dict):
     questionnaire = Questionnaire.model_validate(example_questionnaire_dict)
     assert questionnaire.initial_template == "{{code}}"
     assert questionnaire.initial_commentary == "This is an example commentary."
-    assert len(questionnaire.questions) == 1
+    assert len(questionnaire.questions) == 2
     question = questionnaire.questions[0]
     assert question.question == "Example question?"
     assert len(question.answers) == 2
     answer = question.answers[0]
     assert answer.answer == "Example answer"
     assert len(answer.templates) == 1
-    assert answer.templates[0].replacement == "{{code}}"
-    assert len(answer.followups) == 1
+    assert answer.templates[0].replacement == "code"
+    assert len(answer.followups) == 2
     followup = answer.followups[0]
     assert followup.question == "Follow-up question?"
 
