@@ -26,9 +26,13 @@ dependencies = [
     "optax",
     "numpyro",
     "h5py",
+    "ipywidgets",
     "pydantic",
     "pyyaml",
     "colorama",
+    "markdown",
+    "pygments",
+    "jinja2"
 ]
 
 [project.urls]
@@ -43,6 +47,7 @@ dev = [
     "pre-commit", # Used to run checks before finalizing a git commit
     "pytest",
     "pytest-cov", # Used to report total code coverage
+    "pytest-mock", # Used to mock objects in tests
     "ruff", # Used for static linting of files
 ]
 
@@ -55,9 +60,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools_scm]
 write_to = "src/scarlet2/_version.py"
-
-[tool.setuptools.package-data]
-"scarlet2.questionnaire" = ["questions.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = [

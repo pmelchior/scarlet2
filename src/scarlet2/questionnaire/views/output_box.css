@@ -1,0 +1,29 @@
+.code-output {
+    background-color: #272822;
+    color: #f1f1f1;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid #444;
+    font-family: monospace;
+    overflow-x: auto;
+}
+
+.copy_button {
+    font-size: 12px;
+    padding: 4px 8px;
+    background-color: #272822;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.commentary-box {
+    background-color: #f6f8fa;
+    color: #333;
+    padding: 8px 12px;
+    border-left: 4px solid #0366d6;
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: sans-serif;
+}
