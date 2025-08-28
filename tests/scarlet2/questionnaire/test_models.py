@@ -1,6 +1,5 @@
 import pytest
 from scarlet2.questionnaire.models import Questionnaire
-from scarlet2.questionnaire.questionnaire import load_questions
 
 
 def test_validate_model(example_questionnaire_dict):
@@ -34,9 +33,3 @@ def test_model_fails(example_questionnaire_dict):
 
     with pytest.raises(ValueError):
         Questionnaire.model_validate(invalid_dict)
-
-
-def test_read_questions():
-    """Test that the questions can be loaded from the packaged YAML file."""
-    questions = load_questions()
-    assert isinstance(questions, Questionnaire)

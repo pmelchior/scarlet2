@@ -1,4 +1,6 @@
-from scarlet2.questionnaire import QuestionnaireWidget
+from scarlet2.questionnaire import QuestionnaireWidget, run_questionnaire
+from scarlet2.questionnaire.models import Questionnaire
+from scarlet2.questionnaire.questionnaire import load_questions
 
 
 def test_questionnaire_widget_init(example_questionnaire, helpers):
@@ -73,3 +75,24 @@ def test_questionnaire_complete_all_questions(example_questionnaire, helpers):
     assert widget.current_question is None
     assert widget.question_answers == list(zip(expected_questions, answer_inds, strict=False))
     helpers.assert_widget_ui_matches_state(widget)
+
+
+def test_read_questions():
+    """Test that the questions can be loaded from the packaged YAML file."""
+    questions = load_questions()
+    assert isinstance(questions, Questionnaire)
+
+
+def test_run_questionnaire(example_questionnaire, mocker):
+    """Mock the display function to test that run_questionnaire() works correctly."""
+    mocker.patch("scarlet2.questionnaire.questionnaire.load_questions")
+    mocker.patch("scarlet2.questionnaire.questionnaire.QuestionnaireWidget")
+
+    from scarlet2.questionnaire.questionnaire import load_questions, QuestionnaireWidget
+
+    load_questions.return_value = example_questionnaire
+    run_questionnaire()
+
+    load_questions.assert_called_once()
+    QuestionnaireWidget.assert_called_once_with(example_questionnaire)
+    QuestionnaireWidget.return_value.show.assert_called_once()
