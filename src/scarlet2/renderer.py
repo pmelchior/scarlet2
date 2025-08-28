@@ -261,9 +261,9 @@ class ResamplingRenderer(Renderer):
             transform(psf_obs, (fft_shape_obs_psf, fft_shape_obs_psf), (-2, -1)), (-2)
         )
 
-        # getting the smallest grid to perform the interpolation
+        # Get maximum of the fft shapes to interpolate on the highest resolved FFT image
         # odd shape is required for k-wrapping later
-        self.fft_shape_target = min(self.fft_shape_model_im, fft_shape_obs_psf) + 1
+        self.fft_shape_target = max(self.fft_shape_model_im, fft_shape_obs_psf) + 1
         self.res_in = model_frame.pixel_size
         self.res_out = obs_frame.pixel_size
 
