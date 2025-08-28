@@ -143,7 +143,7 @@ class GaussianMorphology(ProfileMorphology):
         assert image.ndim == 2
         center = measure.centroid(image)
         # compute moments and create Gaussian from it
-        g = measure.moments(image, center=center, N=2)
+        g = measure.Moments(image, center=center, N=2)
         return GaussianMorphology.from_moments(g, shape=image.shape)
 
     @staticmethod
