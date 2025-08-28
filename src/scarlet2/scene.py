@@ -1,5 +1,4 @@
 from collections import defaultdict
-from typing import Optional
 
 import equinox as eqx
 import jax
@@ -10,7 +9,14 @@ from .bbox import overlap_slices
 from .frame import Frame
 from .module import Module, Parameters
 from .renderer import ChannelRenderer
-from .validation_utils import ValidationError, ValidationMethodCollector
+from .validation_utils import (
+    ValidationError,
+    ValidationInfo,
+    ValidationMethodCollector,
+    ValidationResult,
+    ValidationWarning,
+    print_validation_results,
+)
 
 
 class Scene(Module):
@@ -340,12 +346,10 @@ class Scene(Module):
         if VALIDATION_SWITCH:
             from .validation import check_fit
 
-            validation_errors = check_fit(returned_scene)
-            if validation_errors:
-                raise ValueError(
-                    "Fit validation failed. The following errors were found:\n"
-                    + "\n".join(str(error) for error in validation_errors)
-                )
+            for i, obs in enumerate(observations):
+                print(f"Running validation checks on the fit of the scene for observation {i}.")
+                validation_results = check_fit(returned_scene, obs)
+                print_validation_results("Fit validation results", validation_results)
 
         return returned_scene
 
@@ -526,15 +530,236 @@ class FitValidator(metaclass=ValidationMethodCollector):
     validation methods in this class into a single class attribute list called
     `validation_checks`. This allows for easy iteration over all checks."""
 
-    def __init__(self, scene: Scene):
-        self.scene = scene
+    def __init__(self, scene: Scene, observation):
+        """Initialize the FitValidator.
 
-    def check_fit_example(self) -> Optional[ValidationError]:
-        """Check that the fit was successful.
+        Parameters
+        ----------
+        scene : Scene
+            The scene object to validate.
+        observation : Observation
+            The observation object containing the data to validate against.
+        """
+        self.scene = scene
+        self.observation = observation
+
+        # These are placeholders, waiting for the actual width of distribution to be
+        # implemented - see issue https://github.com/pmelchior/scarlet2/issues/192
+        self.chi2_tolerable_threshold = 1.5
+        self.chi2_critical_threshold = 5.0
+
+    def check_goodness_of_fit(self) -> ValidationResult:
+        """Evaluate the goodness of the model fit to the data by calling the Observation
+        class's `goodness_of_fit` method. Please see the docstring for that method
+        for details.
 
         Returns
         -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
         """
-        return None
+        obs = self.observation
+
+        chi2 = obs.goodness_of_fit(self.scene())
+
+        ret_val: ValidationResult = ValidationInfo("The model fit is good.", check=self.__class__.__name__)
+        if self.chi2_tolerable_threshold <= chi2 < self.chi2_critical_threshold:
+            ret_val = ValidationWarning(
+                "The model fit is acceptable, but the goodness of fit is not optimal.",
+                check=self.__class__.__name__,
+                context={"chi2": chi2},
+            )
+        elif chi2 >= self.chi2_critical_threshold:
+            ret_val = ValidationError(
+                "The model fit is poor.", check=self.__class__.__name__, context={"chi2": chi2}
+            )
+
+        return ret_val
+
+    def check_chi_square_in_box_and_border(self) -> list[ValidationResult]:
+        """Evaluate the weighted mean (weighted by the inverse variance weights)
+        of the squared residuals for each source. Chi square is also computed for
+        the perimeter outside the box of with `border_width`.
+
+        Returns
+        -------
+        list[ValidationResult]
+            A list of ValidationResult subclasses for each source. For each source
+            there will be two results. One for inside the bounding box and one
+            for the border. The ValidationResults will each be one of the following:
+            - If the chi-square is above the critical threshold, a ValidationError.
+            - If the chi-square is below the tolerable threshold, a ValidationInfo.
+            - If the chi-square is between the two thresholds, a ValidationWarning.
+        """
+        obs = self.observation
+
+        chi2_per_source = obs.eval_chi_square_in_box_and_border(self.scene)
+
+        validation_results: list[ValidationResult] = []
+        for i, chi2 in chi2_per_source.items():
+            chi2_inside = chi2["in"]
+            chi2_outside = chi2["out"]
+
+            if chi2_inside < self.chi2_tolerable_threshold:
+                validation_results.append(
+                    ValidationInfo(
+                        f"The chi-square in the box for source {i} is good.",
+                        check=self.__class__.__name__,
+                        context={"chi2_in": chi2_inside, "source": i},
+                    )
+                )
+            elif self.chi2_tolerable_threshold <= chi2_inside < self.chi2_critical_threshold:
+                validation_results.append(
+                    ValidationWarning(
+                        f"The chi-square in the box for source {i} is acceptable, but not optimal.",
+                        check=self.__class__.__name__,
+                        context={"chi2_in": chi2_inside, "source": i},
+                    )
+                )
+            elif chi2_inside >= self.chi2_critical_threshold:
+                validation_results.append(
+                    ValidationError(
+                        f"The chi-square in the box for source {i} is poor.",
+                        check=self.__class__.__name__,
+                        context={"chi2_in": chi2_inside, "source": i},
+                    )
+                )
+
+            if chi2_outside < self.chi2_tolerable_threshold:
+                validation_results.append(
+                    ValidationInfo(
+                        f"The chi-square in the border for source {i} is good.",
+                        check=self.__class__.__name__,
+                        context={"chi2_border": chi2_outside, "source": i},
+                    )
+                )
+            elif self.chi2_tolerable_threshold <= chi2_outside < self.chi2_critical_threshold:
+                validation_results.append(
+                    ValidationWarning(
+                        f"The chi-square in the border for source {i} is acceptable, but not optimal.",
+                        check=self.__class__.__name__,
+                        context={"chi2_border": chi2_outside, "source": i},
+                    )
+                )
+            elif chi2_outside >= self.chi2_critical_threshold:
+                validation_results.append(
+                    ValidationError(
+                        f"The chi-square in the border for source {i} is poor.",
+                        check=self.__class__.__name__,
+                        context={"chi2_border": chi2_outside, "source": i},
+                    )
+                )
+
+        return validation_results
+
+
+class SceneValidator(metaclass=ValidationMethodCollector):
+    """A class containing all of the validation checks for a Scene object.
+    A convenience function exists that will run all the checks in this class and
+    returns a list of validation results:
+
+    :py:func:`~scarlet2.validation.check_scene`.
+    """
+
+    def __init__(self, scene: Scene, parameters: Parameters, observation):
+        """Initialize the SceneValidator.
+
+        Parameters
+        ----------
+        scene : Scene
+            The scene object to validate.
+        parameters : Parameters
+            The parameters of the scene to validate.
+        observation : Observation
+            The observation object containing the data to validate against.
+        """
+        self.scene = scene
+        self.parameters = parameters
+        self.observation = observation
+
+    def check_source_boxes_comparable_to_observation(self) -> list[ValidationResult]:
+        """Check that the bounding boxes of all sources are comparable to the observation.
+
+        This checks that the bounding boxes of all sources are contained within the
+        observation's bounding box.
+
+        Returns
+        -------
+        list[ValidationResult]
+            A list of validation results, which can be either `ValidationInfo` or
+            `ValidationWarning`.
+        """
+        validation_results: list[ValidationResult] = []
+        for i, source in enumerate(self.scene.sources):
+            source_and_observation_box = source.bbox & self.observation.frame.bbox
+            if source_and_observation_box == source.bbox:
+                validation_results.append(
+                    ValidationInfo(
+                        f"Source {i} has a bounding box inside the observation.",
+                        check=self.__class__.__name__,
+                        context={"bbox": source.bbox, "observation_bbox": self.observation.frame.bbox},
+                    )
+                )
+            elif source_and_observation_box.spatial.get_extent() == [0, 0, 0, 0]:
+                validation_results.append(
+                    ValidationWarning(
+                        f"Source {i} has a bounding box outside of the observation.",
+                        check=self.__class__.__name__,
+                        context={"bbox": source.bbox, "observation_bbox": self.observation.frame.bbox},
+                    )
+                )
+
+            else:
+                validation_results.append(
+                    ValidationWarning(
+                        f"Source {i} has a bounding box that is partially inside the observation.",
+                        check=self.__class__.__name__,
+                        context={"bbox": source.bbox, "observation_bbox": self.observation.frame.bbox},
+                    )
+                )
+
+        return validation_results
+
+    def check_parameters_have_necessary_fields(self) -> list[ValidationResult]:
+        """Check that all parameters in the scene have the necessary fields set.
+
+        This checks that all parameters in the scene have the `prior` or `stepsize`
+        attributes set, but not both.
+
+        Returns
+        -------
+        list[ValidationResult]
+            A list of validation results, which can be either `ValidationInfo`
+            or `ValidationError`.
+        """
+        validation_results: list[ValidationResult] = []
+        for i in range(len(self.parameters)):
+            param = self.parameters[i]
+            prior_is_none = param.prior is None
+            stepsize_is_none = param.stepsize is None
+            if (prior_is_none and not stepsize_is_none) or (not prior_is_none and stepsize_is_none):
+                validation_results.append(
+                    ValidationInfo(
+                        f"Parameter {param.name} has prior or stepsize, but not both set.",
+                        check=self.__class__.__name__,
+                        context={
+                            "parameter.name": param.name,
+                            "parameter.prior": param.prior,
+                            "parameter.stepsize": param.stepsize,
+                        },
+                    )
+                )
+            if prior_is_none and stepsize_is_none:
+                validation_results.append(
+                    ValidationError(
+                        f"Parameter {param.name} does not have prior or stepsize set.",
+                        check=self.__class__.__name__,
+                        context={
+                            "parameter.name": param.name,
+                            "parameter.prior": param.prior,
+                            "parameter.stepsize": param.stepsize,
+                        },
+                    )
+                )
+
+        return validation_results

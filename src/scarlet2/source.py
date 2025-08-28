@@ -1,5 +1,4 @@
 import operator
-from typing import Optional
 
 import jax
 import jax.numpy as jnp
@@ -10,7 +9,13 @@ from .bbox import Box, overlap_slices
 from .module import Module
 from .morphology import Morphology
 from .spectrum import Spectrum
-from .validation_utils import ValidationError, ValidationMethodCollector
+from .validation_utils import (
+    ValidationError,
+    ValidationInfo,
+    ValidationMethodCollector,
+    ValidationResult,
+    print_validation_results,
+)
 
 
 class Component(Module):
@@ -153,12 +158,8 @@ class Source(Component):
         if VALIDATION_SWITCH:
             from .validation import check_source
 
-            validation_errors = check_source(self)
-            if validation_errors:
-                raise ValueError(
-                    "Source validation failed with the following errors:\n"
-                    + "\n".join(str(error) for error in validation_errors)
-                )
+            validation_results = check_source(self)
+            print_validation_results("Source validation results", validation_results)
 
     def add_component(self, component, op):
         """Add `component` to this source
@@ -263,12 +264,24 @@ class SourceValidator(metaclass=ValidationMethodCollector):
     def __init__(self, source: Source):
         self.source = source
 
-    def check_source_example(self) -> Optional[ValidationError]:
-        """Check that the source is valid.
+    def check_source_has_positive_contribution(self) -> ValidationResult:
+        """Check that the source has a positive contribution i.e. that the result
+        of evaluating self.source() does not contain negative values.
 
         Returns
         -------
-        ValidationError or None
-            Returns a ValidationError if the check fails, otherwise None.
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
         """
-        return None
+        model = self.source()
+        if jnp.any(model < 0):
+            return ValidationError(
+                "Source model has negative contributions.",
+                check=self.__class__.__name__,
+                context={"source": self.source},
+            )
+        else:
+            return ValidationInfo(
+                "Source model has positive contributions.",
+                check=self.__class__.__name__,
+            )

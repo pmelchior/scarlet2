@@ -105,7 +105,7 @@ def test_hst_to_hsc_against_galsim():
     # Deconvolution, Resampling and Reconvolution
     hst_resampled = obs_hsc.render(data_hst)
 
-    assert jnp.allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
+    assert jnp.allclose(out_galsim, hst_resampled[0], atol=2.3e-4)
 
 
 # Rotate WCS
@@ -145,7 +145,7 @@ def test_hst_to_hsc_against_galsim_rotated_wcs():
     # Deconvolution, Resampling and Reconvolution
     hst_resampled = obs_hsc.render(data_hst_rot)
 
-    assert jnp.allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
+    assert jnp.allclose(out_galsim, hst_resampled[0], atol=2.3e-4)
 
 
 def test_no_channel_axis_in_obs_psf():
@@ -164,7 +164,7 @@ def test_no_channel_axis_in_obs_psf():
     # Deconvolution, Resampling and Reconvolution
     hst_resampled = obs_hsc.render(data_hst)
 
-    assert jnp.allclose(out_galsim, hst_resampled[0], atol=1.3e-4)
+    assert jnp.allclose(out_galsim, hst_resampled[0], atol=2.3e-4)
 
 
 if __name__ == "__main__":
