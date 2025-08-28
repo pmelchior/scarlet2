@@ -31,14 +31,12 @@ class Observation(Module):
     """Observed data"""
     weights: jnp.ndarray
     """Statistical weights (usually inverse variance) for :py:meth:`log_likelihood`"""
-    fourier_noise_var: jnp.ndarray = None
-    """Noise power spectrum for :py:meth:`log_likelihood`"""
     frame: Frame
     """Metadata to describe what view of the sky `data` amounts to"""
     renderer: (Renderer, eqx.nn.Sequential)
     """Renderer to translate from the model frame the observation frame"""
 
-    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None, noise_ps=None):
+    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
         self.data = data
         if self.data.ndim == 2:
             # add a channel dimension if it is missing
@@ -48,9 +46,6 @@ class Observation(Module):
         if self.weights is not None and self.weights.ndim == 2:
             # add a channel dimension if it is missing
             self.weights = self.weights[None, ...]
-
-        if noise_ps is not None:
-            self.fourier_noise_var = make_ps_map(noise_ps, data.shape[-1])
 
         self.frame = Frame(Box(data.shape), psf, wcs, channels=channels)
         if renderer is None:
@@ -100,19 +95,14 @@ class Observation(Module):
         # rendered model
         model_ = self.render(model)
 
-        if self.fourier_noise_var is not None:
-            res_fft = jnp.fft.fft2(model_ - data)
-            log_like = -0.5 * jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.fourier_noise_var)
-
-        else:
-            # normalization of the single-pixel likelihood:
-            # 1 / [(2pi)^1/2 (sigma^2)^1/2]
-            # with inverse variance weights: sigma^2 = 1/weight
-            # full likelihood is sum over all (unmasked) pixels in data
-            d = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
-            log_norm = d / 2 * jnp.log(2 * jnp.pi)
-            log_like = -jnp.sum(self.weights * (model_ - data) ** 2) / 2
-            log_norm += log_norm
+        # normalization of the single-pixel likelihood:
+        # 1 / [(2pi)^1/2 (sigma^2)^1/2]
+        # with inverse variance weights: sigma^2 = 1/weight
+        # full likelihood is sum over all (unmasked) pixels in data
+        d = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
+        log_norm = d / 2 * jnp.log(2 * jnp.pi)
+        log_like = -jnp.sum(self.weights * (model_ - data) ** 2) / 2
+        log_norm += log_norm
 
         return log_like
 
@@ -217,6 +207,53 @@ class Observation(Module):
             chi_dict[i] = {"in": chi_in, "out": chi_out}
 
         return chi_dict
+
+
+class CorrelatedNoiseObservation(Observation):
+    """Content and definition of an observation with correleted noise"""
+
+    fourier_noise_var: jnp.ndarray = None
+    """Noise power spectrum for :py:meth:`log_likelihood`"""
+
+    def __init__(
+        self, data, weights, psf=None, wcs=None, channels=None, renderer=None, noise_ps: jnp.ndarray = None
+    ):
+        self.data = data
+        if self.data.ndim == 2:
+            # add a channel dimension if it is missing
+            self.data = self.data[None, ...]
+
+        self.weights = weights
+        if self.weights is not None and self.weights.ndim == 2:
+            # add a channel dimension if it is missing
+            self.weights = self.weights[None, ...]
+
+        if noise_ps is not None:
+            self.fourier_noise_var = make_ps_map(noise_ps, self.data.shape[-1])
+
+        self.frame = Frame(Box(data.shape), psf, wcs, channels=channels)
+        if renderer is None:
+            renderer = NoRenderer()
+        self.renderer = renderer
+
+        # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
+        from .validation_utils import VALIDATION_SWITCH
+
+        if VALIDATION_SWITCH:
+            from .validation import check_observation
+
+            validation_results = check_observation(self)
+            print_validation_results("Observation validation results", validation_results)
+
+    def _log_likelihood(self, model, data):
+        # rendered model
+        model_ = self.render(model)
+
+        # compute log_likelihood, without normalization factor
+        res_fft = jnp.fft.fft2(model_ - data)
+        log_like = -0.5 * jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.fourier_noise_var)
+
+        return log_like
 
 
 def chi_square_in_box_and_border(residuals, weights, bbox, border_width):
