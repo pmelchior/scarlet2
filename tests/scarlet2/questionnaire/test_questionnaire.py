@@ -88,7 +88,7 @@ def test_run_questionnaire(example_questionnaire, mocker):
     mocker.patch("scarlet2.questionnaire.questionnaire.load_questions")
     mocker.patch("scarlet2.questionnaire.questionnaire.QuestionnaireWidget")
 
-    from scarlet2.questionnaire.questionnaire import load_questions, QuestionnaireWidget
+    from scarlet2.questionnaire.questionnaire import QuestionnaireWidget, load_questions
 
     load_questions.return_value = example_questionnaire
     run_questionnaire()
