@@ -8,10 +8,9 @@ import warnings
 import astropy.io.fits as fits
 import jax
 import jax.numpy as jnp
+import scarlet2
 from astropy.wcs import WCS
 from huggingface_hub import hf_hub_download
-
-import scarlet2
 
 warnings.filterwarnings("ignore")
 
