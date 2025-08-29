@@ -10,7 +10,7 @@ from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import PythonLexer
 
-from scarlet2.questionnaire.models import Question, Questionnaire, Template
+from scarlet2.questionnaire.models import Question, Questionnaire, Switch, Template
 
 PACKAGE_PATH = "scarlet2.questionnaire"
 QUESTIONS_FILE_NAME = "questions.yaml"
@@ -52,6 +52,7 @@ class QuestionnaireWidget:
         self.current_question = None
         self.questions_stack = []
         self.question_answers = []
+        self.variables = {}
         self._add_questions_to_stack(self.questions)
 
     def _init_ui(self):
@@ -64,8 +65,34 @@ class QuestionnaireWidget:
     def _add_questions_to_stack(self, questions: list[Question]):
         self.questions_stack = questions + self.questions_stack
 
+    def _get_next_question(self):
+        if len(self.questions_stack) > 0:
+            question = self.questions_stack.pop(0)
+            if isinstance(question, Question):
+                return question
+            if isinstance(question, Switch):
+                switch = question
+                matching_case = None
+
+                # Find the default case (where value is None)
+                for case in switch.cases:
+                    if case.value is None:
+                        matching_case = case
+                        break
+
+                variable_value = self.variables.get(switch.switch, None)
+                if variable_value is not None:
+                    for case in switch.cases:
+                        if case.value == variable_value:
+                            matching_case = case
+                            break
+                if matching_case is not None:
+                    self._add_questions_to_stack(matching_case.questions)
+                return self._get_next_question()
+        return None
+
     def _render_next_question(self):
-        self.current_question = self.questions_stack.pop(0) if len(self.questions_stack) > 0 else None
+        self.current_question = self._get_next_question()
         self._render_question_box()
 
     def _render_question_box(self):
@@ -115,6 +142,8 @@ class QuestionnaireWidget:
 
         self._add_questions_to_stack(answer.followups)
         self.question_answers.append((self.current_question, answer_index))
+        if self.current_question.variable is not None:
+            self.variables[self.current_question.variable] = answer_index
         self._render_next_question()
 
     def _update_template(self, templates: list[Template]):

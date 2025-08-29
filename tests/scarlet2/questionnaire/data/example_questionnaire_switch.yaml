@@ -1,0 +1,54 @@
+initial_commentary: This is an example commentary.
+initial_template: '{{code}}'
+questions:
+- question: Example question?
+  variable: example_var
+  answers:
+  - answer: First answer
+    commentary: This is some commentary.
+    templates:
+    - code: 'example_code {{code}}'
+      replacement: code
+    tooltip: This is an example tooltip.
+  - answer: Second answer
+    commentary: Some other commentary.
+    followups: []
+    templates:
+    - code: 'another_code {{code}}'
+      replacement: code
+    tooltip: This is another tooltip.
+  - answer: Third answer
+    commentary: Some other commentary.
+    followups: []
+    templates:
+    - code: 'third_code {{code}}'
+      replacement: code
+    tooltip: This is another tooltip.
+- switch: example_var
+  cases:
+  - value: 0
+    questions:
+    - question: Second Question 1?
+      answers:
+      - answer: Second answer 1
+        templates:
+        - code: 'followup_code_1 {{code}}'
+          replacement: code
+  - value: 1
+    questions:
+    - question: Second Question 2?
+      answers:
+        - answer: Second answer 2
+          templates:
+            - code: 'followup_code_2 {{code}}'
+              replacement: code
+  - value: null
+    questions:
+    - question: Default Question?
+      answers:
+      - answer: Default answer
+        templates:
+        - code: 'default_code {{code}}'
+          replacement: code
+
+

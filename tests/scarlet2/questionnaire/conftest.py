@@ -1,7 +1,9 @@
 import json
 import re
 from importlib.resources import files
+from pathlib import Path
 
+import yaml
 from ipywidgets import HTML, Button, HBox, Label, VBox
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
@@ -17,85 +19,51 @@ from scarlet2.questionnaire.questionnaire import (
 
 
 @fixture
-def example_questionnaire_dict():
+def data_dir():
+    """Path to the data directory containing the example questionnaire YAML file."""
+    return Path(__file__).parent / "data"
+
+
+@fixture
+def example_questionnaire_dict(data_dir):
     """An example questionnaire dictionary"""
-    return {
-        "initial_template": "{{code}}",
-        "initial_commentary": "This is an example commentary.",
-        "questions": [
-            {
-                "question": "Example question?",
-                "answers": [
-                    {
-                        "answer": "Example answer",
-                        "tooltip": "This is an example tooltip.",
-                        "templates": [{"replacement": "code", "code": "example_code {{follow}}"}],
-                        "followups": [
-                            {
-                                "question": "Follow-up question?",
-                                "answers": [
-                                    {
-                                        "answer": "Follow-up answer",
-                                        "tooltip": "This is a follow-up tooltip.",
-                                        "templates": [
-                                            {"replacement": "follow", "code": "followup_code\n{{code}}"}
-                                        ],
-                                        "followups": [],
-                                        "commentary": "",
-                                    },
-                                    {
-                                        "answer": "Second follow-up answer",
-                                        "tooltip": "This is a second follow-up tooltip.",
-                                        "templates": [
-                                            {
-                                                "replacement": "follow",
-                                                "code": "second_followup_code\n{{code}}",
-                                            }
-                                        ],
-                                    },
-                                ],
-                            },
-                            {
-                                "question": "Another follow-up question?",
-                                "answers": [
-                                    {
-                                        "answer": "Another follow-up answer",
-                                        "templates": [],
-                                    }
-                                ],
-                            },
-                        ],
-                        "commentary": "This is some commentary.",
-                    },
-                    {
-                        "answer": "Another answer",
-                        "tooltip": "This is another tooltip.",
-                        "templates": [{"replacement": "code", "code": "another_code\n{{code}}"}],
-                        "followups": [],
-                        "commentary": "Some other commentary.",
-                    },
-                ],
-            },
-            {
-                "question": "Second question?",
-                "answers": [
-                    {
-                        "answer": "Second answer",
-                        "tooltip": "This is a second tooltip.",
-                        "templates": [{"replacement": "code", "code": "second_code"}],
-                        "followups": [],
-                        "commentary": "Next commentary.",
-                    }
-                ],
-            },
-        ],
-    }
+    yaml_path = data_dir / "example_questionnaire.yaml"
+    with yaml_path.open("r") as f:
+        return yaml.safe_load(f)
 
 
 @fixture
 def example_questionnaire(example_questionnaire_dict):
     """An example Questionnaire model instance"""
     return Questionnaire.model_validate(example_questionnaire_dict)
+
+
+@fixture
+def example_questionnaire_with_switch_dict(data_dir):
+    """An example questionnaire dictionary with a switch question"""
+    yaml_path = data_dir / "example_questionnaire_switch.yaml"
+    with yaml_path.open("r") as f:
+        return yaml.safe_load(f)
+
+
+@fixture
+def example_questionnaire_with_switch(example_questionnaire_with_switch_dict):
+    """An example Questionnaire model instance with a switch question"""
+    return Questionnaire.model_validate(example_questionnaire_with_switch_dict)
+
+
+@fixture
+def questionnaire_with_followup_switch_example_dict(data_dir):
+    """An example questionnaire dictionary with a switch question"""
+    yaml_path = data_dir / "example_questionnaire_followup_switch.yaml"
+    with yaml_path.open("r") as f:
+        return yaml.safe_load(f)
+
+
+@fixture
+def example_questionnaire_with_followup_switch(questionnaire_with_followup_switch_example_dict):
+    """An example Questionnaire model instance with a switch question"""
+    return Questionnaire.model_validate(questionnaire_with_followup_switch_example_dict)
 
 
 class Helpers:
