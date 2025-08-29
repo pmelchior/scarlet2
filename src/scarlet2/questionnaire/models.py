@@ -1,3 +1,5 @@
+from typing import Union
+
 from pydantic import BaseModel, Field
 
 
@@ -13,8 +15,8 @@ class Answer(BaseModel):
 
     answer: str
     tooltip: str = ""
-    templates: list[Template]
-    followups: list["Question"] = Field(default_factory=list)  # Forward reference to Question
+    templates: list[Template] = Field(default_factory=list)
+    followups: list[Union["Question", "Switch"]] = Field(default_factory=list)
     commentary: str = ""
 
 
@@ -22,17 +24,25 @@ class Question(BaseModel):
     """Represents a question in the questionnaire."""
 
     question: str
+    variable: str | None = None
     answers: list[Answer]
 
+class Case(BaseModel):
+    value: int | None = None
+    questions: list[Union[Question, "Switch"]]
 
-# Rebuild the models to update the forward references
+class Switch(BaseModel):
+    switch: str
+    cases: list[Case]
+
 Question.model_rebuild()
 Answer.model_rebuild()
-
+Case.model_rebuild()
+Switch.model_rebuild()
 
 class Questionnaire(BaseModel):
     """Represents a questionnaire with an initial template and a list of questions."""
 
     initial_template: str
     initial_commentary: str = ""
-    questions: list[Question]
+    questions: list[Question | Switch]
