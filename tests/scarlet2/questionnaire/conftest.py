@@ -59,6 +59,7 @@ def questionnaire_with_followup_switch_example_dict(data_dir):
     with yaml_path.open("r") as f:
         return yaml.safe_load(f)
 
+
 @fixture
 def example_questionnaire_with_followup_switch(questionnaire_with_followup_switch_example_dict):
     """An example Questionnaire model instance with a switch question"""

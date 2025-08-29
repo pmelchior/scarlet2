@@ -27,18 +27,26 @@ class Question(BaseModel):
     variable: str | None = None
     answers: list[Answer]
 
+
 class Case(BaseModel):
+    """Represents a case in a switch statement within the questionnaire."""
+
     value: int | None = None
     questions: list[Union[Question, "Switch"]]
 
+
 class Switch(BaseModel):
+    """Represents a switch statement in the questionnaire."""
+
     switch: str
     cases: list[Case]
+
 
 Question.model_rebuild()
 Answer.model_rebuild()
 Case.model_rebuild()
 Switch.model_rebuild()
+
 
 class Questionnaire(BaseModel):
     """Represents a questionnaire with an initial template and a list of questions."""

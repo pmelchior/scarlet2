@@ -1,4 +1,3 @@
-
 from scarlet2.questionnaire import QuestionnaireWidget, run_questionnaire
 from scarlet2.questionnaire.models import Questionnaire
 from scarlet2.questionnaire.questionnaire import load_questions
@@ -190,10 +189,12 @@ def test_questionnaire_followup_switch(example_questionnaire_with_followup_switc
     case = switch.cases[0]
 
     assert widget.current_question == case.questions[0]
-    assert widget.questions_stack == case.questions[1:] + example_questionnaire_with_followup_switch.questions[2:]
+    assert (
+        widget.questions_stack
+        == case.questions[1:] + example_questionnaire_with_followup_switch.questions[2:]
+    )
 
     helpers.assert_widget_ui_matches_state(widget)
-
 
     # Test that the second case of the switch works correctly
 
@@ -243,7 +244,6 @@ def test_questionnaire_followup_switch(example_questionnaire_with_followup_switc
 
     helpers.assert_widget_ui_matches_state(widget)
 
-
     # Test that the default case of the switch works correctly if the follow-up question is skipped
 
     widget = QuestionnaireWidget(example_questionnaire_with_followup_switch)
@@ -264,7 +264,10 @@ def test_questionnaire_followup_switch(example_questionnaire_with_followup_switc
     case = switch.cases[2]  # Default case where value is None
 
     assert widget.current_question == case.questions[0]
-    assert widget.questions_stack == case.questions[1:] + example_questionnaire_with_followup_switch.questions[2:]
+    assert (
+        widget.questions_stack
+        == case.questions[1:] + example_questionnaire_with_followup_switch.questions[2:]
+    )
 
     helpers.assert_widget_ui_matches_state(widget)
 

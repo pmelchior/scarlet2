@@ -10,7 +10,7 @@ from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import PythonLexer
 
-from scarlet2.questionnaire.models import Question, Questionnaire, Template, Switch
+from scarlet2.questionnaire.models import Question, Questionnaire, Switch, Template
 
 PACKAGE_PATH = "scarlet2.questionnaire"
 QUESTIONS_FILE_NAME = "questions.yaml"
