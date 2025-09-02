@@ -63,10 +63,20 @@ class QuestionnaireWidget:
 
         self.ui = HBox([self.question_box, self.output_box])
 
+    def _start_with_answers(self, answers: list[tuple[Question, int]]):
+        self._init_questions()
+        for question, answer_index in answers:
+            current_question = self._get_next_question()
+            if current_question != question:
+                raise ValueError("Provided answers do not match the question flow.")
+            self._handle_answer(answer_index, render=False)
+        self._render_output_box()
+        self._render_next_question()
+
     def _add_questions_to_stack(self, questions: list[Question]):
         self.questions_stack = questions + self.questions_stack
 
-    def _get_next_question(self):
+    def _get_next_question(self) -> Question | None:
         if len(self.questions_stack) > 0:
             question = self.questions_stack.pop(0)
             if isinstance(question, Question):
@@ -148,18 +158,20 @@ class QuestionnaireWidget:
             children.append(HTML(html_str))
         return children
 
-    def _handle_answer(self, answer_index: int):
+    def _handle_answer(self, answer_index: int, render: bool = True):
         answer = self.current_question.answers[answer_index]
 
         self._update_template(answer.templates)
         self.commentary = answer.commentary
-        self._render_output_box()
 
         self._add_questions_to_stack(answer.followups)
         self.question_answers.append((self.current_question, answer_index))
         if self.current_question.variable is not None:
             self.variables[self.current_question.variable] = answer_index
-        self._render_next_question()
+
+        if render:
+            self._render_output_box()
+            self._render_next_question()
 
     def _update_template(self, templates: list[Template]):
         for t in templates:
