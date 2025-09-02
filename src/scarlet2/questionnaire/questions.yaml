@@ -163,7 +163,8 @@ questions:
                       \n            center,
                       \n            flux,sersic)
                       \n
-                      \n# Select the transient-free epochs to initialize amplitudes for the static source. Make sure this matches the number of filters included in the modeling!
+                      \n# Select the transient-free epochs to initialize amplitudes for the static source. 
+                      \n#Make sure this matches the number of filters included in the modeling!
                       \n# These will be shared across all epochs
                       \nspectrum = spectrum[0:2]
                       \n
