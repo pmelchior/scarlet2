@@ -50,7 +50,7 @@ questions:
             \n    channels=channels,
             \n)
             \n\n{{frame}}"
-        commentary: "One you have specified channels for each observation, each one can be set up by initializing an `Observation` object."
+        commentary: "Once you have specified channels for each observation, each one can be set up by initializing an `Observation` object."
   - question: Click to continue
     answers:
     - answer: Continue
