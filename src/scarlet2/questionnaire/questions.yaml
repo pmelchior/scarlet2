@@ -155,10 +155,10 @@ questions:
                   code: "# 1) Host galaxy that is static across epochs
                       \nspectrum = scarlet2.init.pixel_spectrum(obs_sc2, center)
                       \nsersic = scarlet2.SersicMorphology(
-                      \n                                    ellipticity = jnp.asarray([0.2,-0.5]),        
-                      \n                                    size= jnp.asarray(3.5),
-                      \n                                    n=jnp.asarray(2.2),
-                      \n                    )
+                      \n    ellipticity=jnp.asarray([0.2,-0.5]),        
+                      \n    size=jnp.asarray(3.5),
+                      \n    n=jnp.asarray(2.2),
+                      \n)
                       \nscarlet2.Source(
                       \n            center,
                       \n            flux,sersic)
