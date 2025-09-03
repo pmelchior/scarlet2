@@ -160,8 +160,10 @@ questions:
                       \n    n=jnp.asarray(2.2),
                       \n)
                       \nscarlet2.Source(
-                      \n            center,
-                      \n            flux,sersic)
+                      \n    center,
+                      \n    flux,
+                      \n    sersic
+                      \n)
                       \n
                       \n# Select the transient-free epochs to initialize amplitudes for the static source. 
                       \n#Make sure this matches the number of filters included in the modeling!
