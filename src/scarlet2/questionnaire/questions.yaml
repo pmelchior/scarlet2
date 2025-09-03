@@ -20,7 +20,7 @@ questions:
                     code: "channels=[(\"g\",0)]
                            \nchannels=[(\"g\",1)]
                            \n\n{{obs}}"
-                commentary: "For each image, the channels should be a list of tuples where each tuple provides the filter and an epoch identifier which is unique for each image of a particular filter. For example, you might have two g-band images from different times, which would be initialized separately with channels=[(‘g’,0)] and channels=[(‘g’,1’)]. You might have two other r-band images taken at different times again. These would be initialized with channels=[(‘r’,0)] and channels=[(‘r’,1’)]. You may wish to take note of any epochs where the transient is known to be ‘off’ - you can add this constraint later if desired. Each image can be initialized"
+                commentary: "For each image, the channels should be a list of tuples where each tuple provides the filter and an epoch identifier which is unique for each image of a particular filter. For example, you might have two g-band images from different times, which would be initialized separately with `channels=[(‘g’,0)]` and `channels=[(‘g’,1’)]`. You might have two other r-band images taken at different times again. These would be initialized with `channels=[(‘r’,0)]` and `channels=[(‘r’,1’)]`. You may wish to take note of any epochs where the transient is known to be ‘off’ - you can add this constraint later if desired. Each image can be initialized"
               - answer: "No"
                 templates:
                   - replacement: code
@@ -50,7 +50,7 @@ questions:
             \n    channels=channels,
             \n)
             \n\n{{frame}}"
-        commentary: "One you have specified channels for each observation, each one can be set up by initializing an `Observation` object."
+        commentary: "Once you have specified channels for each observation, each one can be set up by initializing an `Observation` object."
   - question: Click to continue
     answers:
     - answer: Continue
@@ -154,15 +154,18 @@ questions:
                   code: "# 1) Host galaxy that is static across epochs
                       \nspectrum = scarlet2.init.pixel_spectrum(obs_sc2, center)
                       \nsersic = scarlet2.SersicMorphology(
-                      \n                                    ellipticity = jnp.asarray([0.2,-0.5]),        
-                      \n                                    size= jnp.asarray(3.5),
-                      \n                                    n=jnp.asarray(2.2),
-                      \n                    )
+                      \n    ellipticity=jnp.asarray([0.2,-0.5]),        
+                      \n    size=jnp.asarray(3.5),
+                      \n    n=jnp.asarray(2.2),
+                      \n)
                       \nscarlet2.Source(
-                      \n            center,
-                      \n            flux,sersic)
+                      \n    center,
+                      \n    flux,
+                      \n    sersic
+                      \n)
                       \n
-                      \n# Select the transient-free epochs to initialize amplitudes for the static source. Make sure this matches the number of filters included in the modeling!
+                      \n# Select the transient-free epochs to initialize amplitudes for the static source. 
+                      \n#Make sure this matches the number of filters included in the modeling!
                       \n# These will be shared across all epochs
                       \nspectrum = spectrum[0:2]
                       \n
