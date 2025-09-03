@@ -77,6 +77,201 @@ def test_questionnaire_complete_all_questions(example_questionnaire, helpers):
     helpers.assert_widget_ui_matches_state(widget)
 
 
+def test_questionnaire_switch_variable(example_questionnaire_with_switch, helpers):
+    """Test that switch-case logic in the questionnaire works correctly."""
+
+    # Test that the switch-case logic works correctly for the first case.
+    widget = QuestionnaireWidget(example_questionnaire_with_switch)
+
+    first_question = example_questionnaire_with_switch.questions[0]
+    first_answer = first_question.answers[0]
+    first_button = widget.question_box.children[1]  # First button after question label
+
+    first_button.click()
+
+    assert widget.code_output == first_answer.templates[0].code
+    assert widget.commentary == first_answer.commentary
+
+    assert widget.question_answers == [(first_question, 0)]
+    assert widget.variables == {first_question.variable: 0}
+
+    switch = example_questionnaire_with_switch.questions[1]
+    case = switch.cases[0]
+
+    assert widget.current_question == case.questions[0]
+    assert widget.questions_stack == case.questions[1:] + example_questionnaire_with_switch.questions[2:]
+
+    helpers.assert_widget_ui_matches_state(widget)
+
+    # Now test that the switch-case logic works correctly for the second case.
+    widget = QuestionnaireWidget(example_questionnaire_with_switch)
+    first_question = example_questionnaire_with_switch.questions[0]
+    second_answer = first_question.answers[1]
+    second_button = widget.question_box.children[2]  # Second button after question label
+
+    second_button.click()
+
+    assert widget.code_output == second_answer.templates[0].code
+    assert widget.commentary == second_answer.commentary
+    assert widget.question_answers == [(first_question, 1)]
+    assert widget.variables == {first_question.variable: 1}
+
+    switch = example_questionnaire_with_switch.questions[1]
+    case = switch.cases[1]
+
+    assert widget.current_question == case.questions[0]
+    assert widget.questions_stack == case.questions[1:] + example_questionnaire_with_switch.questions[2:]
+
+    helpers.assert_widget_ui_matches_state(widget)
+
+    # Test that the default case is used if no case matches.
+    widget = QuestionnaireWidget(example_questionnaire_with_switch)
+
+    first_question = example_questionnaire_with_switch.questions[0]
+    third_answer = first_question.answers[2]
+    third_button = widget.question_box.children[3]  # Third button after question label
+
+    third_button.click()
+
+    assert widget.code_output == third_answer.templates[0].code
+    assert widget.commentary == third_answer.commentary
+    assert widget.question_answers == [(first_question, 2)]
+    assert widget.variables == {first_question.variable: 2}
+
+    switch = example_questionnaire_with_switch.questions[1]
+    case = switch.cases[2]  # Default case where value is None
+
+    assert widget.current_question == case.questions[0]
+    assert widget.questions_stack == case.questions[1:] + example_questionnaire_with_switch.questions[2:]
+
+    helpers.assert_widget_ui_matches_state(widget)
+
+
+def test_questionnaire_followup_switch(example_questionnaire_with_followup_switch, helpers):
+    """Test that a switch based on a follow-up question works correctly."""
+
+    widget = QuestionnaireWidget(example_questionnaire_with_followup_switch)
+
+    # Select the first answer to the first question (which has a follow-up question)
+    first_question = example_questionnaire_with_followup_switch.questions[0]
+    first_answer = first_question.answers[0]
+    first_button = widget.question_box.children[1]  # First button after question label
+
+    first_button.click()
+
+    assert widget.code_output == first_answer.templates[0].code
+    assert widget.commentary == first_answer.commentary
+
+    assert widget.question_answers == [(first_question, 0)]
+
+    followup_question = first_answer.followups[0]
+    assert widget.current_question == followup_question
+    assert widget.questions_stack == example_questionnaire_with_followup_switch.questions[1:]
+
+    helpers.assert_widget_ui_matches_state(widget)
+
+    # Select the first answer to the follow-up question (which sets the switch variable)
+
+    followup_answer = followup_question.answers[0]
+    followup_button = widget.question_box.children[2]  # first button after question label and previous qs
+
+    followup_button.click()
+
+    assert widget.code_output == "example_code followup_code {{code}}"
+    assert widget.commentary == followup_answer.commentary
+
+    assert widget.question_answers == [(first_question, 0), (followup_question, 0)]
+    assert widget.variables == {followup_question.variable: 0}
+
+    # Check that the switch question is handled correctly
+
+    switch = example_questionnaire_with_followup_switch.questions[1]
+    case = switch.cases[0]
+
+    assert widget.current_question == case.questions[0]
+    assert (
+        widget.questions_stack
+        == case.questions[1:] + example_questionnaire_with_followup_switch.questions[2:]
+    )
+
+    helpers.assert_widget_ui_matches_state(widget)
+
+    # Test that the second case of the switch works correctly
+
+    widget = QuestionnaireWidget(example_questionnaire_with_followup_switch)
+
+    # Select the first answer to the first question (which has a follow-up question)
+    first_question = example_questionnaire_with_followup_switch.questions[0]
+    first_answer = first_question.answers[0]
+    first_button = widget.question_box.children[1]  # First button after question label
+
+    first_button.click()
+
+    assert widget.code_output == first_answer.templates[0].code
+    assert widget.commentary == first_answer.commentary
+
+    assert widget.question_answers == [(first_question, 0)]
+
+    followup_question = first_answer.followups[0]
+    assert widget.current_question == followup_question
+    assert widget.questions_stack == example_questionnaire_with_followup_switch.questions[1:]
+
+    helpers.assert_widget_ui_matches_state(widget)
+
+    # Select the Second answer to the follow-up question (which sets the switch variable)
+
+    followup_answer = followup_question.answers[1]
+    followup_button = widget.question_box.children[3]  # second button after question label and previous qs
+
+    followup_button.click()
+
+    assert widget.code_output == "example_code second_followup_code {{code}}"
+    assert widget.commentary == followup_answer.commentary
+
+    assert widget.question_answers == [(first_question, 0), (followup_question, 1)]
+    assert widget.variables == {followup_question.variable: 1}
+
+    # Check that the switch question is handled correctly
+
+    switch = example_questionnaire_with_followup_switch.questions[1]
+    case = switch.cases[1]
+
+    assert widget.current_question == case.questions[0]
+    assert (
+        widget.questions_stack
+        == case.questions[1:] + example_questionnaire_with_followup_switch.questions[2:]
+    )
+
+    helpers.assert_widget_ui_matches_state(widget)
+
+    # Test that the default case of the switch works correctly if the follow-up question is skipped
+
+    widget = QuestionnaireWidget(example_questionnaire_with_followup_switch)
+
+    # Select the second answer to the first question (which does not have a follow-up question)
+    first_question = example_questionnaire_with_followup_switch.questions[0]
+    second_answer = first_question.answers[1]
+    second_button = widget.question_box.children[2]  # Second button after question label
+
+    second_button.click()
+
+    assert widget.code_output == second_answer.templates[0].code
+    assert widget.commentary == second_answer.commentary
+    assert widget.question_answers == [(first_question, 1)]
+    assert widget.variables == {}
+
+    switch = example_questionnaire_with_followup_switch.questions[1]
+    case = switch.cases[2]  # Default case where value is None
+
+    assert widget.current_question == case.questions[0]
+    assert (
+        widget.questions_stack
+        == case.questions[1:] + example_questionnaire_with_followup_switch.questions[2:]
+    )
+
+    helpers.assert_widget_ui_matches_state(widget)
+
+
 def test_read_questions():
     """Test that the questions can be loaded from the packaged YAML file."""
     questions = load_questions()
