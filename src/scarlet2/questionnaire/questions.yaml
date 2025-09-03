@@ -34,7 +34,7 @@ questions:
                     answers:
                       - answer: "Yes"
                       - answer: "No"
-                        commentary: "If you find performance or memory issues for a large number of epochs, you might consider pre-aligning them with a tool such as swarp to improve modeling speed."
+                        commentary: "If you find performance or memory issues for a large number of epochs, you might consider pre-aligning them with a tool such as [SWarp](https://www.astromatic.net/software/swarp/) to improve modeling speed."
               - answer: "No"
         commentary: "We start with initializing the channels for the observation. The channels in the image can be specified as a list of the filters, like the above example."
   - question: Click to continue
@@ -148,7 +148,6 @@ questions:
                       \n      scarlet2.Source(center, spectrum, morph)
                       \n)
                       \n\n{{source_init}}"
-              commentary: "Galaxies with starlet morphologies with a constant flux across epochs can be initialized as follows"
             - answer: Sersic profiles?
               templates:
                 - replacement: source_init
@@ -172,7 +171,6 @@ questions:
                       \n)
                       \n)
                       \n\n{{source_init}}"
-              commentary: "Galaxies with starlet morphologies with a constant flux across epochs can be initialized as follows"
         - value: null
           questions:
             - question: Would you like to model galaxies with?
@@ -209,7 +207,7 @@ questions:
                       \n      scarlet2.Source(center, spectrum, morph)
                       \n)
                       \n\n{{source_init}}"
-                  commentary: "Galaxies with starlet morphologies with a constant flux across epochs can be initialized as follows"
+                  commentary: "Galaxies with a morphology prior applied during parameter fitting can be initialized as follows"
                 - answer: Sersic profiles?
                   templates:
                     - replacement: source_init
@@ -225,6 +223,5 @@ questions:
                       \n)
                       \n)
                       \n\n{{source_init}}"
-                  commentary: "Galaxies with starlet morphologies with a constant flux across epochs can be initialized as follows"
 
     - answer: "No"
