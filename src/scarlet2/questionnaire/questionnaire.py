@@ -28,9 +28,12 @@ _PREV_TOOLTIP_CSS = HTML("""
         border: none;
         background: none;
         box-shadow: none;
-        color: #0366d6;
-        text-decoration: underline;
+        color: #333;
+        text-decoration: none;
         cursor: pointer;
+        font-size: 0.9em;
+        margin: 2px 0;
+        padding: 2px 0;
     }
 
     .prev-item .tooltip {
@@ -119,11 +122,19 @@ class QuestionnaireWidget:
         self.ui = HBox([self.question_box, self.output_box])
 
     def _start_with_answers(self, answers: list[tuple[Question, int]]):
+        # First reset the state
         self._init_state()
+
+        # Process each answer one by one
         for question, answer_index in answers:
+            # Get the next question
             self.current_question = self._get_next_question()
+
+            # Verify the question matches
             if self.current_question != question:
                 raise ValueError("Provided answers do not match the question flow.")
+
+            # Handle the answer (this will update question_answers)
             self._handle_answer(answer_index, render=False)
         self._render_output_box()
         self._render_next_question()
@@ -208,16 +219,19 @@ class QuestionnaireWidget:
 
             # The clickable button styled like text
             btn = Button(
-                description=f"{q.question}: {ans.answer}",
+                description=f"{q.question} — {ans.answer}",
                 tooltip="Click to go back",  # native title tooltip as a fallback
                 layout=Layout(width="auto", margin="2px 0"),
                 style={'button_color': 'transparent', 'font_weight': 'normal'},
             )
             btn.add_class("prev-btn")
 
+            # Create a copy of the current answers up to this index
+            answers_slice = self.question_answers[:i+1]
+
             # Python callback - using default parameter to capture the loop variable
-            def on_click_handler(btn, index=i):
-                self._start_with_answers(self.question_answers[:index])
+            def on_click_handler(btn, answers=answers_slice):
+                self._start_with_answers(answers)
 
             btn.on_click(on_click_handler)
 
