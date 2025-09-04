@@ -35,7 +35,7 @@ def test_questionnaire_handle_answer_selection(example_questionnaire, helpers):
 
     first_question = example_questionnaire.questions[0]
     first_answer = first_question.answers[0]
-    first_button = widget.question_box.children[2]  # First button after question label
+    first_button = helpers.get_answer_button(widget, 0)  # First answer button
 
     first_button.click()
 
@@ -71,7 +71,7 @@ def test_questionnaire_complete_all_questions(example_questionnaire, helpers):
         assert widget.question_answers == list(zip(expected_questions[:i], answer_inds[:i], strict=False))
         helpers.assert_widget_ui_matches_state(widget)
 
-        button = widget.question_box.children[i + 1 + ans_ind]
+        button = helpers.get_answer_button(widget, ans_ind)
         button.click()
 
     assert widget.current_question is None
@@ -87,7 +87,7 @@ def test_questionnaire_switch_variable(example_questionnaire_with_switch, helper
 
     first_question = example_questionnaire_with_switch.questions[0]
     first_answer = first_question.answers[0]
-    first_button = widget.question_box.children[1]  # First button after question label
+    first_button = helpers.get_answer_button(widget, 0)  # First answer button
 
     first_button.click()
 
@@ -109,7 +109,7 @@ def test_questionnaire_switch_variable(example_questionnaire_with_switch, helper
     widget = QuestionnaireWidget(example_questionnaire_with_switch)
     first_question = example_questionnaire_with_switch.questions[0]
     second_answer = first_question.answers[1]
-    second_button = widget.question_box.children[2]  # Second button after question label
+    second_button = helpers.get_answer_button(widget, 1)  # Second answer button
 
     second_button.click()
 
@@ -131,7 +131,7 @@ def test_questionnaire_switch_variable(example_questionnaire_with_switch, helper
 
     first_question = example_questionnaire_with_switch.questions[0]
     third_answer = first_question.answers[2]
-    third_button = widget.question_box.children[3]  # Third button after question label
+    third_button = helpers.get_answer_button(widget, 2)  # Third answer button
 
     third_button.click()
 
@@ -157,7 +157,7 @@ def test_questionnaire_followup_switch(example_questionnaire_with_followup_switc
     # Select the first answer to the first question (which has a follow-up question)
     first_question = example_questionnaire_with_followup_switch.questions[0]
     first_answer = first_question.answers[0]
-    first_button = widget.question_box.children[1]  # First button after question label
+    first_button = helpers.get_answer_button(widget, 0)  # First answer button
 
     first_button.click()
 
@@ -175,7 +175,7 @@ def test_questionnaire_followup_switch(example_questionnaire_with_followup_switc
     # Select the first answer to the follow-up question (which sets the switch variable)
 
     followup_answer = followup_question.answers[0]
-    followup_button = widget.question_box.children[2]  # first button after question label and previous qs
+    followup_button = helpers.get_answer_button(widget, 0)  # First answer button for the followup question
 
     followup_button.click()
 
@@ -205,7 +205,7 @@ def test_questionnaire_followup_switch(example_questionnaire_with_followup_switc
     # Select the first answer to the first question (which has a follow-up question)
     first_question = example_questionnaire_with_followup_switch.questions[0]
     first_answer = first_question.answers[0]
-    first_button = widget.question_box.children[1]  # First button after question label
+    first_button = helpers.get_answer_button(widget, 0)  # First answer button
 
     first_button.click()
 
@@ -223,7 +223,7 @@ def test_questionnaire_followup_switch(example_questionnaire_with_followup_switc
     # Select the Second answer to the follow-up question (which sets the switch variable)
 
     followup_answer = followup_question.answers[1]
-    followup_button = widget.question_box.children[3]  # second button after question label and previous qs
+    followup_button = helpers.get_answer_button(widget, 1)  # Second answer button for the followup question
 
     followup_button.click()
 
@@ -253,7 +253,7 @@ def test_questionnaire_followup_switch(example_questionnaire_with_followup_switc
     # Select the second answer to the first question (which does not have a follow-up question)
     first_question = example_questionnaire_with_followup_switch.questions[0]
     second_answer = first_question.answers[1]
-    second_button = widget.question_box.children[2]  # Second button after question label
+    second_button = helpers.get_answer_button(widget, 1)  # Second answer button
 
     second_button.click()
 
@@ -272,6 +272,47 @@ def test_questionnaire_followup_switch(example_questionnaire_with_followup_switc
     )
 
     helpers.assert_widget_ui_matches_state(widget)
+
+
+def test_questionnaire_previous_question_navigation(example_questionnaire, helpers):
+    """Test that clicking on a previous question button navigates back to that point in the questionnaire."""
+    widget = QuestionnaireWidget(example_questionnaire)
+
+    # Complete the first two questions
+    answer_inds = [0, 1]
+    expected_questions = [
+        example_questionnaire.questions[0],
+        example_questionnaire.questions[0].answers[0].followups[0],
+    ]
+
+    # Answer the first question
+    first_button = helpers.get_answer_button(widget, answer_inds[0])
+    first_button.click()
+
+    # Answer the second question
+    second_button = helpers.get_answer_button(widget, answer_inds[1])
+    second_button.click()
+
+    # Verify we're at the expected state after answering two questions
+    assert widget.question_answers == list(zip(expected_questions, answer_inds, strict=False))
+    assert widget.current_question == example_questionnaire.questions[0].answers[0].followups[1]
+
+    # Now click on the first previous question button to go back to that point
+    prev_button = helpers.get_prev_question_button(widget, 0)
+    prev_button.click()
+
+    # Verify we're back at the state after answering only the first question
+    assert widget.question_answers == [(expected_questions[0], answer_inds[0])]
+    assert widget.current_question == expected_questions[1]
+
+    # Answer the second question differently this time
+    different_answer_ind = 0  # Different from the original answer_inds[1]
+    different_button = helpers.get_answer_button(widget, different_answer_ind)
+    different_button.click()
+
+    # Verify the new answer was recorded
+    assert widget.question_answers == [(expected_questions[0], answer_inds[0]), 
+                                      (expected_questions[1], different_answer_ind)]
 
 
 def test_read_questions():

@@ -1,4 +1,4 @@
-initial_template: '{{code}}'
+initial_template: "import scarlet2\n\n{{code}}"
 questions:
   - question: Do you have a single image, or multiple images?
     answers:
