@@ -35,7 +35,7 @@ def test_questionnaire_handle_answer_selection(example_questionnaire, helpers):
 
     first_question = example_questionnaire.questions[0]
     first_answer = first_question.answers[0]
-    first_button = widget.question_box.children[1]  # First button after question label
+    first_button = widget.question_box.children[2]  # First button after question label
 
     first_button.click()
 
@@ -46,6 +46,8 @@ def test_questionnaire_handle_answer_selection(example_questionnaire, helpers):
 
     assert widget.current_question == first_answer.followups[0]
     assert widget.questions_stack == first_answer.followups[1:] + example_questionnaire.questions[1:]
+
+    print(widget.question_box.children)
 
     helpers.assert_widget_ui_matches_state(widget)
 

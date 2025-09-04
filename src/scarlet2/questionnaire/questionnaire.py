@@ -19,6 +19,50 @@ VIEWS_PACKAGE_PATH = "scarlet2.questionnaire.views"
 OUTPUT_BOX_TEMPLATE_FILE = "output_box.html.jinja"
 OUTPUT_BOX_STYLE_FILE = "output_box.css"
 
+_PREV_TOOLTIP_CSS = HTML("""
+    <style>
+    .prev-item { position: relative; }
+    .prev-btn { width: 100%; text-align: left; }
+
+    .prev-item .tooltip {
+      position: absolute;
+      left: 100%;
+      top: 50%;
+      transform: translateY(-50%) translateX(8px);
+      background: #333;
+      color: #fff;
+      padding: 6px 8px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.3;
+      box-shadow: 0 4px 12px rgba(0,0,0,.2);
+      white-space: normal;
+      min-width: 160px;
+      max-width: 320px;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity .12s ease, transform .12s ease;
+      pointer-events: none;
+      z-index: 9999;
+    }
+    .prev-item:hover .tooltip {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(-50%) translateX(10px);
+    }
+    .prev-item .tooltip::before {
+      content: "";
+      position: absolute;
+      left: -6px;
+      top: 50%;
+      transform: translateY(-50%);
+      border-width: 6px;
+      border-style: solid;
+      border-color: transparent #333 transparent transparent;
+    }
+    </style>
+    """)
+
 
 QUESTION_BOX_LAYOUT = Layout(
     padding="12px",
@@ -144,19 +188,37 @@ class QuestionnaireWidget:
 
             buttons.append(button)
 
-        self.question_box.children = previous_qs + [q_label] + buttons
+        self.question_box.children = [_PREV_TOOLTIP_CSS] + previous_qs + [q_label] + buttons
 
     def _generate_previous_questions(self):
-        children = []
-        for q, ans_ind in self.question_answers:
-            html_str = f"""
-            <div style="background_color: #111">
-                <span style="color: #888; padding-right: 10px;">{q.question}</span>
-                <span style="color: #555;">{q.answers[ans_ind].answer}</span>
-            </div>
-            """
-            children.append(HTML(html_str))
-        return children
+        items = []
+        for i, (q, ans_ind) in enumerate(self.question_answers):
+            ans = q.answers[ans_ind]
+
+            # The clickable button (Python callback works)
+            btn = Button(
+                description=f"{q.question}: {ans.answer}",
+                tooltip="Click to go back",  # native title tooltip as a fallback
+                layout=Layout(width="100%", margin="2px 0"),
+            )
+            btn.add_class("prev-btn")
+
+            # Python callback
+            def _on_click(btn, index=i):
+                self._start_with_answers(self.question_answers[:index + 1])
+
+            btn.on_click(_on_click)
+
+            # The custom tooltip node (shown on hover via CSS)
+            tip_html = HTML(f"<div class='tooltip'>Click to go back</div>")
+
+            # Wrap button + tooltip in a positioned container
+            container = HBox([btn, tip_html], layout=Layout(position="relative"))
+            container.add_class("prev-item")
+
+            items.append(container)
+
+        return items
 
     def _handle_answer(self, answer_index: int, render: bool = True):
         answer = self.current_question.answers[answer_index]
