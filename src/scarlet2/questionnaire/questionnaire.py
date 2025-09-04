@@ -21,26 +21,34 @@ OUTPUT_BOX_STYLE_FILE = "output_box.css"
 
 _PREV_TOOLTIP_CSS = HTML("""
     <style>
-    .prev-item { position: relative; }
+    /* Add overflow-x: hidden to the question box to prevent horizontal scrolling */
+    .question-box-container {
+        overflow-x: hidden;
+    }
+    .prev-item { 
+        position: relative; 
+        overflow: visible;
+    }
     .prev-btn { 
         width: auto; 
         text-align: left; 
         border: none;
         background: none;
         box-shadow: none;
-        color: #333;
+        color: #555;
         text-decoration: none;
         cursor: pointer;
         font-size: 0.9em;
-        margin: 2px 0;
-        padding: 2px 0;
+        margin: 2px;
+        padding: 2px 4px;
+        overflow: hidden;
+        max-width: 100%; /* Ensure button doesn't exceed container width */
+        text-overflow: ellipsis; /* Add ellipsis for text that overflows */
     }
 
+    /* Container for the tooltip */
     .prev-item .tooltip {
       position: absolute;
-      left: 100%;
-      top: 50%;
-      transform: translateY(-50%) translateX(8px);
       background: #333;
       color: #fff;
       padding: 6px 8px;
@@ -53,26 +61,33 @@ _PREV_TOOLTIP_CSS = HTML("""
       max-width: 320px;
       opacity: 0;
       visibility: hidden;
-      transition: opacity .12s ease, transform .12s ease;
+      transition: opacity .12s ease;
       pointer-events: none;
       z-index: 9999;
+
+      /* Default position to the right of the button */
+      left: 100%;
+      top: 50%;
+      transform: translateY(-50%) translateX(8px);
     }
+
+    /* When hovering over the container, show the tooltip */
     .prev-item:hover .tooltip {
       opacity: 1;
       visibility: visible;
-      transform: translateY(-50%) translateX(10px);
     }
+
+    /* Arrow for the tooltip */
     .prev-item .tooltip::before {
       content: "";
       position: absolute;
+      border-width: 6px;
+      border-style: solid;
       left: -6px;
       top: 50%;
       transform: translateY(-50%);
-      border-width: 6px;
-      border-style: solid;
       border-color: transparent #333 transparent transparent;
     }
-    </style>
     """)
 
 
@@ -117,6 +132,8 @@ class QuestionnaireWidget:
     def _init_ui(self):
         self.output_container = HTML()
         self.question_box = VBox([], layout=QUESTION_BOX_LAYOUT)
+        # Add a class to the question box for CSS targeting
+        self.question_box.add_class("question-box-container")
         self.output_box = VBox([self.output_container], layout=OUTPUT_BOX_LAYOUT)
 
         self.ui = HBox([self.question_box, self.output_box])
@@ -227,7 +244,7 @@ class QuestionnaireWidget:
             btn.add_class("prev-btn")
 
             # Create a copy of the current answers up to this index
-            answers_slice = self.question_answers[:i+1]
+            answers_slice = self.question_answers[:i]
 
             # Python callback - using default parameter to capture the loop variable
             def on_click_handler(btn, answers=answers_slice):
