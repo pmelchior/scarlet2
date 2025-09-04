@@ -78,6 +78,47 @@ class Helpers:
     """Helper functions for testing the QuestionnaireWidget"""
 
     @staticmethod
+    def get_answer_button(widget, answer_index):
+        """Get an answer button from the question box children.
+
+        Args:
+            widget: The QuestionnaireWidget instance
+            answer_index: The index of the answer button to get
+
+        Returns:
+            The answer button widget
+        """
+        # The first element is the CSS snippet
+        # Then there are previous question containers
+        # Then there's the current question label
+        # Finally, there are the answer buttons
+        css_offset = 1
+        prev_questions_offset = len(widget.question_answers)
+        question_label_offset = 1
+
+        button_index = css_offset + prev_questions_offset + question_label_offset + answer_index
+        return widget.question_box.children[button_index]
+
+    @staticmethod
+    def get_prev_question_button(widget, question_index):
+        """Get a previous question button from the question box children.
+
+        Args:
+            widget: The QuestionnaireWidget instance
+            question_index: The index of the previous question to get
+
+        Returns:
+            The previous question button widget
+        """
+        # The first element is the CSS snippet
+        # Then there are previous question containers
+        css_offset = 1
+
+        container = widget.question_box.children[css_offset + question_index]
+        # The button is the first child of the container
+        return container.children[0]
+
+    @staticmethod
     def assert_widget_ui_matches_state(widget):
         """Assert that the widget's UI matches its internal state."""
         assert isinstance(widget.ui, HBox)
@@ -118,18 +159,29 @@ class Helpers:
         assert widget.question_box.layout == QUESTION_BOX_LAYOUT
 
         len_cur_answers = len(widget.current_question.answers) if widget.current_question else 0
-        expected_children_count = len(widget.question_answers) + 1 + len_cur_answers
+        # Add 1 for the CSS snippet
+        css_snippet_count = 1
+        expected_children_count = len(widget.question_answers) + 1 + len_cur_answers + css_snippet_count
 
         assert len(widget.question_box.children) == expected_children_count
+
+        # Skip the CSS snippet
+        css_offset = 1
+
         for i in range(len(widget.question_answers)):
-            assert isinstance(widget.question_box.children[i], HTML)
+            # Add the CSS offset to the index
+            child_index = i + css_offset
+            assert isinstance(widget.question_box.children[child_index], HBox)
+            # The button is the first child of the container
+            btn = widget.question_box.children[child_index].children[0]
             question = widget.question_answers[i][0]
-            assert question.question in widget.question_box.children[i].value
+            assert question.question in btn.description
             ans_index = widget.question_answers[i][1]
-            assert question.answers[ans_index].answer in widget.question_box.children[i].value
+            assert question.answers[ans_index].answer in btn.description
 
         if widget.current_question is not None:
-            qs_ind = len(widget.question_answers)
+            # Add the CSS offset to the index
+            qs_ind = len(widget.question_answers) + css_offset
 
             assert isinstance(widget.question_box.children[qs_ind], HTML)
             assert widget.current_question.question in widget.question_box.children[qs_ind].value
