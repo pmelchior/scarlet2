@@ -22,7 +22,16 @@ OUTPUT_BOX_STYLE_FILE = "output_box.css"
 _PREV_TOOLTIP_CSS = HTML("""
     <style>
     .prev-item { position: relative; }
-    .prev-btn { width: 100%; text-align: left; }
+    .prev-btn { 
+        width: auto; 
+        text-align: left; 
+        border: none;
+        background: none;
+        box-shadow: none;
+        color: #0366d6;
+        text-decoration: underline;
+        cursor: pointer;
+    }
 
     .prev-item .tooltip {
       position: absolute;
@@ -83,21 +92,23 @@ class QuestionnaireWidget:
 
     def __init__(self, questionnaire: Questionnaire):
         self.questions = questionnaire.questions
-        self.code_output = questionnaire.initial_template
-        self.commentary = questionnaire.initial_commentary
+        self.initial_template = questionnaire.initial_template
+        self.initial_commentary = questionnaire.initial_commentary
         self.feedback_url = questionnaire.feedback_url
 
-        self._init_questions()
+        self._init_state()
         self._init_ui()
 
         self._render_output_box()
         self._render_next_question()
 
-    def _init_questions(self):
+    def _init_state(self):
         self.current_question = None
         self.questions_stack = []
         self.question_answers = []
         self.variables = {}
+        self.code_output = self.initial_template
+        self.commentary = self.initial_commentary
         self._add_questions_to_stack(self.questions)
 
     def _init_ui(self):
@@ -108,10 +119,10 @@ class QuestionnaireWidget:
         self.ui = HBox([self.question_box, self.output_box])
 
     def _start_with_answers(self, answers: list[tuple[Question, int]]):
-        self._init_questions()
+        self._init_state()
         for question, answer_index in answers:
-            current_question = self._get_next_question()
-            if current_question != question:
+            self.current_question = self._get_next_question()
+            if self.current_question != question:
                 raise ValueError("Provided answers do not match the question flow.")
             self._handle_answer(answer_index, render=False)
         self._render_output_box()
@@ -168,7 +179,7 @@ class QuestionnaireWidget:
                     </div>
                 """
                 )
-            self.question_box.children = previous_qs + [HTML(final_message)]
+            self.question_box.children = [_PREV_TOOLTIP_CSS] + previous_qs + [HTML(final_message)]
             return
 
         q_label = HTML(f"<b>{self.current_question.question}</b>")
@@ -195,19 +206,20 @@ class QuestionnaireWidget:
         for i, (q, ans_ind) in enumerate(self.question_answers):
             ans = q.answers[ans_ind]
 
-            # The clickable button (Python callback works)
+            # The clickable button styled like text
             btn = Button(
                 description=f"{q.question}: {ans.answer}",
                 tooltip="Click to go back",  # native title tooltip as a fallback
-                layout=Layout(width="100%", margin="2px 0"),
+                layout=Layout(width="auto", margin="2px 0"),
+                style={'button_color': 'transparent', 'font_weight': 'normal'},
             )
             btn.add_class("prev-btn")
 
-            # Python callback
-            def _on_click(btn, index=i):
-                self._start_with_answers(self.question_answers[:index + 1])
+            # Python callback - using default parameter to capture the loop variable
+            def on_click_handler(btn, index=i):
+                self._start_with_answers(self.question_answers[:index])
 
-            btn.on_click(_on_click)
+            btn.on_click(on_click_handler)
 
             # The custom tooltip node (shown on hover via CSS)
             tip_html = HTML(f"<div class='tooltip'>Click to go back</div>")
