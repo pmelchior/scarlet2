@@ -297,8 +297,8 @@ def test_questionnaire_previous_question_navigation(example_questionnaire, helpe
     assert widget.question_answers == list(zip(expected_questions, answer_inds, strict=False))
     assert widget.current_question == example_questionnaire.questions[0].answers[0].followups[1]
 
-    # Now click on the first previous question button to go back to that point
-    prev_button = helpers.get_prev_question_button(widget, 0)
+    # Now click on the second previous question button to go back to that point
+    prev_button = helpers.get_prev_question_button(widget, 1)
     prev_button.click()
 
     # Verify we're back at the state after answering only the first question
