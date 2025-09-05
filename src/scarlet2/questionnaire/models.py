@@ -42,6 +42,7 @@ class Switch(BaseModel):
     cases: list[Case]
 
 
+# Rebuild models to support self-referencing types and forward references
 Question.model_rebuild()
 Answer.model_rebuild()
 Case.model_rebuild()
