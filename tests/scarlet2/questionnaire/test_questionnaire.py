@@ -278,6 +278,24 @@ def test_read_questions():
     assert isinstance(questions, Questionnaire)
 
 
+def test_questionnaire_feedback_url(example_questionnaire_with_feedback, helpers):
+    """Test that the feedback URL is included when present in the questionnaire."""
+    widget = QuestionnaireWidget(example_questionnaire_with_feedback)
+
+    # Complete all questions
+    _inds = [0, 1, 0, 0]
+    for ans_ind in _inds:
+        button = widget.question_box.children[len(widget.question_answers) + 1 + ans_ind]
+        button.click()
+
+    # Check that the questionnaire is completed
+    assert widget.current_question is None
+    assert widget.feedback_url == example_questionnaire_with_feedback.feedback_url
+
+    # Verify the widget UI matches its state (including feedback URL check)
+    helpers.assert_widget_ui_matches_state(widget)
+
+
 def test_run_questionnaire(example_questionnaire, mocker):
     """Mock the display function to test that run_questionnaire() works correctly."""
     mocker.patch("scarlet2.questionnaire.questionnaire.load_questions")
