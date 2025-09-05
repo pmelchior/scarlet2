@@ -102,14 +102,18 @@ class QuestionnaireWidget:
         if self.current_question is None:
             final_message = "<div>🎉 You're done!</div>"
             if self.feedback_url:
-                final_message = final_message + f"""
+                final_message = (
+                    final_message
+                    + f"""
                     <div style="font-size: 0.9em;">
-                    If you encountered any difficulties or have any suggestions, 
-                    <a href="{self.feedback_url}" target="_blank" style="text-decoration: underline; color: #0066cc;">
+                    If you encountered any difficulties or have any suggestions,
+                    <a href="{self.feedback_url}" target="_blank"
+                    style="text-decoration: underline; color: #0066cc;">
                     please fill out our feedback form here.
                     </a>
                     </div>
                 """
+                )
             self.question_box.children = previous_qs + [HTML(final_message)]
             return
 

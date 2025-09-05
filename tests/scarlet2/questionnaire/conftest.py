@@ -4,7 +4,7 @@ from importlib.resources import files
 from pathlib import Path
 
 import yaml
-from ipywidgets import HTML, Button, HBox, Label, VBox
+from ipywidgets import HTML, Button, HBox, VBox
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.python import PythonLexer
