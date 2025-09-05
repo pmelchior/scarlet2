@@ -146,9 +146,8 @@ questions:
                       \n            spectrum, morph = init.from_gaussian_moments([obs_hst, obs_hsc], center, min_corr=0.99)
                       \n        except ValueError:
                       \n            spectrum = init.pixel_spectrum([obs_hst, obs_hsc], center)
-                      \nmorph = init.compact_morphology()
+                      \n    morph = init.compact_morphology()
                       \n      scarlet2.Source(center, spectrum, morph)
-                      \n)
                       \n\n{{source_init}}"
                 - replacement: imports
                   code: "import scarlet2.init as init\n{{imports}}"
@@ -242,8 +241,8 @@ questions:
       followups:
       - question: Are any of the point sources transient or variable?
         answers:
-        - answer: "No"
-          commentary: "Point sources can be initialized as follows"
+        - answer: "Yes"
+          commentary: "Variable point sources can be initialized as follows"
           templates:
           - replacement: source_init
             code: "# 2) Point source for the transient
@@ -257,8 +256,8 @@ questions:
                   \n    center, scarlet2.TransientArraySpectrum(spectrum, epochs=epochs, epoch_selector=epoch_selector)
                   \n)
                   \n\n{{source_init}}"
-        - answer: "Yes"
-          commentary: "Variable point sources can be initialized as follows"
+        - answer: "No"
+          commentary: "Point sources can be initialized as follows"
           templates:
           - replacement: source_init
             code: "# 2) Point source for the transient
