@@ -18,77 +18,7 @@ QUESTIONS_FILE_NAME = "questions.yaml"
 VIEWS_PACKAGE_PATH = "scarlet2.questionnaire.views"
 OUTPUT_BOX_TEMPLATE_FILE = "output_box.html.jinja"
 OUTPUT_BOX_STYLE_FILE = "output_box.css"
-
-_PREV_TOOLTIP_CSS = HTML("""
-    <style>
-    /* Add overflow-x: hidden to the question box to prevent horizontal scrolling */
-    .question-box-container {
-        overflow-x: hidden;
-    }
-    .prev-item { 
-        position: relative; 
-        overflow: visible;
-    }
-    .prev-btn { 
-        width: auto; 
-        text-align: left; 
-        border: none;
-        background: none;
-        box-shadow: none;
-        color: #555;
-        text-decoration: none;
-        cursor: pointer;
-        font-size: 0.9em;
-        margin: 2px;
-        padding: 2px 4px;
-        overflow: hidden;
-        max-width: 100%; /* Ensure button doesn't exceed container width */
-        text-overflow: ellipsis; /* Add ellipsis for text that overflows */
-    }
-
-    /* Container for the tooltip */
-    .prev-item .tooltip {
-      position: absolute;
-      background: #333;
-      color: #fff;
-      padding: 6px 8px;
-      border-radius: 8px;
-      font-size: 12px;
-      line-height: 1.3;
-      box-shadow: 0 4px 12px rgba(0,0,0,.2);
-      white-space: normal;
-      min-width: 160px;
-      max-width: 320px;
-      opacity: 0;
-      visibility: hidden;
-      transition: opacity .12s ease;
-      pointer-events: none;
-      z-index: 9999;
-
-      /* Default position to the right of the button */
-      left: 100%;
-      top: 50%;
-      transform: translateY(-50%) translateX(8px);
-    }
-
-    /* When hovering over the container, show the tooltip */
-    .prev-item:hover .tooltip {
-      opacity: 1;
-      visibility: visible;
-    }
-
-    /* Arrow for the tooltip */
-    .prev-item .tooltip::before {
-      content: "";
-      position: absolute;
-      border-width: 6px;
-      border-style: solid;
-      left: -6px;
-      top: 50%;
-      transform: translateY(-50%);
-      border-color: transparent #333 transparent transparent;
-    }
-    """)
+QUESTION_BOX_STYLE_FILE = "question_box.css"
 
 
 QUESTION_BOX_LAYOUT = Layout(
@@ -114,11 +44,34 @@ class QuestionnaireWidget:
         self.initial_commentary = questionnaire.initial_commentary
         self.feedback_url = questionnaire.feedback_url
 
+        # Load resources once at initialization
+        self._load_resources()
+
         self._init_state()
         self._init_ui()
 
         self._render_output_box()
         self._render_next_question()
+
+    def _load_resources(self):
+        # Load question box CSS
+        question_box_css_file = files(VIEWS_PACKAGE_PATH).joinpath(QUESTION_BOX_STYLE_FILE)
+        with question_box_css_file.open("r") as f:
+            self.question_box_css = f.read()
+
+        # Load output box CSS
+        output_box_css_file = files(VIEWS_PACKAGE_PATH).joinpath(OUTPUT_BOX_STYLE_FILE)
+        with output_box_css_file.open("r") as f:
+            self.output_box_css = f.read()
+
+        # Load Jinja template
+        template_file = files(VIEWS_PACKAGE_PATH).joinpath(OUTPUT_BOX_TEMPLATE_FILE)
+        with template_file.open("r") as f:
+            template_source = f.read()
+        self.output_box_template = jinja2.Template(template_source)
+
+        # Create HTML widget with question box CSS
+        self.question_box_css_html = HTML(f"<style>{self.question_box_css}</style>")
 
     def _init_state(self):
         self.current_question = None
@@ -207,7 +160,7 @@ class QuestionnaireWidget:
                     </div>
                 """
                 )
-            self.question_box.children = [_PREV_TOOLTIP_CSS] + previous_qs + [HTML(final_message)]
+            self.question_box.children = [self.question_box_css_html] + previous_qs + [HTML(final_message)]
             return
 
         q_label = HTML(f"<b>{self.current_question.question}</b>")
@@ -227,7 +180,7 @@ class QuestionnaireWidget:
 
             buttons.append(button)
 
-        self.question_box.children = [_PREV_TOOLTIP_CSS] + previous_qs + [q_label] + buttons
+        self.question_box.children = [self.question_box_css_html] + previous_qs + [q_label] + buttons
 
     def _generate_previous_questions(self):
         items = []
@@ -290,18 +243,8 @@ class QuestionnaireWidget:
         formatter = HtmlFormatter(style="monokai", noclasses=True)
         highlighted_code = highlight(output_code, PythonLexer(), formatter)
 
-        # Load Jinja template
-        template_file = files(VIEWS_PACKAGE_PATH).joinpath(OUTPUT_BOX_TEMPLATE_FILE)
-        with template_file.open("r") as f:
-            template_source = f.read()
-        template = jinja2.Template(template_source)
-
-        # Load additional CSS for styling
-        css_file = files(VIEWS_PACKAGE_PATH).joinpath(OUTPUT_BOX_STYLE_FILE)
-        with css_file.open("r") as f:
-            css_content = f.read()
-
-        html_content = f"<style>{css_content}</style>\n" + template.render(
+        # Use pre-loaded template and CSS
+        html_content = f"<style>{self.output_box_css}</style>\n" + self.output_box_template.render(
             highlighted_code=highlighted_code,
             raw_code=output_code,
             commentary_html=commentary_html,
