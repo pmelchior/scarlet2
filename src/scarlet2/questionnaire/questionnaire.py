@@ -43,7 +43,6 @@ class QuestionnaireWidget:
         self.initial_template = questionnaire.initial_template
         self.initial_commentary = questionnaire.initial_commentary
 
-        # Load resources once at initialization
         self._load_resources()
 
         self._init_state()
@@ -53,23 +52,19 @@ class QuestionnaireWidget:
         self._render_next_question()
 
     def _load_resources(self):
-        # Load question box CSS
         question_box_css_file = files(VIEWS_PACKAGE_PATH).joinpath(QUESTION_BOX_STYLE_FILE)
         with question_box_css_file.open("r") as f:
             self.question_box_css = f.read()
 
-        # Load output box CSS
         output_box_css_file = files(VIEWS_PACKAGE_PATH).joinpath(OUTPUT_BOX_STYLE_FILE)
         with output_box_css_file.open("r") as f:
             self.output_box_css = f.read()
 
-        # Load Jinja template
         template_file = files(VIEWS_PACKAGE_PATH).joinpath(OUTPUT_BOX_TEMPLATE_FILE)
         with template_file.open("r") as f:
             template_source = f.read()
         self.output_box_template = jinja2.Template(template_source)
 
-        # Create HTML widget with question box CSS
         self.question_box_css_html = HTML(f"<style>{self.question_box_css}</style>")
 
     def _init_state(self):
