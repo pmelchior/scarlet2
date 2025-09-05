@@ -1,4 +1,4 @@
-initial_template: '{{code}}'
+initial_template: "import scarlet2\n{{imports}}\n\n{{code}}"
 feedback_url: "https://docs.google.com/forms/d/e/1FAIpQLScKHbiqxhizacgzRx3xHEdqqjgtZBsxjtQZFJlYBdLcbOnfBg/viewform"
 questions:
   - question: Do you have a single image, or multiple images?
@@ -51,6 +51,8 @@ questions:
             \n    channels=channels,
             \n)
             \n\n{{frame}}"
+          - replacement: imports
+            code: "import jax.numpy as jnp\n{{imports}}"
         commentary: "Once you have specified channels for each observation, each one can be set up by initializing an `Observation` object."
   - question: Click to continue
     answers:
@@ -137,9 +139,7 @@ questions:
             - answer: non-parametric models guided by a prior for HSC or ZTF galaxies
               templates:
                 - replacement: source_init
-                  code: "import scarlet2.init as init
-                      \n
-                      \nwith scarlet2.Scene(model_frame) as scene:
+                  code: "with scarlet2.Scene(model_frame) as scene:
                       \n    for i, center in enumerate(ra_dec):
                       \n        try:
                       \n            spectrum, morph = init.from_gaussian_moments([obs_hst, obs_hsc], center, min_corr=0.99)
@@ -149,6 +149,8 @@ questions:
                       \n      scarlet2.Source(center, spectrum, morph)
                       \n)
                       \n\n{{source_init}}"
+                - replacement: imports
+                  code: "import scarlet2.init as init\n{{imports}}"
             - answer: Sersic profiles?
               templates:
                 - replacement: source_init
@@ -182,26 +184,24 @@ questions:
                 - answer: flexible non-parametric morphology models (starlets)
                   templates:
                     - replacement: source_init
-                      code: "import scarlet2.init as init
-                            \n
-                            \nwith scarlet2.Scene(model_frame) as scene:
+                      code: "with scarlet2.Scene(model_frame) as scene:
                             \n    for i, center in enumerate(ra_dec):
                             \n        try:
                             \n            spectrum, morph = init.from_gaussian_moments([obs_hst, obs_hsc], center, min_corr=0.99)
                             \n        except ValueError:
                             \n            spectrum = init.pixel_spectrum([obs_hst, obs_hsc], center)
                             \nmorph = init.compact_morphology()
-                            \n    morph = scarlet2.StarletMorphology.from_image(morph
+                            \n    morph = scarlet2.StarletMorphology.from_image(morph,
                             \n      scarlet2.Source(center, spectrum, morph)
                             \n)
                             \n\n{{source_init}}"
+                    - replacement: imports
+                      code: "import scarlet2.init as init\n{{imports}}"
                   commentary: "Galaxies with starlet morphologies can be initialized as follows"
                 - answer: non-parametric models guided by a prior for HSC or ZTF galaxies
                   templates:
                     - replacement: source_init
-                      code: "import scarlet2.init as init
-                      \n
-                      \nwith scarlet2.Scene(model_frame) as scene:
+                      code: "with scarlet2.Scene(model_frame) as scene:
                       \n    for i, center in enumerate(ra_dec):
                       \n        try:
                       \n            spectrum, morph = init.from_gaussian_moments([obs_hst, obs_hsc], center, min_corr=0.99)
@@ -211,12 +211,14 @@ questions:
                       \n      scarlet2.Source(center, spectrum, morph)
                       \n)
                       \n\n{{source_init}}"
+                    - replacement: imports
+                      code: "import scarlet2.init as init\n{{imports}}"
                   commentary: "Galaxies with a morphology prior applied during parameter fitting can be initialized as follows"
                 - answer: Sersic profiles?
                   templates:
                     - replacement: source_init
                       code: "# 1) Host galaxy that is static across epochs
-                      \nspectrum = initialization.pixel_spectrum(obs_sc2, center)
+                      \nspectrum = init.pixel_spectrum(obs_sc2, center)
                       \nsersic = scarlet2.SersicMorphology(
                       \n                                    ellipticity = jnp.asarray([0.2,-0.5]),        
                       \n                                    size= jnp.asarray(3.5),
@@ -227,5 +229,7 @@ questions:
                       \n)
                       \n
                       \n\n{{source_init}}"
+                    - replacement: imports
+                      code: "import scarlet2.init as init\n{{imports}}"
 
     - answer: "No"
