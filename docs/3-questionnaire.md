@@ -43,9 +43,9 @@ The questionnaire module is designed to be extensible and maintainable. This sec
 
 The questionnaire module consists of several key components:
 
-1. **models.py**: Defines the data structures used by the questionnaire that map to the YAML file
-2. **questionnaire.py**: Contains the main `QuestionnaireWidget` class that uses ipywidgets to render the UI and handle user interactions
-3. **questions.yaml**: Stores the actual questions, answers, and templates
+1. **questions.yaml**: Stores the actual questions, answers, and templates
+2. **models.py**: Defines the data structures used by the questionnaire that map to the YAML file
+3. **questionnaire.py**: Contains the main `QuestionnaireWidget` class that uses ipywidgets to render the UI and handle user interactions
 
 ### YAML Structure
 
@@ -53,8 +53,8 @@ Setting up the questions in the questionnaire is done by modifying the `question
 The questions are defined in this YAML file with the following structure:
 
 ```yaml
-initial_template: '{{code}}'  # The starting template with placeholders
-initial_commentary: 'Welcome message'  # (Optional) The initial commentary text before any questions are answered
+initial_template: "{{code}}"  # The starting template with placeholders
+initial_commentary: "Welcome message"  # (Optional) The initial commentary text before any questions are answered
 questions:  # List of top-level questions
   - question: "Question text" # Each question object has a question text, answers, and optionally a variable
     variable: "variable_name"  # Optional variable to store the answer to be referenced later
@@ -87,6 +87,11 @@ Answers can also specify follow-up questions that are asked immediately after th
 
 The flow of questions can also include conditional branching using `switch` objects that check the value of a 
 previously answered question (by its variable name) and present different sets of questions based on the answer.
+
+> Note: In YAML, single and double quotes behave differently. Single quotes will treat backslashes as literal 
+> characters, while double quotes will interpret backslashes as escape characters. For example, to include a 
+> newline character in a string, you would use double quotes: `"Line 1\nLine 2"`. If you used single quotes, 
+> it would be treated as the literal text `Line 1\nLine 2` without a newline.
 
 The yaml file is packaged with the module as it is built, and is loaded using the `importlib.resources` module
 that allows access to package data files even in a zipped package. With `pyproject.toml` and `setuptools-scm`,
