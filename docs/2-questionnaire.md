@@ -35,6 +35,10 @@ code to your clipboard.
 
 > Note: The template is a starting point that you can modify to fit your specific data. It provides the structure for your project based on your use case.
 
+### Feedback and Issues
+
+If you encounter any issues or have suggestions for improving the questionnaire, [please fill out our feedback form!](https://docs.google.com/forms/d/e/1FAIpQLScKHbiqxhizacgzRx3xHEdqqjgtZBsxjtQZFJlYBdLcbOnfBg/viewform)
+
 ## Developer Guide - Questionnaire Architecture
 
 The questionnaire module is designed to be extensible and maintainable. This section explains how the questionnaire works internally and how to modify or extend it.
