@@ -66,6 +66,14 @@ def example_questionnaire_with_followup_switch(questionnaire_with_followup_switc
     return Questionnaire.model_validate(questionnaire_with_followup_switch_example_dict)
 
 
+@fixture
+def example_questionnaire_with_feedback(example_questionnaire):
+    """An example Questionnaire model instance with a feedback URL"""
+    questionnaire = example_questionnaire.model_copy(deep=True)
+    questionnaire.feedback_url = "https://example.com/feedback"
+    return questionnaire
+
+
 class Helpers:
     """Helper functions for testing the QuestionnaireWidget"""
 
@@ -134,8 +142,14 @@ class Helpers:
                 assert btn.tooltip == ans.tooltip
 
         else:
-            assert isinstance(widget.question_box.children[-1], Label)
-            assert "You're done" in widget.question_box.children[-1].value
+            assert isinstance(widget.question_box.children[-1], HTML)
+            final_message = widget.question_box.children[-1].value
+            assert "You're done" in final_message
+
+            # Check for feedback URL if present in the questionnaire
+            if widget.feedback_url:
+                assert widget.feedback_url in final_message
+                assert "feedback form" in final_message
 
 
 @fixture

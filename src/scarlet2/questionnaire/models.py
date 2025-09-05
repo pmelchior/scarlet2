@@ -54,4 +54,5 @@ class Questionnaire(BaseModel):
 
     initial_template: str
     initial_commentary: str = ""
+    feedback_url: str | None = None
     questions: list[Question | Switch]
