@@ -9,7 +9,7 @@ from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.python import PythonLexer
 from pytest import fixture
-from scarlet2.questionnaire.models import Questionnaire
+from scarlet2.questionnaire.models import Questionnaire, QuestionAnswers, QuestionAnswer
 from scarlet2.questionnaire.questionnaire import (
     OUTPUT_BOX_LAYOUT,
     OUTPUT_BOX_STYLE_FILE,
@@ -72,6 +72,18 @@ def example_questionnaire_with_feedback(example_questionnaire):
     questionnaire = example_questionnaire.model_copy(deep=True)
     questionnaire.feedback_url = "https://example.com/feedback"
     return questionnaire
+
+@fixture
+def example_question_answers(example_questionnaire):
+    """An example list of question answers for the exmaple questionnaire"""
+    answer_inds = [0, 1, 0]  # indices of answers to select for each question
+    questions = [
+        example_questionnaire.questions[0],
+        example_questionnaire.questions[0].answers[0].followups[0],
+        example_questionnaire.questions[0].answers[0].followups[1],
+    ]
+    qas = [QuestionAnswer(question=q.question, answer=q.answers[i].answer, value=i) for q, i in zip(questions, answer_inds)]
+    return QuestionAnswers(answers=qas)
 
 
 class Helpers:
