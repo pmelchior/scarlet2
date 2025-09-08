@@ -1,4 +1,5 @@
-from typing import Union
+from typing import Union, List
+from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -47,6 +48,25 @@ Question.model_rebuild()
 Answer.model_rebuild()
 Case.model_rebuild()
 Switch.model_rebuild()
+
+
+class QuestionAnswer(BaseModel):
+    """Represents a user's answer to a question."""
+
+    question: str
+    answer: str
+    value: int
+
+
+class QuestionAnswers(BaseModel):
+    """Represents a collection of user answers to questions."""
+
+    answers: List[QuestionAnswer] = Field(default_factory=list)
+    timestamp: datetime = Field(default_factory=datetime.now)
+
+    def to_dict_list(self) -> List[dict]:
+        """Convert the answers to a list of dictionaries for YAML serialization."""
+        return [answer.model_dump() for answer in self.answers]
 
 
 class Questionnaire(BaseModel):
