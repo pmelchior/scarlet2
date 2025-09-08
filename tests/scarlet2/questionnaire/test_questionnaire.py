@@ -1,3 +1,7 @@
+import os
+from pathlib import Path
+
+from ipywidgets import Button
 from scarlet2.questionnaire import QuestionnaireWidget, run_questionnaire
 from scarlet2.questionnaire.models import Questionnaire
 from scarlet2.questionnaire.questionnaire import load_questions
@@ -352,3 +356,69 @@ def test_run_questionnaire(example_questionnaire, mocker):
     load_questions.assert_called_once()
     QuestionnaireWidget.assert_called_once_with(example_questionnaire)
     QuestionnaireWidget.return_value.show.assert_called_once()
+
+
+def test_save_button_functionality(example_questionnaire, helpers, mocker, tmp_path):
+    """Test that the save button functionality works correctly."""
+    # Change to the temporary directory for file operations
+    original_dir = Path.cwd()
+    os.chdir(tmp_path)
+
+    try:
+        # Create the widget
+        widget = QuestionnaireWidget(example_questionnaire)
+
+        # Mock the open function to test file writing
+        mock_open = mocker.patch("builtins.open", mocker.mock_open())
+
+        # Test saving when there are no answers yet
+        # Get the save button
+        save_button_container = widget.question_box.children[-1]
+        save_button = save_button_container.children[-1]
+        assert isinstance(save_button, Button)
+        assert save_button.description == "Save Answers"
+
+        # Click the save button
+        save_button.click()
+
+        # Check that the warning message was set
+        assert widget.save_message is None  # Message is reset after rendering
+
+        # Answer a question to have something to save
+        first_button = helpers.get_answer_button(widget, 0)
+        first_button.click()
+
+        # Click the save button again
+        save_button_container = widget.question_box.children[-1]
+        save_button = save_button_container.children[-1]
+        save_button.click()
+
+        # Check that the file was written with a name matching the expected pattern
+        assert mock_open.call_count == 1
+        filename = mock_open.call_args[0][0]
+        assert filename.startswith("questionnaire_answers_")
+        assert filename.endswith(".yaml")
+
+        # Check that the success message was set
+        assert widget.save_message is None  # Message is reset after rendering
+
+        # Check that yaml.dump was called with the correct data
+        yaml_dump_mock = mocker.patch("yaml.dump")
+
+        # Click the save button again to trigger yaml.dump with our mock
+        save_button.click()
+
+        # Check that yaml.dump was called
+        yaml_dump_mock.assert_called_once()
+
+        # Check that the first argument to yaml.dump is a dict containing the answers
+        dump_args = yaml_dump_mock.call_args[0]
+        assert isinstance(dump_args[0], dict)
+        assert "answers" in dump_args[0]
+        assert len(dump_args[0]["answers"]) == 1
+        assert dump_args[0]["answers"][0]["question"] == example_questionnaire.questions[0].question
+        assert dump_args[0]["answers"][0]["answer"] == example_questionnaire.questions[0].answers[0].answer
+        assert dump_args[0]["answers"][0]["value"] == 0
+    finally:
+        # Change back to the original directory
+        os.chdir(original_dir)

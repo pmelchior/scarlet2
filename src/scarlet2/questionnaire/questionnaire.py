@@ -336,7 +336,7 @@ class QuestionnaireWidget:
 
         # Save to file
         with open(filename, 'w') as f:
-            yaml.dump(question_answers.to_dict_list(), f, default_flow_style=False)
+            yaml.dump(question_answers.model_dump(), f, default_flow_style=False)
 
         # Set success message
         self.save_message = {
