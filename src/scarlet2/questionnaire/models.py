@@ -64,10 +64,6 @@ class QuestionAnswers(BaseModel):
     answers: List[QuestionAnswer] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=datetime.now)
 
-    def to_dict_list(self) -> List[dict]:
-        """Convert the answers to a list of dictionaries for YAML serialization."""
-        return [answer.model_dump() for answer in self.answers]
-
 
 class Questionnaire(BaseModel):
     """Represents a questionnaire with an initial template and a list of questions."""

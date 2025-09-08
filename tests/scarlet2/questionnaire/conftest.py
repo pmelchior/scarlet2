@@ -91,13 +91,18 @@ class Helpers:
         # The first element is the CSS snippet
         # Then there are previous question containers
         # Then there's the current question label
-        # Finally, there are the answer buttons
+        # Then there's the buttons container
+        # Finally, there's the save button container
         css_offset = 1
         prev_questions_offset = len(widget.question_answers)
         question_label_offset = 1
 
-        button_index = css_offset + prev_questions_offset + question_label_offset + answer_index
-        return widget.question_box.children[button_index]
+        # Get the buttons container which is at index after the question label
+        buttons_container_index = css_offset + prev_questions_offset + question_label_offset
+        buttons_container = widget.question_box.children[buttons_container_index]
+
+        # Return the specific button from the buttons container
+        return buttons_container.children[answer_index]
 
     @staticmethod
     def get_prev_question_button(widget, question_index):
@@ -159,9 +164,25 @@ class Helpers:
         assert widget.question_box.layout == QUESTION_BOX_LAYOUT
 
         len_cur_answers = len(widget.current_question.answers) if widget.current_question else 0
-        # Add 1 for the CSS snippet
+        # Add 1 for the CSS snippet, 1 for the save button container
         css_snippet_count = 1
-        expected_children_count = len(widget.question_answers) + 1 + len_cur_answers + css_snippet_count
+        save_button_container_count = 1
+
+        # If there's a current question, we have:
+        # - CSS snippet
+        # - Previous question containers
+        # - Current question label
+        # - Buttons container
+        # - Save button container
+        if widget.current_question:
+            expected_children_count = css_snippet_count + len(widget.question_answers) + 1 + 1 + save_button_container_count
+        # If there's no current question, we have:
+        # - CSS snippet
+        # - Previous question containers
+        # - Final message container
+        # - Save button container
+        else:
+            expected_children_count = css_snippet_count + len(widget.question_answers) + 1 + save_button_container_count
 
         assert len(widget.question_box.children) == expected_children_count
 
@@ -186,22 +207,49 @@ class Helpers:
             assert isinstance(widget.question_box.children[qs_ind], HTML)
             assert widget.current_question.question in widget.question_box.children[qs_ind].value
 
+            # Get the buttons container which is at index after the question label
+            buttons_container_index = qs_ind + 1
+            buttons_container = widget.question_box.children[buttons_container_index]
+            assert isinstance(buttons_container, VBox)
+
+            # Check each button in the buttons container
             for btn, ans in zip(
-                widget.question_box.children[qs_ind + 1 :], widget.current_question.answers, strict=False
+                buttons_container.children, widget.current_question.answers, strict=False
             ):
                 assert isinstance(btn, Button)
                 assert btn.description == ans.answer
                 assert btn.tooltip == ans.tooltip
 
         else:
-            assert isinstance(widget.question_box.children[-1], HTML)
-            final_message = widget.question_box.children[-1].value
+            # When there's no current question, we have:
+            # - CSS snippet
+            # - Previous question containers
+            # - Final message container
+            # - Save button container
+
+            # Get the final message container which is at index before the save button container
+            final_message_index = len(widget.question_box.children) - 2
+            final_message_container = widget.question_box.children[final_message_index]
+            assert isinstance(final_message_container, VBox)
+
+            # The final message is in the HTML child of the container
+            final_message_html = final_message_container.children[0]
+            assert isinstance(final_message_html, HTML)
+            final_message = final_message_html.value
             assert "You're done" in final_message
 
             # Check for feedback URL if present in the questionnaire
             if widget.feedback_url:
                 assert widget.feedback_url in final_message
                 assert "feedback form" in final_message
+
+        # Check that the last child is the save button container
+        save_button_container = widget.question_box.children[-1]
+        assert isinstance(save_button_container, VBox)
+        assert len(save_button_container.children) > 0
+        save_button = save_button_container.children[-1]
+        assert isinstance(save_button, Button)
+        assert save_button.description == "Save Answers"
 
 
 @fixture
