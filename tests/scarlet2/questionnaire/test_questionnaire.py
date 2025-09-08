@@ -328,7 +328,7 @@ def test_questionnaire_feedback_url(example_questionnaire_with_feedback, helpers
     # Complete all questions
     _inds = [0, 1, 0, 0]
     for ans_ind in _inds:
-        button = widget.question_box.children[len(widget.question_answers) + 1 + ans_ind]
+        button = helpers.get_answer_button(widget, ans_ind)
         button.click()
 
     # Check that the questionnaire is completed
