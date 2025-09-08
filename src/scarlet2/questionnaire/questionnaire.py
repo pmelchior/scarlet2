@@ -5,7 +5,7 @@ import jinja2
 import markdown
 import yaml
 from IPython.display import display
-from ipywidgets import HTML, Button, HBox, Label, Layout, VBox
+from ipywidgets import HTML, Button, HBox, Layout, VBox
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import PythonLexer
@@ -41,6 +41,7 @@ class QuestionnaireWidget:
         self.questions = questionnaire.questions
         self.code_output = questionnaire.initial_template
         self.commentary = questionnaire.initial_commentary
+        self.feedback_url = questionnaire.feedback_url
 
         self._init_questions()
         self._init_ui()
@@ -99,7 +100,21 @@ class QuestionnaireWidget:
         previous_qs = self._generate_previous_questions()
 
         if self.current_question is None:
-            self.question_box.children = previous_qs + [Label("🎉 You're done!")]
+            final_message = "<div>🎉 You're done!</div>"
+            if self.feedback_url:
+                final_message = (
+                    final_message
+                    + f"""
+                    <div style="font-size: 0.9em;">
+                    If you encountered any difficulties or have any suggestions,
+                    <a href="{self.feedback_url}" target="_blank"
+                    style="text-decoration: underline; color: #0066cc;">
+                    please fill out our feedback form here.
+                    </a>
+                    </div>
+                """
+                )
+            self.question_box.children = previous_qs + [HTML(final_message)]
             return
 
         q_label = HTML(f"<b>{self.current_question.question}</b>")

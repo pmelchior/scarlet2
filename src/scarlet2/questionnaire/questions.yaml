@@ -1,4 +1,5 @@
-initial_template: '{{code}}'
+initial_template: "import scarlet2\n{{imports}}\n\n{{code}}"
+feedback_url: "https://docs.google.com/forms/d/e/1FAIpQLScKHbiqxhizacgzRx3xHEdqqjgtZBsxjtQZFJlYBdLcbOnfBg/viewform"
 questions:
   - question: Do you have a single image, or multiple images?
     answers:
@@ -50,6 +51,8 @@ questions:
             \n    channels=channels,
             \n)
             \n\n{{frame}}"
+          - replacement: imports
+            code: "import jax.numpy as jnp\n{{imports}}"
         commentary: "Once you have specified channels for each observation, each one can be set up by initializing an `Observation` object."
   - question: Click to continue
     answers:
@@ -111,6 +114,7 @@ questions:
         - value: 0
           questions:
           - question: Would you like to model galaxies with?
+            variable: "galaxy_model"
             answers:
             - answer: flexible non-parametric morphology models (starlets)
               templates:
@@ -136,18 +140,17 @@ questions:
             - answer: non-parametric models guided by a prior for HSC or ZTF galaxies
               templates:
                 - replacement: source_init
-                  code: "import scarlet2.init as init
-                      \n
-                      \nwith scarlet2.Scene(model_frame) as scene:
+                  code: "with scarlet2.Scene(model_frame) as scene:
                       \n    for i, center in enumerate(ra_dec):
                       \n        try:
                       \n            spectrum, morph = init.from_gaussian_moments([obs_hst, obs_hsc], center, min_corr=0.99)
                       \n        except ValueError:
                       \n            spectrum = init.pixel_spectrum([obs_hst, obs_hsc], center)
-                      \nmorph = init.compact_morphology()
+                      \n    morph = init.compact_morphology()
                       \n      scarlet2.Source(center, spectrum, morph)
-                      \n)
                       \n\n{{source_init}}"
+                - replacement: imports
+                  code: "import scarlet2.init as init\n{{imports}}"
             - answer: Sersic profiles?
               templates:
                 - replacement: source_init
@@ -177,30 +180,29 @@ questions:
         - value: null
           questions:
             - question: Would you like to model galaxies with?
+              variable: "galaxy_model"
               answers:
                 - answer: flexible non-parametric morphology models (starlets)
                   templates:
                     - replacement: source_init
-                      code: "import scarlet2.init as init
-                            \n
-                            \nwith scarlet2.Scene(model_frame) as scene:
+                      code: "with scarlet2.Scene(model_frame) as scene:
                             \n    for i, center in enumerate(ra_dec):
                             \n        try:
                             \n            spectrum, morph = init.from_gaussian_moments([obs_hst, obs_hsc], center, min_corr=0.99)
                             \n        except ValueError:
                             \n            spectrum = init.pixel_spectrum([obs_hst, obs_hsc], center)
                             \nmorph = init.compact_morphology()
-                            \n    morph = scarlet2.StarletMorphology.from_image(morph
+                            \n    morph = scarlet2.StarletMorphology.from_image(morph,
                             \n      scarlet2.Source(center, spectrum, morph)
                             \n)
                             \n\n{{source_init}}"
+                    - replacement: imports
+                      code: "import scarlet2.init as init\n{{imports}}"
                   commentary: "Galaxies with starlet morphologies can be initialized as follows"
                 - answer: non-parametric models guided by a prior for HSC or ZTF galaxies
                   templates:
                     - replacement: source_init
-                      code: "import scarlet2.init as init
-                      \n
-                      \nwith scarlet2.Scene(model_frame) as scene:
+                      code: "with scarlet2.Scene(model_frame) as scene:
                       \n    for i, center in enumerate(ra_dec):
                       \n        try:
                       \n            spectrum, morph = init.from_gaussian_moments([obs_hst, obs_hsc], center, min_corr=0.99)
@@ -210,12 +212,14 @@ questions:
                       \n      scarlet2.Source(center, spectrum, morph)
                       \n)
                       \n\n{{source_init}}"
+                    - replacement: imports
+                      code: "import scarlet2.init as init\n{{imports}}"
                   commentary: "Galaxies with a morphology prior applied during parameter fitting can be initialized as follows"
                 - answer: Sersic profiles?
                   templates:
                     - replacement: source_init
                       code: "# 1) Host galaxy that is static across epochs
-                      \nspectrum = initialization.pixel_spectrum(obs_sc2, center)
+                      \nspectrum = init.pixel_spectrum(obs_sc2, center)
                       \nsersic = scarlet2.SersicMorphology(
                       \n                                    ellipticity = jnp.asarray([0.2,-0.5]),        
                       \n                                    size= jnp.asarray(3.5),
@@ -226,5 +230,182 @@ questions:
                       \n)
                       \n
                       \n\n{{source_init}}"
+                    - replacement: imports
+                      code: "import scarlet2.init as init\n{{imports}}"
 
     - answer: "No"
+  - question: Do you have any point sources to model?
+    variable: "point_sources"
+    answers:
+    - answer: "Yes"
+      followups:
+      - question: Are any of the point sources transient or variable?
+        answers:
+        - answer: "Yes"
+          commentary: "Variable point sources can be initialized as follows"
+          templates:
+          - replacement: source_init
+            code: "# 2) Point source for the transient
+                  \n# Define the epochs where the transient is allowed to have a non-zero amplitude (this could be all epochs)
+                  \nepochs = [2, 3]
+                  \n# As we already know that the transient is present, we can measure the flux at the center location
+                  \n# Initializing as zero also works
+                  \nspectrum = scarlet2.init.pixel_spectrum(obs, center)
+                  \n 
+                  \nscarlet2.PointSource(
+                  \n    center, scarlet2.TransientArraySpectrum(spectrum, epochs=epochs, epoch_selector=epoch_selector)
+                  \n)
+                  \n\n{{source_init}}"
+        - answer: "No"
+          commentary: "Point sources can be initialized as follows"
+          templates:
+          - replacement: source_init
+            code: "# 2) Point source for the transient
+                  \n# Define the epochs where the transient is allowed to have a non-zero amplitude (this could be all epochs)
+                  \nepochs = [2, 3]
+                  \n# As we already know that the transient is present, we can measure the flux at the center location
+                  \n# Initializing as zero also works
+                  \nspectrum = scarlet2.init.pixel_spectrum(obs, center)
+                  \n 
+                  \nscarlet2.PointSource(
+                  \n    center, scarlet2.TransientArraySpectrum(spectrum, epochs=epochs, epoch_selector=epoch_selector)
+                  \n)
+                  \n\n{{source_init}}"
+    - answer: "No"
+  - question: Click to continue
+    answers:
+    - answer: Continue
+      templates:
+        - replacement: source_init
+          code: "print(scene.sources)
+                \n\n{{parameters}}"
+      commentary: "After initializing all sources, You can check the final list of sources as follows"
+  - question: Click to continue
+    answers:
+    - answer: Continue
+      templates:
+        - replacement: parameters
+          code: "pos_step = 1e-2
+                \nmorph_step = lambda p: scarlet2.relative_step(p, factor=1e-3)
+                \nSED_step = lambda p: scarlet2.relative_step(p, factor=5e-2)
+
+                \nparameters = scene.make_parameters()
+                \n\n{{parameters}}"
+        - replacement: imports
+          code: "from numpyro.distributions import constraints\n{{imports}}"
+      commentary: "You can initialize parameters as follows"
+  - switch: galaxy_model
+    cases:
+    - value: 0
+      questions:
+      - question: Click to continue
+        answers:
+        - answer: Continue
+          commentary: "We set the parameters for the galaxy model."
+          templates:
+          - replacement: parameters
+            code: "parameters += scarlet2.Parameter(
+                  \n    scene.sources[0].spectrum.data, name=f\"spectrum.{0}\", constraint=constraints.positive, stepsize=SED_step
+                  \n)
+                  \nparameters += scarlet2.Parameter(
+                  \n    scene.sources[0].morphology.coeffs,
+                  \n    name=f\"morph.{0}\",
+                  \n    stepsize=morph_step,
+                  \n)
+                  \n\n{{parameters}}"
+    - value: 1
+      questions:
+        - question: Click to continue
+          answers:
+            - answer: Continue
+              commentary: "We set the parameters for the galaxy model."
+              templates:
+                - replacement: parameters
+                  code: "# instantiate the prior class
+                        \ntemp = 2e-2  # values in the range of [1e-3, 1e-1] produce good results
+                        \nprior32 = get_prior(\"hsc32\")
+                        \nprior64 = get_prior(\"hsc64\")
+                        \nprior32 = ScorePrior(prior32, prior32.shape(), t=temp)
+                        \nprior64 = ScorePrior(prior64, prior64.shape(), t=temp)
+                        \n
+                        \nparameters += scarlet2.Parameter(
+                        \n    scene.sources[0].spectrum.data, name=f\"spectrum.{0}\", constraint=constraints.positive, stepsize=SED_step
+                        \n)
+                        \n
+                        \nprior = prior32 if max(scene.sources[i].morphology.shape) <= 32 else prior64
+                        \nparameters += Parameter(
+                        \n    scene.sources[i].morphology,
+                        \n    name=f\"morph:{i}\",
+                        \n    prior=prior,  # attach the prior here
+                        \n    stepsize=morph_step,
+                        \n)
+                        \n\n{{parameters}}"
+                - replacement: imports
+                  code: "from galaxygrad import get_prior
+                        \nfrom scarlet2.nn import ScorePrior\n{{imports}}"
+    - value: 2
+      questions:
+        - question: Click to continue
+          answers:
+            - answer: Continue
+              commentary: "We set the parameters for the galaxy model."
+              templates:
+                - replacement: parameters
+                  code: "parameters += scarlet2.Parameter(scene3.sources[i].spectrum.data, name=f\"spectrum.{i}\", constraint=constraints.positive, stepsize=SED_step)    
+                        \nparameters += scarlet2.Parameter(scene3.sources[i].center, name=f\"morph.center.{i}\", constraint=constraints.positive, stepsize=step)
+                        \nparameters += scarlet2.Parameter(scene3.sources[i].morphology.ellipticity, name=f\"morph.ellipticity.{i}\", constraint=constraints.interval(-1,1), stepsize=step)
+                        \nparameters += scarlet2.Parameter(scene3.sources[i].morphology.size, name=f\"morph.size.{i}\", constraint=constraints.interval(1.0,6.0), stepsize=step)
+                        \nparameters += scarlet2.Parameter(scene3.sources[i].morphology.n, name=f\"morph.n.{i}\", constraint=constraints.interval(.5,10), stepsize=step)
+                        \n\n{{parameters}}"
+  - switch: point_sources
+    cases:
+    - value: 0
+      questions:
+      - question: Click to continue
+        answers:
+        - answer: Continue
+          commentary: "We set the parameters for the point source model."
+          templates:
+          - replacement: parameters
+            code: "parameters += scarlet2.Parameter(scene.sources[1].spectrum.data, name=f\"spectrum.{1}\", stepsize=SED_step)
+                  \nparameters += scarlet2.Parameter(
+                  \n    scene.sources[1].center, name=f\"center.{1}\", constraint=constraints.positive, stepsize=pos_step
+                  \n)
+                  \n\n{{parameters}}"
+  - question: Click to continue
+    answers:
+    - answer: Continue
+      commentary: "We can then fit the scene and inspect the result"
+      templates:
+        - replacement: parameters
+          code: "stepnum = 1000
+                \nscene_ = scene.fit(obs, parameters, max_iter=stepnum, e_rel=1e-4, progress_bar=False)
+                \n# Plot the model, for each epoch
+                \nscarlet2.plot.scene(
+                \n    scene_,
+                \n    observation=obs,
+                \n    norm=norm,
+                \n    show_model=True,
+                \n    show_observed=True,
+                \n    show_rendered=True,
+                \n    show_residual=True,
+                \n    add_labels=True,
+                \n    add_boxes=True,
+                \n    split_channels=False,
+                \n    box_kwargs={\"edgecolor\": \"red\", \"facecolor\": \"none\"},
+                \n    label_kwargs={\"color\": \"red\"},
+                \n)
+                \nplt.show()
+                \n\n{{fit}}"
+        - replacement: imports
+          code: "import matplotlib.pyplot as plt\n{{imports}}"
+  - question: Click to continue
+    answers:
+    - answer: Continue
+      commentary: "We can extract the fitted parameter fluxes with syntax like this. Want to sample over the posteriors to get uncertainties on fitted parameters? [Check out the tutorial here.](https://scarlet2.readthedocs.io/en/latest/howto/sampling.html)"
+      templates:
+        - replacement: fit
+          code: "print(\"----------------- {}\".format(channels))
+                \nfor k, src in enumerate(scene_.sources):
+                \n    print(\"Source {}, Fluxes: {}\".format(k, scarlet2.measure.flux(src)))
+                \n\n{{end}}"
