@@ -1,5 +1,5 @@
-from typing import Union, List
 from datetime import datetime
+from typing import Union
 
 from pydantic import BaseModel, Field
 
@@ -61,7 +61,7 @@ class QuestionAnswer(BaseModel):
 class QuestionAnswers(BaseModel):
     """Represents a collection of user answers to questions."""
 
-    answers: List[QuestionAnswer] = Field(default_factory=list)
+    answers: list[QuestionAnswer] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=datetime.now)
 
 

@@ -12,7 +12,12 @@ from pygments.formatters import HtmlFormatter
 from pygments.lexers import PythonLexer
 
 from scarlet2.questionnaire.models import (
-    Question, Questionnaire, QuestionAnswer, QuestionAnswers, Switch, Template
+    Question,
+    QuestionAnswer,
+    QuestionAnswers,
+    Questionnaire,
+    Switch,
+    Template,
 )
 
 PACKAGE_PATH = "scarlet2.questionnaire"
@@ -41,7 +46,12 @@ OUTPUT_BOX_LAYOUT = Layout(
 class QuestionnaireWidget:
     """A widget to run an interactive questionnaire in a Jupyter notebook."""
 
-    def __init__(self, questionnaire: Questionnaire, save_path: str | None = None, initial_answers: QuestionAnswers | None = None):
+    def __init__(
+        self,
+        questionnaire: Questionnaire,
+        save_path: str | None = None,
+        initial_answers: QuestionAnswers | None = None,
+    ):
         self.questions = questionnaire.questions
         self.initial_template = questionnaire.initial_template
         self.initial_commentary = questionnaire.initial_commentary
@@ -171,17 +181,18 @@ class QuestionnaireWidget:
             color = "green" if message_type == "success" else "orange"
 
             # Create message HTML
-            message_html = HTML(
-                f'<div class="save-message" style="color: {color}">{message_text}</div>'
-            )
+            message_html = HTML(f'<div class="save-message" style="color: {color}">{message_text}</div>')
             save_components = [message_html, save_button]
             self.save_message = None
 
         # Create a container for the save button
-        save_button_container = VBox(save_components, layout=Layout(
-            width="100%",
-            padding="0",
-        ))
+        save_button_container = VBox(
+            save_components,
+            layout=Layout(
+                width="100%",
+                padding="0",
+            ),
+        )
         save_button_container.add_class("save-button-container")
 
         if self.current_question is None:
@@ -202,7 +213,9 @@ class QuestionnaireWidget:
             # Wrap the final message in a container
             final_message_container = VBox([HTML(final_message)], layout=Layout(margin="0 0 0 0"))
 
-            self.question_box.children = [self.question_box_css_html] + previous_qs + [final_message_container, save_button_container]
+            self.question_box.children = (
+                [self.question_box_css_html] + previous_qs + [final_message_container, save_button_container]
+            )
             return
 
         q_label = HTML(f"<b>{self.current_question.question}</b>")
@@ -225,7 +238,9 @@ class QuestionnaireWidget:
         # Create a container for the buttons
         buttons_container = VBox(buttons, layout=Layout(margin="0"))
 
-        self.question_box.children = [self.question_box_css_html] + previous_qs + [q_label, buttons_container, save_button_container]
+        self.question_box.children = (
+            [self.question_box_css_html] + previous_qs + [q_label, buttons_container, save_button_container]
+        )
 
     def _generate_previous_questions(self):
         items = []
@@ -237,7 +252,7 @@ class QuestionnaireWidget:
                 description=f"{q.question} — {ans.answer}",
                 tooltip="Click to go back",  # native title tooltip as a fallback
                 layout=Layout(width="auto", margin="2px 0"),
-                style={'button_color': 'transparent', 'font_weight': 'normal'},
+                style={"button_color": "transparent", "font_weight": "normal"},
             )
             btn.add_class("prev-btn")
 
@@ -249,7 +264,7 @@ class QuestionnaireWidget:
             btn.on_click(on_click_handler)
 
             # The custom tooltip node (shown on hover via CSS)
-            tip_html = HTML(f"<div class='tooltip'>Click to go back</div>")
+            tip_html = HTML("<div class='tooltip'>Click to go back</div>")
 
             # Wrap button + tooltip in a positioned container
             container = HBox([btn, tip_html], layout=Layout(position="relative"))
@@ -306,14 +321,14 @@ class QuestionnaireWidget:
             QuestionAnswers: The collected question answers.
         """
         question_answers = QuestionAnswers()
-        answers_to_process = self.question_answers if up_to_index is None else self.question_answers[:up_to_index]
+        answers_to_process = (
+            self.question_answers if up_to_index is None else self.question_answers[:up_to_index]
+        )
 
         for question, answer_index in answers_to_process:
             answer = question.answers[answer_index]
             question_answer = QuestionAnswer(
-                question=question.question,
-                answer=answer.answer,
-                value=answer_index
+                question=question.question, answer=answer.answer, value=answer_index
             )
             question_answers.answers.append(question_answer)
 
@@ -324,10 +339,7 @@ class QuestionnaireWidget:
         # Check if there are any answers to save
         if not self.question_answers:
             # Set warning message
-            self.save_message = {
-                "type": "warning",
-                "text": "⚠️ No answers to save yet"
-            }
+            self.save_message = {"type": "warning", "text": "⚠️ No answers to save yet"}
             # Re-render the question box to show the message
             self._render_question_box()
             return None
@@ -343,14 +355,11 @@ class QuestionnaireWidget:
             filename = os.path.join(self.save_path, filename)
 
         # Save to file
-        with open(filename, 'w') as f:
+        with open(filename, "w") as f:
             yaml.dump(question_answers.model_dump(), f, default_flow_style=False)
 
         # Set success message
-        self.save_message = {
-            "type": "success",
-            "text": f"✅ Answers saved to {filename}"
-        }
+        self.save_message = {"type": "success", "text": f"✅ Answers saved to {filename}"}
 
         # Re-render the question box to show the message
         self._render_question_box()
@@ -386,7 +395,7 @@ def run_questionnaire(answer_path=None, *, save_path=None):
     """
     questions = load_questions()
     if answer_path is not None:
-        with open(answer_path, 'r') as f:
+        with open(answer_path, "r") as f:
             raw_answers = yaml.safe_load(f)
             start_answers = QuestionAnswers.model_validate(raw_answers)
             app = QuestionnaireWidget(questions, save_path=save_path, initial_answers=start_answers)

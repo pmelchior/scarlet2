@@ -1,8 +1,8 @@
 import os
-import yaml
 from pathlib import Path
 
-from ipywidgets import Button, HTML
+import yaml
+from ipywidgets import HTML, Button
 from scarlet2.questionnaire import QuestionnaireWidget, run_questionnaire
 from scarlet2.questionnaire.models import Questionnaire
 from scarlet2.questionnaire.questionnaire import load_questions
@@ -316,8 +316,10 @@ def test_questionnaire_previous_question_navigation(example_questionnaire, helpe
     different_button.click()
 
     # Verify the new answer was recorded
-    assert widget.question_answers == [(expected_questions[0], answer_inds[0]), 
-                                      (expected_questions[1], different_answer_ind)]
+    assert widget.question_answers == [
+        (expected_questions[0], answer_inds[0]),
+        (expected_questions[1], different_answer_ind),
+    ]
 
 
 def test_read_questions():
@@ -364,7 +366,7 @@ def test_run_questionnaire_with_params(example_questionnaire, example_question_a
 
     # write example answers to a temporary YAML file
     answers_path = tmp_path / "answers.yaml"
-    with open(answers_path, 'w') as f:
+    with open(answers_path, "w") as f:
         yaml.dump(example_question_answers.model_dump(), f)
 
     mocker.patch("scarlet2.questionnaire.questionnaire.load_questions")
@@ -376,7 +378,9 @@ def test_run_questionnaire_with_params(example_questionnaire, example_question_a
     run_questionnaire(answers_path, save_path=str(tmp_path))
 
     load_questions.assert_called_once()
-    QuestionnaireWidget.assert_called_once_with(example_questionnaire, save_path=str(tmp_path), initial_answers=example_question_answers)
+    QuestionnaireWidget.assert_called_once_with(
+        example_questionnaire, save_path=str(tmp_path), initial_answers=example_question_answers
+    )
     QuestionnaireWidget.return_value.show.assert_called_once()
 
 
@@ -428,13 +432,13 @@ def test_save_button_functionality(example_questionnaire, helpers, tmp_path):
         assert "Answers saved to" in widget.question_box.children[-1].children[0].value
 
         # Read the file and parse the YAML
-        with open(yaml_files[0], 'r') as f:
+        with open(yaml_files[0], "r") as f:
             data = yaml.safe_load(f)
 
         # Verify the parsed YAML data structure
-        assert 'answers' in data
-        assert isinstance(data['answers'], list)
-        assert len(data['answers']) == 4
+        assert "answers" in data
+        assert isinstance(data["answers"], list)
+        assert len(data["answers"]) == 4
 
         expected_questions = [
             example_questionnaire.questions[0],
@@ -443,10 +447,10 @@ def test_save_button_functionality(example_questionnaire, helpers, tmp_path):
             example_questionnaire.questions[1],
         ]
 
-        for eq, ans_ind, ans in zip(expected_questions, answer_inds, data['answers'], strict=False):
-            assert ans['question'] == eq.question
-            assert ans['answer'] == eq.answers[ans_ind].answer
-            assert ans['value'] == ans_ind
+        for eq, ans_ind, ans in zip(expected_questions, answer_inds, data["answers"], strict=False):
+            assert ans["question"] == eq.question
+            assert ans["answer"] == eq.answers[ans_ind].answer
+            assert ans["value"] == ans_ind
 
     finally:
         # Change back to the original directory
@@ -477,13 +481,13 @@ def test_save_with_path(example_questionnaire, helpers, tmp_path):
     assert len(yaml_files) == 1
 
     # Read the file and parse the YAML
-    with open(yaml_files[0], 'r') as f:
+    with open(yaml_files[0], "r") as f:
         data = yaml.safe_load(f)
 
     # Verify the parsed YAML data structure
-    assert 'answers' in data
-    assert isinstance(data['answers'], list)
-    assert len(data['answers']) == len(answer_inds)
+    assert "answers" in data
+    assert isinstance(data["answers"], list)
+    assert len(data["answers"]) == len(answer_inds)
 
 
 def test_init_with_answers(example_questionnaire, example_question_answers, helpers):

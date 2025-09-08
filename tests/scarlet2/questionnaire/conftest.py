@@ -9,7 +9,7 @@ from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.python import PythonLexer
 from pytest import fixture
-from scarlet2.questionnaire.models import Questionnaire, QuestionAnswers, QuestionAnswer
+from scarlet2.questionnaire.models import QuestionAnswer, QuestionAnswers, Questionnaire
 from scarlet2.questionnaire.questionnaire import (
     OUTPUT_BOX_LAYOUT,
     OUTPUT_BOX_STYLE_FILE,
@@ -73,6 +73,7 @@ def example_questionnaire_with_feedback(example_questionnaire):
     questionnaire.feedback_url = "https://example.com/feedback"
     return questionnaire
 
+
 @fixture
 def example_question_answers(example_questionnaire):
     """An example list of question answers for the exmaple questionnaire"""
@@ -82,7 +83,10 @@ def example_question_answers(example_questionnaire):
         example_questionnaire.questions[0].answers[0].followups[0],
         example_questionnaire.questions[0].answers[0].followups[1],
     ]
-    qas = [QuestionAnswer(question=q.question, answer=q.answers[i].answer, value=i) for q, i in zip(questions, answer_inds)]
+    qas = [
+        QuestionAnswer(question=q.question, answer=q.answers[i].answer, value=i)
+        for q, i in zip(questions, answer_inds, strict=False)
+    ]
     return QuestionAnswers(answers=qas)
 
 
@@ -178,14 +182,18 @@ class Helpers:
         # - Buttons container
         # - Save button container
         if widget.current_question:
-            expected_children_count = css_snippet_count + len(widget.question_answers) + 1 + 1 + save_button_container_count
+            expected_children_count = (
+                css_snippet_count + len(widget.question_answers) + 1 + 1 + save_button_container_count
+            )
         # If there's no current question, we have:
         # - CSS snippet
         # - Previous question containers
         # - Final message container
         # - Save button container
         else:
-            expected_children_count = css_snippet_count + len(widget.question_answers) + 1 + save_button_container_count
+            expected_children_count = (
+                css_snippet_count + len(widget.question_answers) + 1 + save_button_container_count
+            )
 
         assert len(widget.question_box.children) == expected_children_count
 
@@ -216,9 +224,7 @@ class Helpers:
             assert isinstance(buttons_container, VBox)
 
             # Check each button in the buttons container
-            for btn, ans in zip(
-                buttons_container.children, widget.current_question.answers, strict=False
-            ):
+            for btn, ans in zip(buttons_container.children, widget.current_question.answers, strict=False):
                 assert isinstance(btn, Button)
                 assert btn.description == ans.answer
                 assert btn.tooltip == ans.tooltip
