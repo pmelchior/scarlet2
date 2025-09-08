@@ -17,6 +17,12 @@
 .save-button {
     font-size: 0.9em;
 }
+
+.save-message {
+    margin-top: 10px;
+    text-align: left;
+}
+
 .prev-item { 
     position: relative; 
     overflow: visible;
