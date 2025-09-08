@@ -140,6 +140,22 @@ class QuestionnaireWidget:
     def _render_question_box(self):
         previous_qs = self._generate_previous_questions()
 
+        # Create save button
+        save_button = Button(
+            description="Save Answers",
+            tooltip="Save all answers to a YAML file",
+            button_style="success",  # Use a green button for save
+        )
+        save_button.add_class("save-button")  # Add a class for CSS targeting
+        save_button.on_click(self._save_answers_to_yaml)
+
+        # Create a container for the save button
+        save_button_container = VBox([save_button], layout=Layout(
+            width="100%",
+            padding="0",
+        ))
+        save_button_container.add_class("save-button-container")
+
         if self.current_question is None:
             final_message = "<div>🎉 You're done!</div>"
             if self.feedback_url:
@@ -155,7 +171,10 @@ class QuestionnaireWidget:
                     </div>
                 """
                 )
-            self.question_box.children = [self.question_box_css_html] + previous_qs + [HTML(final_message)]
+            # Wrap the final message in a container
+            final_message_container = VBox([HTML(final_message)], layout=Layout(margin="0 0 0 0"))
+
+            self.question_box.children = [self.question_box_css_html] + previous_qs + [final_message_container, save_button_container]
             return
 
         q_label = HTML(f"<b>{self.current_question.question}</b>")
@@ -175,7 +194,10 @@ class QuestionnaireWidget:
 
             buttons.append(button)
 
-        self.question_box.children = [self.question_box_css_html] + previous_qs + [q_label] + buttons
+        # Create a container for the buttons
+        buttons_container = VBox(buttons, layout=Layout(margin="0"))
+
+        self.question_box.children = [self.question_box_css_html] + previous_qs + [q_label, buttons_container, save_button_container]
 
     def _generate_previous_questions(self):
         items = []
@@ -246,6 +268,85 @@ class QuestionnaireWidget:
         )
 
         self.output_container.value = html_content
+
+    def _save_answers_to_yaml(self, _):
+        """Save all user answers to a YAML file."""
+        # Prepare data structure for saving
+        answers_data = []
+
+        # Check if there are any answers to save
+        if not self.question_answers:
+            # Show message that there are no answers to save
+            message_html = HTML(
+                '<div style="color: orange; margin-top: 10px;">⚠️ No answers to save yet</div>'
+            )
+
+            # Add message to question box
+            children = list(self.question_box.children)
+            # Remove any previous messages
+            children = [c for c in children if not (isinstance(c, HTML) and 
+                                                  ("✅ Answers saved to" in c.value or 
+                                                   "⚠️ No answers to save yet" in c.value))]
+
+            # Get the save button container (last element) and remove it from the list
+            save_button_container = children[-1]
+            children = children[:-1]
+
+            # Wrap the message in a container
+            message_container = VBox([message_html], layout=Layout(margin="10px 0 0 0"))
+
+            # Add the message container and then the save button container back
+            children.append(message_container)
+            children.append(save_button_container)
+
+            self.question_box.children = children
+            return None
+
+        # Collect answers
+        for question, answer_index in self.question_answers:
+            answer = question.answers[answer_index]
+            answers_data.append({
+                "question": question.question,
+                "answer": answer.answer,
+                "variable": question.variable,
+                "value": answer_index
+            })
+
+        # Create a filename with timestamp to avoid overwriting
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"questionnaire_answers_{timestamp}.yaml"
+
+        # Save to file
+        with open(filename, 'w') as f:
+            yaml.dump(answers_data, f, default_flow_style=False)
+
+        # Show success message
+        success_html = HTML(
+            f'<div style="color: green; margin-top: 10px;">✅ Answers saved to {filename}</div>'
+        )
+
+        # Add success message to question box
+        children = list(self.question_box.children)
+        # Remove any previous messages
+        children = [c for c in children if not (isinstance(c, HTML) and 
+                                              ("✅ Answers saved to" in c.value or 
+                                               "⚠️ No answers to save yet" in c.value))]
+
+        # Get the save button container (last element) and remove it from the list
+        save_button_container = children[-1]
+        children = children[:-1]
+
+        # Wrap the success message in a container
+        success_container = VBox([success_html], layout=Layout(margin="10px 0 0 0"))
+
+        # Add the success container and then the save button container back
+        children.append(success_container)
+        children.append(save_button_container)
+
+        self.question_box.children = children
+
+        return filename
 
     def show(self):
         """Display the widget in a Jupyter notebook."""
