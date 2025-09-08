@@ -100,11 +100,6 @@ class Helpers:
         Returns:
             The answer button widget
         """
-        # The first element is the CSS snippet
-        # Then there are previous question containers
-        # Then there's the current question label
-        # Then there's the buttons container
-        # Finally, there's the save button container
         css_offset = 1
         prev_questions_offset = len(widget.question_answers)
         question_label_offset = 1
@@ -127,8 +122,6 @@ class Helpers:
         Returns:
             The previous question button widget
         """
-        # The first element is the CSS snippet
-        # Then there are previous question containers
         css_offset = 1
 
         container = widget.question_box.children[css_offset + question_index]
@@ -175,8 +168,6 @@ class Helpers:
         assert isinstance(widget.question_box, VBox)
         assert widget.question_box.layout == QUESTION_BOX_LAYOUT
 
-        len_cur_answers = len(widget.current_question.answers) if widget.current_question else 0
-        # Add 1 for the CSS snippet, 1 for the save button container
         css_snippet_count = 1
         save_button_container_count = 1
 
