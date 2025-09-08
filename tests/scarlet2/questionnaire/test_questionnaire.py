@@ -1,5 +1,4 @@
 import os
-import time
 import yaml
 from pathlib import Path
 
@@ -356,7 +355,28 @@ def test_run_questionnaire(example_questionnaire, mocker):
     run_questionnaire()
 
     load_questions.assert_called_once()
-    QuestionnaireWidget.assert_called_once_with(example_questionnaire)
+    QuestionnaireWidget.assert_called_once_with(example_questionnaire, save_path=None)
+    QuestionnaireWidget.return_value.show.assert_called_once()
+
+
+def test_run_questionnaire_with_params(example_questionnaire, example_question_answers, tmp_path, mocker):
+    """Mock the display function to test that run_questionnaire() works correctly with parameters."""
+
+    # write example answers to a temporary YAML file
+    answers_path = tmp_path / "answers.yaml"
+    with open(answers_path, 'w') as f:
+        yaml.dump(example_question_answers.model_dump(), f)
+
+    mocker.patch("scarlet2.questionnaire.questionnaire.load_questions")
+    mocker.patch("scarlet2.questionnaire.questionnaire.QuestionnaireWidget")
+
+    from scarlet2.questionnaire.questionnaire import QuestionnaireWidget, load_questions
+
+    load_questions.return_value = example_questionnaire
+    run_questionnaire(answers_path, save_path=str(tmp_path))
+
+    load_questions.assert_called_once()
+    QuestionnaireWidget.assert_called_once_with(example_questionnaire, save_path=str(tmp_path), initial_answers=example_question_answers)
     QuestionnaireWidget.return_value.show.assert_called_once()
 
 
@@ -396,14 +416,11 @@ def test_save_button_functionality(example_questionnaire, helpers, tmp_path):
         save_button = save_button_container.children[-1]
         save_button.click()
 
+        helpers.assert_widget_ui_matches_state(widget)
+
         # Check that the file was created in the temporary directory
         yaml_files = list(tmp_path.glob("questionnaire_answers_*.yaml"))
         assert len(yaml_files) == 1
-
-        # Check that the filename matches the expected pattern
-        filename = yaml_files[0].name
-        assert filename.startswith("questionnaire_answers_")
-        assert filename.endswith(".yaml")
 
         # Check that the success message was set
         assert widget.save_message is None  # Message is reset after rendering
@@ -434,3 +451,53 @@ def test_save_button_functionality(example_questionnaire, helpers, tmp_path):
     finally:
         # Change back to the original directory
         os.chdir(original_dir)
+
+
+def test_save_with_path(example_questionnaire, helpers, tmp_path):
+    """Test that the save button functionality works correctly with a specified path."""
+
+    # Create the widget
+    widget = QuestionnaireWidget(example_questionnaire, save_path=str(tmp_path))
+
+    answer_inds = [0, 1]
+
+    for answer_ind in answer_inds:
+        button = helpers.get_answer_button(widget, answer_ind)
+        button.click()
+
+    # Click the save button with the specific path
+    save_button_container = widget.question_box.children[-1]
+    save_button = save_button_container.children[-1]
+    save_button.click()
+
+    helpers.assert_widget_ui_matches_state(widget)
+
+    # Check that the file was created in the temporary directory
+    yaml_files = list(tmp_path.glob("questionnaire_answers_*.yaml"))
+    assert len(yaml_files) == 1
+
+    # Read the file and parse the YAML
+    with open(yaml_files[0], 'r') as f:
+        data = yaml.safe_load(f)
+
+    # Verify the parsed YAML data structure
+    assert 'answers' in data
+    assert isinstance(data['answers'], list)
+    assert len(data['answers']) == len(answer_inds)
+
+
+def test_init_with_answers(example_questionnaire, example_question_answers, helpers):
+    """Test that the widget initializes correctly with pre-existing answers."""
+    widget = QuestionnaireWidget(example_questionnaire, initial_answers=example_question_answers)
+
+    expected_questions = [
+        example_questionnaire.questions[0],
+        example_questionnaire.questions[0].answers[0].followups[0],
+        example_questionnaire.questions[0].answers[0].followups[1],
+    ]
+    expected_answer_inds = [0, 1, 0]
+
+    assert widget.question_answers == list(zip(expected_questions, expected_answer_inds, strict=False))
+    assert widget.current_question is example_questionnaire.questions[1]
+
+    helpers.assert_widget_ui_matches_state(widget)

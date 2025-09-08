@@ -1,3 +1,4 @@
+import os
 import re
 from importlib.resources import files
 
@@ -40,19 +41,23 @@ OUTPUT_BOX_LAYOUT = Layout(
 class QuestionnaireWidget:
     """A widget to run an interactive questionnaire in a Jupyter notebook."""
 
-    def __init__(self, questionnaire: Questionnaire):
+    def __init__(self, questionnaire: Questionnaire, save_path: str | None = None, initial_answers: QuestionAnswers | None = None):
         self.questions = questionnaire.questions
         self.initial_template = questionnaire.initial_template
         self.initial_commentary = questionnaire.initial_commentary
         self.feedback_url = questionnaire.feedback_url
+        self.save_path = save_path
 
         self._load_resources()
 
         self._init_state()
         self._init_ui()
 
-        self._render_output_box()
-        self._render_next_question()
+        if initial_answers is not None:
+            self._start_with_answers(initial_answers)
+        else:
+            self._render_output_box()
+            self._render_next_question()
 
     def _load_resources(self):
         question_box_css_file = files(VIEWS_PACKAGE_PATH).joinpath(QUESTION_BOX_STYLE_FILE)
@@ -334,6 +339,9 @@ class QuestionnaireWidget:
         timestamp = question_answers.timestamp.strftime("%Y%m%d_%H%M%S")
         filename = f"questionnaire_answers_{timestamp}.yaml"
 
+        if self.save_path is not None:
+            filename = os.path.join(self.save_path, filename)
+
         # Save to file
         with open(filename, 'w') as f:
             yaml.dump(question_answers.model_dump(), f, default_flow_style=False)
@@ -366,7 +374,7 @@ def load_questions() -> Questionnaire:
         return Questionnaire.model_validate(raw)
 
 
-def run_questionnaire():
+def run_questionnaire(answer_path=None, *, save_path=None):
     """Run the Scarlet2 initialization questionnaire in a Jupyter notebook.
 
     The questionnaire guides the user through a series of questions to set up
@@ -377,5 +385,11 @@ def run_questionnaire():
     template for initializing Scarlet2 will be generated.
     """
     questions = load_questions()
-    app = QuestionnaireWidget(questions)
+    if answer_path is not None:
+        with open(answer_path, 'r') as f:
+            raw_answers = yaml.safe_load(f)
+            start_answers = QuestionAnswers.model_validate(raw_answers)
+            app = QuestionnaireWidget(questions, save_path=save_path, initial_answers=start_answers)
+    else:
+        app = QuestionnaireWidget(questions, save_path=save_path)
     app.show()
