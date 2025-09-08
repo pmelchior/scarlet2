@@ -10,7 +10,9 @@ from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import PythonLexer
 
-from scarlet2.questionnaire.models import Question, Questionnaire, Switch, Template
+from scarlet2.questionnaire.models import (
+    Question, Questionnaire, QuestionAnswer, QuestionAnswers, Switch, Template
+)
 
 PACKAGE_PATH = "scarlet2.questionnaire"
 QUESTIONS_FILE_NAME = "questions.yaml"
@@ -75,6 +77,7 @@ class QuestionnaireWidget:
         self.variables = {}
         self.code_output = self.initial_template
         self.commentary = self.initial_commentary
+        self.save_message = None
         self._add_questions_to_stack(self.questions)
 
     def _init_ui(self):
@@ -101,6 +104,10 @@ class QuestionnaireWidget:
 
             # Handle the answer (this will update question_answers)
             self._handle_answer(answer_index, render=False)
+
+        # Reset save message when navigating back
+        self.save_message = None
+
         self._render_output_box()
         self._render_next_question()
 
@@ -135,6 +142,8 @@ class QuestionnaireWidget:
 
     def _render_next_question(self):
         self.current_question = self._get_next_question()
+        # Reset save message when rendering a new question
+        self.save_message = None
         self._render_question_box()
 
     def _render_question_box(self):
@@ -147,10 +156,26 @@ class QuestionnaireWidget:
             button_style="success",  # Use a green button for save
         )
         save_button.add_class("save-button")  # Add a class for CSS targeting
-        save_button.on_click(self._save_answers_to_yaml)
+        save_button.on_click(self._save_answers)
+
+        save_components = [save_button]
+
+        if self.save_message:
+            message_type = self.save_message["type"]
+            message_text = self.save_message["text"]
+
+            # Set color based on message type
+            color = "green" if message_type == "success" else "orange"
+
+            # Create message HTML
+            message_html = HTML(
+                f'<div style="color: {color}; margin-top: 10px;">{message_text}</div>'
+            )
+            save_components = [message_html, save_button]
+            self.save_message = None
 
         # Create a container for the save button
-        save_button_container = VBox([save_button], layout=Layout(
+        save_button_container = VBox(save_components, layout=Layout(
             width="100%",
             padding="0",
         ))
@@ -269,82 +294,48 @@ class QuestionnaireWidget:
 
         self.output_container.value = html_content
 
-    def _save_answers_to_yaml(self, _):
+    def _save_answers(self, _):
         """Save all user answers to a YAML file."""
-        # Prepare data structure for saving
-        answers_data = []
-
         # Check if there are any answers to save
         if not self.question_answers:
-            # Show message that there are no answers to save
-            message_html = HTML(
-                '<div style="color: orange; margin-top: 10px;">⚠️ No answers to save yet</div>'
-            )
-
-            # Add message to question box
-            children = list(self.question_box.children)
-            # Remove any previous messages
-            children = [c for c in children if not (isinstance(c, HTML) and 
-                                                  ("✅ Answers saved to" in c.value or 
-                                                   "⚠️ No answers to save yet" in c.value))]
-
-            # Get the save button container (last element) and remove it from the list
-            save_button_container = children[-1]
-            children = children[:-1]
-
-            # Wrap the message in a container
-            message_container = VBox([message_html], layout=Layout(margin="10px 0 0 0"))
-
-            # Add the message container and then the save button container back
-            children.append(message_container)
-            children.append(save_button_container)
-
-            self.question_box.children = children
+            # Set warning message
+            self.save_message = {
+                "type": "warning",
+                "text": "⚠️ No answers to save yet"
+            }
+            # Re-render the question box to show the message
+            self._render_question_box()
             return None
+
+        # Create a QuestionAnswers model
+        question_answers = QuestionAnswers()
 
         # Collect answers
         for question, answer_index in self.question_answers:
             answer = question.answers[answer_index]
-            answers_data.append({
-                "question": question.question,
-                "answer": answer.answer,
-                "variable": question.variable,
-                "value": answer_index
-            })
+            question_answer = QuestionAnswer(
+                question=question.question,
+                answer=answer.answer,
+                value=answer_index
+            )
+            question_answers.answers.append(question_answer)
 
         # Create a filename with timestamp to avoid overwriting
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = question_answers.timestamp.strftime("%Y%m%d_%H%M%S")
         filename = f"questionnaire_answers_{timestamp}.yaml"
 
         # Save to file
         with open(filename, 'w') as f:
-            yaml.dump(answers_data, f, default_flow_style=False)
+            yaml.dump(question_answers.to_dict_list(), f, default_flow_style=False)
 
-        # Show success message
-        success_html = HTML(
-            f'<div style="color: green; margin-top: 10px;">✅ Answers saved to {filename}</div>'
-        )
+        # Set success message
+        self.save_message = {
+            "type": "success",
+            "text": f"✅ Answers saved to {filename}"
+        }
 
-        # Add success message to question box
-        children = list(self.question_box.children)
-        # Remove any previous messages
-        children = [c for c in children if not (isinstance(c, HTML) and 
-                                              ("✅ Answers saved to" in c.value or 
-                                               "⚠️ No answers to save yet" in c.value))]
-
-        # Get the save button container (last element) and remove it from the list
-        save_button_container = children[-1]
-        children = children[:-1]
-
-        # Wrap the success message in a container
-        success_container = VBox([success_html], layout=Layout(margin="10px 0 0 0"))
-
-        # Add the success container and then the save button container back
-        children.append(success_container)
-        children.append(save_button_container)
-
-        self.question_box.children = children
+        # Re-render the question box to show the message
+        self._render_question_box()
 
         return filename
 
