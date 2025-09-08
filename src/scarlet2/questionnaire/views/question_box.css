@@ -1,6 +1,21 @@
 /* Add overflow-x: hidden to the question box to prevent horizontal scrolling */
 .question-box-container {
     overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 300px;  /* Ensure there's enough height for content */
+}
+
+/* Style for the save button container */
+.save-button-container {
+    margin-top: auto;
+    text-align: center;
+    padding: 5px;
+}
+
+/* Style for the save button */
+.save-button {
+    font-size: 0.9em;
 }
 .prev-item { 
     position: relative; 
