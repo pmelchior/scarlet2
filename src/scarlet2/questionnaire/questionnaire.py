@@ -89,24 +89,22 @@ class QuestionnaireWidget:
 
         self.ui = HBox([self.question_box, self.output_box])
 
-    def _start_with_answers(self, answers: list[tuple[Question, int]]):
+    def _start_with_answers(self, question_answers: QuestionAnswers):
         # First reset the state
         self._init_state()
 
-        # Process each answer one by one
-        for question, answer_index in answers:
+        for qa in question_answers.answers:
             # Get the next question
             self.current_question = self._get_next_question()
 
             # Verify the question matches
-            if self.current_question != question:
+            if self.current_question is None or self.current_question.question != qa.question:
                 raise ValueError("Provided answers do not match the question flow.")
 
-            # Handle the answer (this will update question_answers)
-            self._handle_answer(answer_index, render=False)
+            if self.current_question.answers[qa.value].answer != qa.answer:
+                raise ValueError("Provided answers do not match the question flow.")
 
-        # Reset save message when navigating back
-        self.save_message = None
+            self._handle_answer(qa.value, render=False)
 
         self._render_output_box()
         self._render_next_question()
@@ -169,7 +167,7 @@ class QuestionnaireWidget:
 
             # Create message HTML
             message_html = HTML(
-                f'<div style="color: {color}; margin-top: 10px;">{message_text}</div>'
+                f'<div class="save-message" style="color: {color}">{message_text}</div>'
             )
             save_components = [message_html, save_button]
             self.save_message = None
@@ -238,12 +236,10 @@ class QuestionnaireWidget:
             )
             btn.add_class("prev-btn")
 
-            # Create a copy of the current answers up to this index
-            answers_slice = self.question_answers[:i]
+            qas = self._get_question_answers(up_to_index=i)
 
-            # Python callback - using default parameter to capture the loop variable
-            def on_click_handler(btn, answers=answers_slice):
-                self._start_with_answers(answers)
+            def on_click_handler(btn, qas=qas):
+                self._start_with_answers(qas)
 
             btn.on_click(on_click_handler)
 
@@ -294,6 +290,30 @@ class QuestionnaireWidget:
 
         self.output_container.value = html_content
 
+    def _get_question_answers(self, up_to_index=None) -> QuestionAnswers:
+        """Get a QuestionAnswers model containing all answers, optionally up to the specified index.
+
+        Args:
+            up_to_index (int, optional): The index up to which to include answers.
+                If None, includes all answers. Defaults to None.
+
+        Returns:
+            QuestionAnswers: The collected question answers.
+        """
+        question_answers = QuestionAnswers()
+        answers_to_process = self.question_answers if up_to_index is None else self.question_answers[:up_to_index]
+
+        for question, answer_index in answers_to_process:
+            answer = question.answers[answer_index]
+            question_answer = QuestionAnswer(
+                question=question.question,
+                answer=answer.answer,
+                value=answer_index
+            )
+            question_answers.answers.append(question_answer)
+
+        return question_answers
+
     def _save_answers(self, _):
         """Save all user answers to a YAML file."""
         # Check if there are any answers to save
@@ -308,17 +328,7 @@ class QuestionnaireWidget:
             return None
 
         # Create a QuestionAnswers model
-        question_answers = QuestionAnswers()
-
-        # Collect answers
-        for question, answer_index in self.question_answers:
-            answer = question.answers[answer_index]
-            question_answer = QuestionAnswer(
-                question=question.question,
-                answer=answer.answer,
-                value=answer_index
-            )
-            question_answers.answers.append(question_answer)
+        question_answers = self._get_question_answers()
 
         # Create a filename with timestamp to avoid overwriting
         timestamp = question_answers.timestamp.strftime("%Y%m%d_%H%M%S")
