@@ -22,6 +22,9 @@ The questionnaire presents one question at a time with multiple-choice answers. 
 the questionnaire will update the code template to match your choices and display some explanatory text to 
 help you understand the code being generated.
 
+You can navigate through the questions using the answer buttons. If you want to change a previous answer,
+you can click the previous question in the list to go back to that question.
+
 ### Using the Generated Template
 
 As you progress through the questionnaire, a code template is dynamically generated based on your answers.
@@ -34,6 +37,29 @@ In the bottom right of the code output, you can click the "📋 Copy" button at 
 code to your clipboard.
 
 > Note: The template is a starting point that you can modify to fit your specific data. It provides the structure for your project based on your use case.
+
+### Saving Your Progress
+
+If you want to save your questionnaire answers and return to them later, you can use the `Save Answers`
+button in the bottom left of the questionnaire widget. This will save your answers to a yaml file that you can
+then load later and continue from.
+
+The yaml file will be saved to your current working directory with a filename like 
+`scarlet2_questionnaire_timestamp.yaml`. To change where the file is saved, run the questionnaire with the
+`save_path` argument:
+
+```python
+from scarlet2.questionnaire import run_questionnaire
+run_questionnaire(save_path="path/to/save/directory")
+```
+
+To load a previously saved questionnaire, use the `answer_path` argument to specify the path to your saved 
+yaml file:
+
+```python
+from scarlet2.questionnaire import run_questionnaire
+run_questionnaire(answer_path="path/to/saved/answers.yaml")
+```
 
 ### Feedback and Issues
 

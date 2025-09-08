@@ -166,9 +166,8 @@ class QuestionnaireWidget:
         save_button = Button(
             description="Save Answers",
             tooltip="Save all answers to a YAML file",
-            button_style="success",  # Use a green button for save
         )
-        save_button.add_class("save-button")  # Add a class for CSS targeting
+        save_button.add_class("save-button")
         save_button.on_click(self._save_answers)
 
         save_components = [save_button]
@@ -349,7 +348,7 @@ class QuestionnaireWidget:
 
         # Create a filename with timestamp to avoid overwriting
         timestamp = question_answers.timestamp.strftime("%Y%m%d_%H%M%S")
-        filename = f"questionnaire_answers_{timestamp}.yaml"
+        filename = f"scarlet2_questionnaire_answers_{timestamp}.yaml"
 
         if self.save_path is not None:
             filename = os.path.join(self.save_path, filename)

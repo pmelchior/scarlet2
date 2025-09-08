@@ -423,7 +423,7 @@ def test_save_button_functionality(example_questionnaire, helpers, tmp_path):
         helpers.assert_widget_ui_matches_state(widget)
 
         # Check that the file was created in the temporary directory
-        yaml_files = list(tmp_path.glob("questionnaire_answers_*.yaml"))
+        yaml_files = list(tmp_path.glob("scarlet2_questionnaire_answers_*.yaml"))
         assert len(yaml_files) == 1
 
         # Check that the success message was set
@@ -477,7 +477,7 @@ def test_save_with_path(example_questionnaire, helpers, tmp_path):
     helpers.assert_widget_ui_matches_state(widget)
 
     # Check that the file was created in the temporary directory
-    yaml_files = list(tmp_path.glob("questionnaire_answers_*.yaml"))
+    yaml_files = list(tmp_path.glob("scarlet2_questionnaire_answers_*.yaml"))
     assert len(yaml_files) == 1
 
     # Read the file and parse the YAML

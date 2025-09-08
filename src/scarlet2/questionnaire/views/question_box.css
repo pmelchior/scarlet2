@@ -16,6 +16,8 @@
 /* Style for the save button */
 .save-button {
     font-size: 0.9em;
+    background-color: #444444;
+    color: white;
 }
 
 .save-message {
