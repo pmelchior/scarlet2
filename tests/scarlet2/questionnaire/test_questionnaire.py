@@ -1,7 +1,9 @@
 import os
+import time
+import yaml
 from pathlib import Path
 
-from ipywidgets import Button
+from ipywidgets import Button, HTML
 from scarlet2.questionnaire import QuestionnaireWidget, run_questionnaire
 from scarlet2.questionnaire.models import Questionnaire
 from scarlet2.questionnaire.questionnaire import load_questions
@@ -358,7 +360,7 @@ def test_run_questionnaire(example_questionnaire, mocker):
     QuestionnaireWidget.return_value.show.assert_called_once()
 
 
-def test_save_button_functionality(example_questionnaire, helpers, mocker, tmp_path):
+def test_save_button_functionality(example_questionnaire, helpers, tmp_path):
     """Test that the save button functionality works correctly."""
     # Change to the temporary directory for file operations
     original_dir = Path.cwd()
@@ -367,9 +369,6 @@ def test_save_button_functionality(example_questionnaire, helpers, mocker, tmp_p
     try:
         # Create the widget
         widget = QuestionnaireWidget(example_questionnaire)
-
-        # Mock the open function to test file writing
-        mock_open = mocker.patch("builtins.open", mocker.mock_open())
 
         # Test saving when there are no answers yet
         # Get the save button
@@ -383,42 +382,55 @@ def test_save_button_functionality(example_questionnaire, helpers, mocker, tmp_p
 
         # Check that the warning message was set
         assert widget.save_message is None  # Message is reset after rendering
+        assert isinstance(widget.question_box.children[-1].children[0], HTML)
+        assert "No answers to save" in widget.question_box.children[-1].children[0].value
 
-        # Answer a question to have something to save
-        first_button = helpers.get_answer_button(widget, 0)
-        first_button.click()
+        answer_inds = [0, 1, 0, 0]
+
+        for answer_ind in answer_inds:
+            button = helpers.get_answer_button(widget, answer_ind)
+            button.click()
 
         # Click the save button again
         save_button_container = widget.question_box.children[-1]
         save_button = save_button_container.children[-1]
         save_button.click()
 
-        # Check that the file was written with a name matching the expected pattern
-        assert mock_open.call_count == 1
-        filename = mock_open.call_args[0][0]
+        # Check that the file was created in the temporary directory
+        yaml_files = list(tmp_path.glob("questionnaire_answers_*.yaml"))
+        assert len(yaml_files) == 1
+
+        # Check that the filename matches the expected pattern
+        filename = yaml_files[0].name
         assert filename.startswith("questionnaire_answers_")
         assert filename.endswith(".yaml")
 
         # Check that the success message was set
         assert widget.save_message is None  # Message is reset after rendering
+        assert isinstance(widget.question_box.children[-1].children[0], HTML)
+        assert "Answers saved to" in widget.question_box.children[-1].children[0].value
 
-        # Check that yaml.dump was called with the correct data
-        yaml_dump_mock = mocker.patch("yaml.dump")
+        # Read the file and parse the YAML
+        with open(yaml_files[0], 'r') as f:
+            data = yaml.safe_load(f)
 
-        # Click the save button again to trigger yaml.dump with our mock
-        save_button.click()
+        # Verify the parsed YAML data structure
+        assert 'answers' in data
+        assert isinstance(data['answers'], list)
+        assert len(data['answers']) == 4
 
-        # Check that yaml.dump was called
-        yaml_dump_mock.assert_called_once()
+        expected_questions = [
+            example_questionnaire.questions[0],
+            example_questionnaire.questions[0].answers[0].followups[0],
+            example_questionnaire.questions[0].answers[0].followups[1],
+            example_questionnaire.questions[1],
+        ]
 
-        # Check that the first argument to yaml.dump is a dict containing the answers
-        dump_args = yaml_dump_mock.call_args[0]
-        assert isinstance(dump_args[0], dict)
-        assert "answers" in dump_args[0]
-        assert len(dump_args[0]["answers"]) == 1
-        assert dump_args[0]["answers"][0]["question"] == example_questionnaire.questions[0].question
-        assert dump_args[0]["answers"][0]["answer"] == example_questionnaire.questions[0].answers[0].answer
-        assert dump_args[0]["answers"][0]["value"] == 0
+        for eq, ans_ind, ans in zip(expected_questions, answer_inds, data['answers'], strict=False):
+            assert ans['question'] == eq.question
+            assert ans['answer'] == eq.answers[ans_ind].answer
+            assert ans['value'] == ans_ind
+
     finally:
         # Change back to the original directory
         os.chdir(original_dir)
