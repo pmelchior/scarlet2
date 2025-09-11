@@ -391,7 +391,7 @@ def run_questionnaire(answer_path=None, *, save_directory=None):
     The user will be presented with questions and multiple-choice answers, and
     at the end of the questionnaire, a code snippet that can be used as a
     template for initializing Scarlet2 will be generated.
-    
+
     Args:
         answer_path (str, optional): Path to a YAML file with pre-filled answers
             to start the questionnaire from. Defaults to None.
