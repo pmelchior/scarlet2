@@ -52,8 +52,6 @@ def test_questionnaire_handle_answer_selection(example_questionnaire, helpers):
     assert widget.current_question == first_answer.followups[0]
     assert widget.questions_stack == first_answer.followups[1:] + example_questionnaire.questions[1:]
 
-    print(widget.question_box.children)
-
     helpers.assert_widget_ui_matches_state(widget)
 
 
@@ -357,7 +355,7 @@ def test_run_questionnaire(example_questionnaire, mocker):
     run_questionnaire()
 
     load_questions.assert_called_once()
-    QuestionnaireWidget.assert_called_once_with(example_questionnaire, save_path=None)
+    QuestionnaireWidget.assert_called_once_with(example_questionnaire, save_directory=None)
     QuestionnaireWidget.return_value.show.assert_called_once()
 
 
@@ -375,11 +373,11 @@ def test_run_questionnaire_with_params(example_questionnaire, example_question_a
     from scarlet2.questionnaire.questionnaire import QuestionnaireWidget, load_questions
 
     load_questions.return_value = example_questionnaire
-    run_questionnaire(answers_path, save_path=str(tmp_path))
+    run_questionnaire(answers_path, save_directory=str(tmp_path))
 
     load_questions.assert_called_once()
     QuestionnaireWidget.assert_called_once_with(
-        example_questionnaire, save_path=str(tmp_path), initial_answers=example_question_answers
+        example_questionnaire, save_directory=str(tmp_path), initial_answers=example_question_answers
     )
     QuestionnaireWidget.return_value.show.assert_called_once()
 
@@ -461,7 +459,7 @@ def test_save_with_path(example_questionnaire, helpers, tmp_path):
     """Test that the save button functionality works correctly with a specified path."""
 
     # Create the widget
-    widget = QuestionnaireWidget(example_questionnaire, save_path=str(tmp_path))
+    widget = QuestionnaireWidget(example_questionnaire, save_directory=str(tmp_path))
 
     answer_inds = [0, 1]
 

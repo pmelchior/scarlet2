@@ -49,14 +49,14 @@ class QuestionnaireWidget:
     def __init__(
         self,
         questionnaire: Questionnaire,
-        save_path: str | None = None,
+        save_directory: str | None = None,
         initial_answers: QuestionAnswers | None = None,
     ):
         self.questions = questionnaire.questions
         self.initial_template = questionnaire.initial_template
         self.initial_commentary = questionnaire.initial_commentary
         self.feedback_url = questionnaire.feedback_url
-        self.save_path = save_path
+        self.save_directory = save_directory
 
         self._load_resources()
 
@@ -350,8 +350,8 @@ class QuestionnaireWidget:
         timestamp = question_answers.timestamp.strftime("%Y%m%d_%H%M%S")
         filename = f"scarlet2_questionnaire_answers_{timestamp}.yaml"
 
-        if self.save_path is not None:
-            filename = os.path.join(self.save_path, filename)
+        if self.save_directory is not None:
+            filename = os.path.join(self.save_directory, filename)
 
         # Save to file
         with open(filename, "w") as f:
@@ -382,7 +382,7 @@ def load_questions() -> Questionnaire:
         return Questionnaire.model_validate(raw)
 
 
-def run_questionnaire(answer_path=None, *, save_path=None):
+def run_questionnaire(answer_path=None, *, save_directory=None):
     """Run the Scarlet2 initialization questionnaire in a Jupyter notebook.
 
     The questionnaire guides the user through a series of questions to set up
@@ -391,13 +391,20 @@ def run_questionnaire(answer_path=None, *, save_path=None):
     The user will be presented with questions and multiple-choice answers, and
     at the end of the questionnaire, a code snippet that can be used as a
     template for initializing Scarlet2 will be generated.
+    
+    Args:
+        answer_path (str, optional): Path to a YAML file with pre-filled answers
+            to start the questionnaire from. Defaults to None.
+        save_directory (str, optional): Directory where the answers will be saved.
+            If None, answers will be saved in the current working directory.
+            Defaults to None.
     """
     questions = load_questions()
     if answer_path is not None:
         with open(answer_path, "r") as f:
             raw_answers = yaml.safe_load(f)
             start_answers = QuestionAnswers.model_validate(raw_answers)
-            app = QuestionnaireWidget(questions, save_path=save_path, initial_answers=start_answers)
+            app = QuestionnaireWidget(questions, save_directory=save_directory, initial_answers=start_answers)
     else:
-        app = QuestionnaireWidget(questions, save_path=save_path)
+        app = QuestionnaireWidget(questions, save_directory=save_directory)
     app.show()
