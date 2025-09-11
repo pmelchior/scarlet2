@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Union
 
 from pydantic import BaseModel, Field
@@ -47,6 +48,21 @@ Question.model_rebuild()
 Answer.model_rebuild()
 Case.model_rebuild()
 Switch.model_rebuild()
+
+
+class QuestionAnswer(BaseModel):
+    """Represents a user's answer to a question."""
+
+    question: str
+    answer: str
+    value: int
+
+
+class QuestionAnswers(BaseModel):
+    """Represents a collection of user answers to questions."""
+
+    answers: list[QuestionAnswer] = Field(default_factory=list)
+    timestamp: datetime = Field(default_factory=datetime.now)
 
 
 class Questionnaire(BaseModel):
