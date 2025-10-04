@@ -197,8 +197,10 @@ class Frame(eqx.Module):
 
             # concatenate all pixel sizes
             h_temp = get_pixel_size(obs.frame.wcs)
-
+            if isinstance(h_temp, u.Quantity):
+                h_temp = h_temp.to(u.arcsec).value  # standardize pixel sizes, using simple scalars below
             pix_tab.append(h_temp)
+
             # Looking for the sharpest PSF
             psf = obs.frame.psf.morphology
             for psf_channel in psf:
@@ -223,7 +225,7 @@ class Frame(eqx.Module):
         if model_wcs is None:
             model_wcs = obs_ref.frame.wcs
 
-        # Scale of the smallest pixel
+        # Scale of the model pixel
         h = get_pixel_size(model_wcs)
 
         # If needed and psf is not provided: interpolate psf to smallest pixel
