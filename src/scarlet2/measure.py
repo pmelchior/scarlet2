@@ -270,7 +270,7 @@ class Moments(dict):
 
         Returns
         -------
-        None
+        self
         """
         g = self
         n_min = min(p.order, g.order)
@@ -299,6 +299,7 @@ class Moments(dict):
                                 for l in range(j):  # noqa: E741
                                     g[i, j] -= binomial(j, l) * g[i, l] * p[0, j - l]
                         g[i, j] /= p[0, 0]
+        return self
 
     def resize(self, c):
         """Change moments for a change of factor `c` of the size/spatial resolution
@@ -318,7 +319,7 @@ class Moments(dict):
 
         Returns
         -------
-        None
+        self
         """
         # Teague (1980), eq. 34
         if jnp.isscalar(c):
@@ -329,6 +330,7 @@ class Moments(dict):
                 self[e] = self[e] * c[0] ** (e[0] + 1) * c[1] ** (e[1] + 1)
         else:
             raise AttributeError("c must be a scalar of a list or array of two components")
+        return self
 
     def rotate(self, phi):
         """Change moments for rotation of angle `phi`.
@@ -344,7 +346,7 @@ class Moments(dict):
 
         Returns
         -------
-        None
+        self
         """
         assert u.get_physical_type(phi) == "angle"  # check that it's an angle with a suitable unit
         phi = phi.to(u.rad).value
@@ -370,6 +372,8 @@ class Moments(dict):
         for e in self:
             self[e] = mu_p[e]
 
+        return self
+
     def transfer(self, wcs_in, wcs_out):
         """Compute rescaling and rotation from WCSs and apply to moments
 
@@ -385,7 +389,7 @@ class Moments(dict):
 
         Returns
         -------
-        None
+        self
         """
 
         flux_in = self[0, 0]
@@ -398,14 +402,15 @@ class Moments(dict):
             # as flip is the same as rescale(-1), combine both
             # note flip is for y-flip, and we have y/x convention here
             scale = jnp.array((flip, 1)) * scale
-            self.resize(scale)
             phi = angle * u.rad
-            self.rotate(phi)
+            self.resize(scale).rotate(phi)
 
             # TODO: why are we doing a flux normalization???
             flux_out = self[0, 0]
             for key in self.keys():
                 self[key] /= flux_out / flux_in
+
+        return self
 
 
 # def moments(component, N=2, center=None, weight=None):
