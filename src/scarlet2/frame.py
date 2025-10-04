@@ -4,6 +4,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from astropy.coordinates import SkyCoord
+from astropy.wcs import WCS
 
 from .bbox import Box
 from .psf import PSF, GaussianPSF
@@ -48,12 +49,11 @@ class Frame(eqx.Module):
 
         Returns
         -------
-        float
-            Pixel size in arcsec, averaged over x and y direction
+        float, astropy.units.quantity.Quantity
+            Pixel size in units of the WCS sky coordinates
         """
         if self.wcs is not None:
-            # return get_pixel_size(get_affine(self.wcs)) * 60 * 60  # in arcsec
-            return get_scale(self.wcs).mean() * 60 * 60  # in arcsec
+            return get_scale(self.wcs)
         else:
             return 1
 
@@ -131,12 +131,12 @@ class Frame(eqx.Module):
         float
             size in pixels
         """
-        assert u.get_physical_type(distance) == "angle"
-
-        # first computer the pixel size
-        pixel_size = get_pixel_size(self.wcs.celestial) * 60 * 60  # in arcsec/pixel
-
-        return distance.to(u.arcsec).value / pixel_size
+        if self.wcs is not None:
+            assert u.get_physical_type(distance) == "angle"
+            pixel_size = get_pixel_size(self.wcs)
+            return (distance / pixel_size).to(1).value
+        else:
+            return distance
 
     def pixel_to_angle(self, size):
         """Converts pixel size to celestial distance according to this frame WCS
@@ -149,12 +149,10 @@ class Frame(eqx.Module):
         Returns
         -------
         distance: :py:class:`astropy.units.Quantity`
-            Physical size, must be `PhysicalType("angle")`
         """
-        # first computer the pixel size
-        pixel_size = get_pixel_size(self.wcs.celestial) * 60 * 60  # in arcsec/pixel
 
-        distance = size * pixel_size * u.arcsec
+        pixel_size = get_pixel_size(self.wcs)
+        distance = size * pixel_size
         return distance
 
     @staticmethod
@@ -324,7 +322,13 @@ def get_affine(wcs):
 
 # rotation matrix for counter-clockwise rotation from positive x-axis
 # uses (x,y) coordinates!
-_rot_matrix = lambda phi: jnp.array([[jnp.cos(phi), -jnp.sin(phi)], [jnp.sin(phi), jnp.cos(phi)]])
+def _rot_matrix(phi):
+    assert u.get_physical_type(phi) == "angle"
+    phi_ = phi.to(u.rad).value
+    sinphi, cosphi = np.sin(phi_), np.cos(phi_)
+    return jnp.array([[cosphi, -sinphi], [sinphi, cosphi]])
+
+
 # flip in y!!!
 # uses (x,y) coordinates!
 _flip_matrix = lambda flip: jnp.diag(jnp.array((1.0, flip)))
@@ -344,8 +348,8 @@ def get_scale_angle_flip(trans):
     Returns
     -------
     scale: `float`
-    angle: `float`
-    flip: (-1,1)
+    angle: `astropy.units.quantity.Quantity`, unit = u.rad
+    flip: -1 or 1
     """
     if isinstance(trans, (np.ndarray, jnp.ndarray)):  # noqa: SIM108
         M = trans  # noqa: N806
@@ -357,12 +361,17 @@ def get_scale_angle_flip(trans):
     # if not, use scale = jnp.linalg.svd(M, compute_uv=False)
     # but be careful with rotations as anisotropic stretch and rotation do not commute
     scale = jnp.sqrt(jnp.abs(det)).item(0)
+    if isinstance(trans, WCS):
+        unit = trans.celestial.world_axis_units[0]
+        unit = u.Unit(unit)
+        scale = scale * unit
+
     # if rotation is improper: need to apply y-flip to M to get pure rotation matrix (and unique angle)
     improper = det < 0
     flip = -1 if improper else 1
     F = _flip_matrix(flip)  # noqa: N806, flip in y, is identity if flip = 1!!!
     M_ = F @ M  # noqa: N806, flip = inverse flip
-    angle = jnp.arctan2(M_[1, 0], M_[0, 0])
+    angle = jnp.arctan2(M_[1, 0], M_[0, 0]) * u.rad
 
     return scale, angle, flip
 
@@ -402,6 +411,10 @@ def get_scale(wcs, separate=False):
         M = get_affine(wcs)  # noqa: N806
         c1 = (M[0, :] ** 2).sum() ** 0.5
         c2 = (M[1, :] ** 2).sum() ** 0.5
+        if isinstance(wcs, WCS):
+            units = wcs.celestial.world_axis_units[:2]
+            c1 = c1 * u.Unit(units[0])
+            c2 = c2 * u.Unit(units[1])
         return jnp.array([c1, c2])
     else:
         scale, angle, flip = get_scale_angle_flip(wcs)
@@ -421,7 +434,7 @@ def get_angle(wcs):
 
     Returns
     -------
-    float
+    `astropy.units.quantity.Quantity`, unit = u.rad
     """
     scale, angle, flip = get_scale_angle_flip(wcs)
     return angle

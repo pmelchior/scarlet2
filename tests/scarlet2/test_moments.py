@@ -82,7 +82,7 @@ def test_wcs_transfer_moments_rot90():
     # create mock WCS for that image
     wcs_ = WCS(naxis=2)
     wcs_.wcs.ctype = ["RA---TAN", "DEC--TAN"]
-    phi = -90 / 180 * jnp.pi  # in rad, clockwise to counteract the rotation above
+    phi = -90 * u.deg  # clockwise to counteract the rotation above
     wcs_.wcs.pc = _rot_matrix(phi)
 
     # match WCS
@@ -108,8 +108,7 @@ def test_wcs_transfer_moments():
     # create mock WCS for that image
     wcs_ = WCS(naxis=2)
     wcs_.wcs.ctype = ["RA---TAN", "DEC--TAN"]
-    phi = -a.to(u.rad).value
-    wcs_.wcs.pc = 1 / c * (_flip_matrix(-1) @ _rot_matrix(phi))
+    wcs_.wcs.pc = 1 / c * (_flip_matrix(-1) @ _rot_matrix(-a))
 
     # match WCS
     g_.transfer(wcs_, wcs)

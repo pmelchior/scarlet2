@@ -402,8 +402,7 @@ class Moments(dict):
             # as flip is the same as rescale(-1), combine both
             # note flip is for y-flip, and we have y/x convention here
             scale = jnp.array((flip, 1)) * scale
-            phi = angle * u.rad
-            self.resize(scale).rotate(phi)
+            self.resize(scale).rotate(angle)
 
             # TODO: why are we doing a flux normalization???
             flux_out = self[0, 0]
