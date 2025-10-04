@@ -9,6 +9,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from .frame import _rot_matrix
+
 
 ### Interpolant class
 class Interpolant(eqx.Module):
@@ -136,7 +138,7 @@ class Lanczos(Interpolant):
 ### Resampling function
 
 
-def resample2d(signal, coords, warp, interpolant=Quintic()):  # noqa: B008
+def resample2d(signal, coords, warp, interpolant=Lanczos(3)):  # noqa: B008
     """Resample a 2-dimensional image using a Lanczos kernel
 
     Parameters
@@ -214,7 +216,7 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):  # noqa: B008
 
 
 def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):  # noqa: B008
-    """Resample a 2-dimensional image using a Lanczos kernel
+    """Resample a 2-dimensional image using an interpolation kernel
 
     This is assuming that the signal is Hermitian and starting at 0 on axis=2,
     i.e. f(-x, -y) = conjugate(f(x, y))
@@ -300,45 +302,66 @@ def resample_ops(
     kimage,
     shape_in,
     shape_out,
-    res_in,
-    res_out,
-    phi=None,
-    flip_sign=None,
+    scale=1,
+    angle=0,
+    flip=1,
     interpolant=Quintic(),  # noqa: B008
 ):
     """Resampling operation
 
-    This method is used by :py:class:`~scarlet2.renderer.MultiresolutionRenderer`
-    and assumes that the signal is Hermitian and starting at 0 on axis=2,
+    This method uses the Fourier space resampling technique from Gruen & Bernstein (2014).
+    It assumes that the signal is Hermitian and starting at 0 on axis=2,
     i.e. f(-x, -y) = conjugate(f(x, y))
+
+    Parameters
+    ----------
+    kimage: array
+        Complex array of image in Fourier space
+    shape_in: tuple
+        Shape of input image in configuration space
+    shape_out: tuple
+        Shape of output image in configuration space
+    scale: float
+        Scaling factor (= pixel_size_in / pixel_size_out)
+    angle: float
+        Angle of rotation (in radians, counter-clockwise) around the center of the image
+    flip: (-1,1)
+        Flip of the y-axis (if negative) to get an improper rotation
+    interpolant: Interpolant
+        Interpolation kernel function
+
+    Returns
+    -------
+    array
     """
 
     # Apply rescaling to the frequencies
     # [0, Fe/2+1]
     # [-Fe/2+1, Fe/2]
+    # Because we divide the scale in x-space, we multiply in k-space
     kcoords_out = jnp.stack(
         jnp.meshgrid(
-            jnp.linspace(0, shape_in / 2 / res_out * res_in, shape_out // 2 + 1),
-            jnp.linspace(-shape_in / 2 / res_out * res_in, shape_in / 2 / res_out * res_in, shape_out),
+            jnp.linspace(0, shape_in / 2 * scale, shape_out // 2 + 1),  # flip only in y!
+            jnp.linspace(-shape_in / 2 * scale, shape_in / 2 * scale, shape_out) * flip,
         ),
         -1,
     )
 
     # Apply rotation to the frequencies
-    if phi is not None:
-        r = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
-
+    if angle != 0:
+        R = _rot_matrix(-angle)  # noqa: N806
         b_shape = kcoords_out.shape
-        kcoords_out = (r @ kcoords_out.reshape((-1, 2)).T).T.reshape(b_shape)
+        kcoords_out = (R @ kcoords_out.reshape((-1, 2)).T).T.reshape(b_shape)
 
     k_resampled = jax.vmap(resample_hermitian, in_axes=(0, None, None, None, None))(
         kimage, kcoords_out, -shape_in / 2, -shape_in / 2, interpolant
     )
 
-    kx = jnp.linspace(0, jnp.pi, shape_out // 2 + 1) * res_in / res_out
-    ky = jnp.linspace(-jnp.pi, jnp.pi, shape_out)
+    kx = jnp.linspace(0, jnp.pi, shape_out // 2 + 1) * scale
+    ky = jnp.linspace(-jnp.pi, jnp.pi, shape_out) * scale * flip
     coords = jnp.stack(jnp.meshgrid(kx, ky), -1) / 2 / jnp.pi
-
     xint_val = interpolant.uval(coords[..., 0]) * interpolant.uval(coords[..., 1])
+
+    # TODO: add translation (but pay attention to rotation/flip)
 
     return k_resampled * jnp.expand_dims(xint_val, 0)

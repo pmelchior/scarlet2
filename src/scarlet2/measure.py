@@ -1,12 +1,11 @@
 """Measurement methods"""
 
-import math
 
 import astropy.units as u
 import numpy as jnp
 import numpy.ma as ma
 
-from .frame import get_angle, get_scale, get_sign
+from .frame import get_affine, get_scale_angle_flip
 from .source import Component
 
 
@@ -348,8 +347,7 @@ class Moments(dict):
         None
         """
         assert u.get_physical_type(phi) == "angle"  # check that it's an angle with a suitable unit
-        phi = phi.to(u.deg).value
-        phi = phi * math.pi / 180  # radian
+        phi = phi.to(u.rad).value
 
         mu_p = {}
         for n in range(self.N + 1):
@@ -375,7 +373,7 @@ class Moments(dict):
     def transfer(self, wcs_in, wcs_out):
         """Compute rescaling and rotation from WCSs and apply to moments
 
-        This methods adjusts moments measured with a frame defined by `wcs_in` to to the frame `wcs_out`.
+        The method adjusts moments measured with a frame defined by `wcs_in` to the frame `wcs_out`.
         The moments are changed in place.
 
         Parameters
@@ -393,25 +391,19 @@ class Moments(dict):
         flux_in = self[0, 0]
 
         if (wcs_in is not None) and (wcs_out is not None):
-            # Rescale moments (amplitude rescaling)
-            scale_in = get_scale(wcs_in) * 60**2  # arcsec
-            scale_out = get_scale(wcs_out) * 60**2  # arcsec
-            c = jnp.array(scale_in) / jnp.array(scale_out)
-            self.resize(c)
+            M_in = get_affine(wcs_in)  # noqa: N806
+            M_out = get_affine(wcs_out)  # noqa: N806
+            M = jnp.linalg.inv(M_out) @ M_in  # noqa: N806, transformation from in pixel -> sky -> out pixels
+            scale, angle, flip = get_scale_angle_flip(M)
+            # as flip is the same as rescale(-1), combine both
+            # note flip is for y-flip, and we have y/x convention here
+            scale = jnp.array((flip, 1)) * scale
+            self.resize(scale)
+            phi = angle * u.rad
+            self.rotate(phi)
 
-            # Rotate moments
-            phi_in = get_angle(wcs_in)
-            phi_out = get_angle(wcs_out)
-            phi = (phi_out - phi_in) / jnp.pi * 180
-            self.rotate(phi * u.deg)
-
-            # Flip moments if WCSs don't share the same convention
-            sign_in = get_sign(wcs_in)
-            sign_out = get_sign(wcs_out)
-            self.resize(sign_in * sign_out)
-
+            # TODO: why are we doing a flux normalization???
             flux_out = self[0, 0]
-
             for key in self.keys():
                 self[key] /= flux_out / flux_in
 

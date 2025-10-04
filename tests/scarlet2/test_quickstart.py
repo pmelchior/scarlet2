@@ -14,6 +14,10 @@ from scarlet2.observation import Observation
 from scarlet2.psf import ArrayPSF, GaussianPSF
 from scarlet2.scene import Scene
 from scarlet2.source import Source
+from scarlet2.validation_utils import set_validation
+
+# turn off automatic validation checks
+set_validation(False)
 
 
 def test_quickstart():

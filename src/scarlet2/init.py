@@ -149,7 +149,7 @@ def standardized_moments(
     Returns
     -------
     measure.Moments
-        2nd moments, deconvolved, and in the coordinate frame of the model frame
+        2nd moments, deconvolved, and in the coordinates of the model frame
 
     Raises
     ------

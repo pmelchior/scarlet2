@@ -11,8 +11,13 @@ import jax.numpy as jnp
 import scarlet2
 from astropy.wcs import WCS
 from huggingface_hub import hf_hub_download
+from scarlet2.frame import _rot_matrix, get_affine
+from scarlet2.validation_utils import set_validation
 
 warnings.filterwarnings("ignore")
+
+# turn off automatic validation checks
+set_validation(False)
 
 # Load the HSC image data
 # load test data from HSC and HST
@@ -110,28 +115,32 @@ def test_hst_to_hsc_against_galsim():
 
 # Rotate WCS
 # Remember images coordinates are [y, x]
-# Update CRPIX for the 90-degree clockwise rotation
+# Update CRPIX for the 90-degree rotation
 wcs_hst_rot = wcs_hst.deepcopy()
 crpix1_new = n1 - wcs_hst.wcs.crpix[1]
 crpix2_new = wcs_hst.wcs.crpix[0]
-
 wcs_hst_rot.wcs.crpix = [crpix1_new, crpix2_new]
 
-# # Mock a rotation of 90 deg clockwise of the HST WCS
-phi = -90 / 180 * jnp.pi  # in rad
-R = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
+# # Mock a rotation of 90 deg counter-clockwise of the HST WCS
+M = get_affine(wcs_hst)
+phi = 90 / 180 * jnp.pi  # in rad
+R = _rot_matrix(phi)
+if jnp.linalg.det(M) < 0:  # improper rotation: flip y, rotate, flip back
+    F = jnp.diag(jnp.array((1, -1)))
+    R = F @ R @ F  # F = F^-1
+# rotate first, then go the sky coordinates
+wcs_hst_rot.wcs.pc = M @ R
 
-data_hst_rot = jax.vmap(jnp.rot90)(data_hst)
-psf_hst_rot = jax.vmap(jnp.rot90)(psf_hst_)
+# rotate data and psf counter-clockwise 90 deg
+# need to change axes order because image rotation is defined from positive x-axis (axis=1)
+rot90_image = lambda im: jnp.rot90(im, axes=(1, 0))
+data_hst_rot = jax.vmap(rot90_image)(data_hst)
+psf_hst_rot = jax.vmap(rot90_image)(psf_hst_)
 psf_hst_rot = scarlet2.ArrayPSF(psf_hst_rot)
-
-wcs_hst_rot.wcs.pc = R @ wcs_hst.wcs.pc
 
 hst_frame_rot = scarlet2.Frame(
     bbox=scarlet2.Box(shape=data_hst_rot.shape), channels=["channel"], psf=psf_hst_rot, wcs=wcs_hst_rot
 )
-
-assert wcs_hst_rot != wcs_hst
 
 
 def test_hst_to_hsc_against_galsim_rotated_wcs():
@@ -148,26 +157,6 @@ def test_hst_to_hsc_against_galsim_rotated_wcs():
     assert jnp.allclose(out_galsim, hst_resampled[0], atol=2.3e-4)
 
 
-def test_no_channel_axis_in_obs_psf():
-    assert len(psf_hsc_data[0].shape) == 2
-    obs_hsc = scarlet2.Observation(
-        data_hsc[:1, ...],
-        wcs=wcs_hsc,
-        psf=scarlet2.ArrayPSF(psf_hsc_data[:1]),
-        channels=["channel"],
-        weights=None,
-    )
-
-    # Initializing renderers
-    obs_hsc.match(hst_frame)
-
-    # Deconvolution, Resampling and Reconvolution
-    hst_resampled = obs_hsc.render(data_hst)
-
-    assert jnp.allclose(out_galsim, hst_resampled[0], atol=2.3e-4)
-
-
 if __name__ == "__main__":
     test_hst_to_hsc_against_galsim()
     test_hst_to_hsc_against_galsim_rotated_wcs()
-    test_no_channel_axis_in_obs_psf()

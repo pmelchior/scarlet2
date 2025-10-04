@@ -36,6 +36,7 @@ class Observation(Module):
     """Renderer to translate from the model frame the observation frame"""
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
+        # TODO: automatic conversion to jnp arrays
         self.data = data
         if self.data.ndim == 2:
             # add a channel dimension if it is missing
@@ -46,7 +47,7 @@ class Observation(Module):
             # add a channel dimension if it is missing
             self.weights = self.weights[None, ...]
 
-        self.frame = Frame(Box(data.shape), psf, wcs, channels=channels)
+        self.frame = Frame(Box(self.data.shape), psf, wcs, channels=channels)
         if renderer is None:
             renderer = NoRenderer()
         self.renderer = renderer
@@ -160,6 +161,13 @@ class Observation(Module):
                     # 3)c) deconvolve with model PSF and re-convolve with obs PSF
                     # 4) Wrap the Fourier image and crop to obs frame
                     renderers.append(ResamplingRenderer(frame, self.frame))
+                    # TODO: Alternative:
+                    # 1) Use ConvolutionRenderer in model frame (obs PSF needs to be resampled to this frame)
+                    # 2) Apply Lanczos resampling to observed frame
+                    #
+                    # This should be much more flexible than the Kspace resampler and more accurate than
+                    # resampling to obs frame, followed by a convolution in obs frame because the difference
+                    # kernel would be expressed in obs pixel and can thus easily undersample the model PSF.
 
                 else:
                     renderers.append(ConvolutionRenderer(frame, self.frame))

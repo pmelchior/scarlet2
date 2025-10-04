@@ -6,8 +6,8 @@ import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
 from .fft import _get_fast_shape, _trim, _wrap_hermitian_x, convolve, deconvolve, good_fft_size, transform
+from .frame import get_affine, get_scale_angle_flip
 from .interpolation import resample_ops
-from .measure import get_angle, get_sign
 
 
 class Renderer(eqx.Module):
@@ -215,10 +215,9 @@ class ResamplingRenderer(Renderer):
     padding: int
     fft_shape_target: int = eqx.field(repr=False)
     fft_shape_model_im: int = eqx.field(repr=False)
-    res_in: float
-    res_out: float
-    rotation_angle: (None, float)
-    flip_sign: jnp.array
+    scale: float
+    angle: float
+    flip: int
     model_kpsf_interp: jnp.array = eqx.field(repr=False)
     obs_kpsf_interp: jnp.array = eqx.field(repr=False)
     real_shape_target: tuple = eqx.field(repr=False)
@@ -264,40 +263,26 @@ class ResamplingRenderer(Renderer):
         # Get maximum of the fft shapes to interpolate on the highest resolved FFT image
         # odd shape is required for k-wrapping later
         self.fft_shape_target = max(self.fft_shape_model_im, fft_shape_obs_psf) + 1
-        self.res_in = model_frame.pixel_size
-        self.res_out = obs_frame.pixel_size
 
-        # Extract rotation angle between WCSs using jacobian matrices
-        angle_in = get_angle(model_frame.wcs)
-        angle_out = get_angle(obs_frame.wcs)
-        if angle_out - angle_in == 0:
-            self.rotation_angle = None
-        else:
-            self.rotation_angle = angle_out - angle_in
-
-        # Get flip sign between WCSs using jacobian matrices
-        sign_in = get_sign(model_frame.wcs)
-        sign_out = get_sign(obs_frame.wcs)
-        if (sign_in != sign_out).any():
-            raise ValueError(
-                "model and observation WCSs have different sign conventions, \
-                    which is not yet handled by scarlet2"
-            )
-
-        self.flip_sign = sign_in * sign_out
+        # Extract rotation angle, flip, scale between WCSs
+        M_in = get_affine(model_frame.wcs)  # noqa: N806
+        M_out = get_affine(obs_frame.wcs)  # noqa: N806
+        M = jnp.linalg.inv(M_out) @ M_in  # noqa: N806, transformation from model pixel -> sky -> obs pixels
+        self.scale, self.angle, self.flip = get_scale_angle_flip(M)
 
         self.model_kpsf_interp = resample_ops(
             model_kpsf,
             model_kpsf.shape[-2],
             self.fft_shape_target,
-            self.res_in,
-            self.res_out,
-            phi=self.rotation_angle,
-            flip_sign=self.flip_sign,
+            scale=self.scale,
+            angle=self.angle,
+            flip=self.flip,
         )
 
         self.obs_kpsf_interp = resample_ops(
-            obs_kpsf, obs_kpsf.shape[-2], self.fft_shape_target, self.res_out, self.res_out
+            obs_kpsf,
+            obs_kpsf.shape[-2],
+            self.fft_shape_target,
         )
 
         self.real_shape_target = obs_frame.bbox.shape
@@ -314,10 +299,9 @@ class ResamplingRenderer(Renderer):
             model_kim,
             model_kim.shape[-2],
             self.fft_shape_target,
-            self.res_in,
-            self.res_out,
-            phi=self.rotation_angle,
-            flip_sign=self.flip_sign,
+            scale=self.scale,
+            angle=self.angle,
+            flip=self.flip,
         )
 
         # deconvolve with model psf, re-convolve with observation psf and Fourier transform back to real space
