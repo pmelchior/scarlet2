@@ -1,7 +1,6 @@
 """Measurement methods"""
 
 
-import astropy.units as u
 import numpy as jnp
 import numpy.ma as ma
 
@@ -341,15 +340,13 @@ class Moments(dict):
 
         Parameters
         ----------
-        phi: :py:class:`astropy.Quantity`
-            Rotation angle. Must be an astropy quantity of type="angle".
+        phi: float
+            Rotation angle, in radian
 
         Returns
         -------
         self
         """
-        assert u.get_physical_type(phi) == "angle"  # check that it's an angle with a suitable unit
-        phi = phi.to(u.rad).value
 
         mu_p = {}
         for n in range(self.N + 1):

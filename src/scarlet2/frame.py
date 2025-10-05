@@ -4,7 +4,6 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from astropy.coordinates import SkyCoord
-from astropy.wcs import WCS
 
 from .bbox import Box
 from .psf import PSF, GaussianPSF
@@ -132,9 +131,8 @@ class Frame(eqx.Module):
             size in pixels
         """
         if self.wcs is not None:
-            assert u.get_physical_type(distance) == "angle"
             pixel_size = get_pixel_size(self.wcs)
-            return (distance / pixel_size).to(1).value
+            return distance / pixel_size
         else:
             return distance
 
@@ -322,12 +320,11 @@ def get_affine(wcs):
     return model_affine[:2, :2]
 
 
+# for WCS linear matrix calculations:
 # rotation matrix for counter-clockwise rotation from positive x-axis
-# uses (x,y) coordinates!
+# uses (x,y) coordinates and phi in radian!!
 def _rot_matrix(phi):
-    assert u.get_physical_type(phi) == "angle"
-    phi_ = phi.to(u.rad).value
-    sinphi, cosphi = np.sin(phi_), np.cos(phi_)
+    sinphi, cosphi = np.sin(phi), np.cos(phi)
     return jnp.array([[cosphi, -sinphi], [sinphi, cosphi]])
 
 
@@ -350,7 +347,7 @@ def get_scale_angle_flip(trans):
     Returns
     -------
     scale: `float`
-    angle: `astropy.units.quantity.Quantity`, unit = u.rad
+    angle: `float`, in radian
     flip: -1 or 1
     """
     if isinstance(trans, (np.ndarray, jnp.ndarray)):  # noqa: SIM108
@@ -363,17 +360,13 @@ def get_scale_angle_flip(trans):
     # if not, use scale = jnp.linalg.svd(M, compute_uv=False)
     # but be careful with rotations as anisotropic stretch and rotation do not commute
     scale = jnp.sqrt(jnp.abs(det)).item(0)
-    if isinstance(trans, WCS):
-        unit = trans.celestial.world_axis_units[0]
-        unit = u.Unit(unit)
-        scale = scale * unit
 
     # if rotation is improper: need to apply y-flip to M to get pure rotation matrix (and unique angle)
     improper = det < 0
     flip = -1 if improper else 1
     F = _flip_matrix(flip)  # noqa: N806, flip in y, is identity if flip = 1!!!
     M_ = F @ M  # noqa: N806, flip = inverse flip
-    angle = jnp.arctan2(M_[1, 0], M_[0, 0]) * u.rad
+    angle = jnp.arctan2(M_[1, 0], M_[0, 0])
 
     return scale, angle, flip
 
@@ -413,10 +406,6 @@ def get_scale(wcs, separate=False):
         M = get_affine(wcs)  # noqa: N806
         c1 = (M[0, :] ** 2).sum() ** 0.5
         c2 = (M[1, :] ** 2).sum() ** 0.5
-        if isinstance(wcs, WCS):
-            units = wcs.celestial.world_axis_units[:2]
-            c1 = c1 * u.Unit(units[0])
-            c2 = c2 * u.Unit(units[1])
         return jnp.array([c1, c2])
     else:
         scale, angle, flip = get_scale_angle_flip(wcs)

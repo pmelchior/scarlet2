@@ -82,7 +82,7 @@ def test_wcs_transfer_moments_rot90():
     # create mock WCS for that image
     wcs_ = WCS(naxis=2)
     wcs_.wcs.ctype = ["RA---TAN", "DEC--TAN"]
-    phi = -90 * u.deg  # clockwise to counteract the rotation above
+    phi = (-90 * u.deg).to(u.rad).value  # clockwise to counteract the rotation above
     wcs_.wcs.pc = _rot_matrix(phi)
 
     # match WCS
@@ -96,9 +96,9 @@ def test_wcs_transfer_moments_rot90():
 def test_wcs_transfer_moments():
     # create a rotated, resized, flipped version of the morph image
     # apply theoretical rotation to spin-2 vector
-    a = 30 * u.deg
+    a = (30 * u.deg).to(u.rad).value
     ellipticity_ = ellipticity[0] + 1j * ellipticity[1]
-    ellipticity_ *= jnp.exp(2j * a.to(u.rad).value)
+    ellipticity_ *= jnp.exp(2j * a)
     ellipticity_ = jnp.array((ellipticity_.real, ellipticity_.imag))
     c = 0.5
     morph2 = GaussianMorphology(size=T0 * c, ellipticity=ellipticity_, shape=morph().shape)
