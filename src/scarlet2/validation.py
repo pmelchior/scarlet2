@@ -1,5 +1,5 @@
 from .observation import ObservationValidator
-from .scene import FitValidator, SceneValidator
+from .scene import FitValidator
 from .source import SourceValidator
 from .validation_utils import ValidationResult
 
@@ -72,7 +72,7 @@ def check_observation(observation) -> list[ValidationResult]:
     return _check(validation_class=ObservationValidator, **{"observation": observation})
 
 
-def check_scene(scene, observation, parameters) -> list[ValidationResult]:
+def check_scene(scene) -> list[ValidationResult]:
     """Check the scene against the various validation rules.
 
     Parameters
@@ -93,13 +93,6 @@ def check_scene(scene, observation, parameters) -> list[ValidationResult]:
     validation_results = []
     for source in scene.sources:
         validation_results.extend(check_source(source))
-
-    validation_results.extend(
-        _check(
-            validation_class=SceneValidator,
-            **{"scene": scene, "observation": observation, "parameters": parameters},
-        )
-    )
 
     return validation_results
 

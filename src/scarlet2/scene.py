@@ -105,6 +105,15 @@ class Scene(Module):
     def __exit__(self, exc_type, exc_value, traceback):
         Scenery.scene = None
 
+        # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
+        from .validation_utils import VALIDATION_SWITCH
+
+        if VALIDATION_SWITCH:
+            from .validation import check_scene
+
+            validation_results = check_scene(self)
+            print_validation_results("Source validation results", validation_results)
+
     def sample(
         self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs
     ):

@@ -14,7 +14,6 @@ from .validation_utils import (
     ValidationInfo,
     ValidationMethodCollector,
     ValidationResult,
-    print_validation_results,
 )
 
 
@@ -151,15 +150,6 @@ class Source(Component):
             print("Source can only be created within the context of a Scene")
             print("Use 'with Scene(frame) as scene: Source(...)'")
             raise
-
-        # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
-        from .validation_utils import VALIDATION_SWITCH
-
-        if VALIDATION_SWITCH:
-            from .validation import check_source
-
-            validation_results = check_source(self)
-            print_validation_results("Source validation results", validation_results)
 
     def add_component(self, component, op):
         """Add `component` to this source
