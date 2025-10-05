@@ -38,7 +38,7 @@ class ValidationResult:
     context: Optional[Any] = None
 
     def __str__(self):
-        base = f"{self.message} | Check={self.check}"
+        base = f"{self.message}"
         if self.context is not None:
             base += f" | Context={self.context})"
         return base
