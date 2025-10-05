@@ -64,7 +64,6 @@ def test_quickstart():
         )
 
     maxiter = 100
-    scene.set_spectra_to_match(obs, parameters)
     scene_ = scene.fit(obs, parameters, max_iter=maxiter, progress_bar=False)
 
     # sampling

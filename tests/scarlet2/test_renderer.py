@@ -124,7 +124,7 @@ wcs_hst_rot.wcs.crpix = [crpix1_new, crpix2_new]
 
 # # Mock a rotation of 90 deg counter-clockwise of the HST WCS
 M = get_affine(wcs_hst)
-phi = 90 * u.deg
+phi = (90 * u.deg).to(u.rad).value
 R = _rot_matrix(phi)
 if jnp.linalg.det(M) < 0:  # improper rotation: flip y, rotate, flip back
     F = jnp.diag(jnp.array((1, -1)))

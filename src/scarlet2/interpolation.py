@@ -348,10 +348,9 @@ def resample_ops(
     )
 
     # Apply rotation to the frequencies
-    if angle != 0:
-        R = _rot_matrix(-angle)  # noqa: N806
-        b_shape = kcoords_out.shape
-        kcoords_out = (R @ kcoords_out.reshape((-1, 2)).T).T.reshape(b_shape)
+    R = _rot_matrix(-angle)  # noqa: N806
+    b_shape = kcoords_out.shape
+    kcoords_out = (R @ kcoords_out.reshape((-1, 2)).T).T.reshape(b_shape)
 
     k_resampled = jax.vmap(resample_hermitian, in_axes=(0, None, None, None, None))(
         kimage, kcoords_out, -shape_in / 2, -shape_in / 2, interpolant

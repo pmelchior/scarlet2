@@ -425,3 +425,74 @@ def binomial(n, k):
         result *= n - i + 1
         result //= i
     return result
+
+
+def forced_photometry(scene, obs):
+    """Computes the spectra of every source in the scene to match the observations
+
+    Computes the best-fit amplitude of the rendered model of all components in every
+    channel of every observation as a linear inverse problem.
+
+    If sources/sources components in `scene` have non-flat spectra, the output of this function is
+    the correction factor that needs to be applied to those spectra to best match each channel of `obs`.
+
+    Parameters
+    ----------
+    scene: :py:class:`scarlet2.scene.Scene`
+        Scene for which the spectra should be computed
+    obs: :py:class:`~scarlet2.Observation`
+        The observation used to determine the spectra.
+
+    Returns
+    -------
+    array
+        Array of the spectra, in the order of the sources in the scene
+    """
+
+    # extract multi-channel model for every source
+    models = []
+    for i, src in enumerate(scene.sources):
+        # evaluate the model for any source so that fit includes it even if its spectrum is not updated
+        model = scene.evaluate_source(src)  # assumes all sources are single components
+
+        # check for models with identical initializations, see scarlet repo issue #282
+        # if duplicate: raise ValueError
+        for model_indx in range(len(models)):
+            if jnp.allclose(model, models[model_indx]):
+                message = f"Source {i} has a model identical to source {model_indx}.\n"
+                message += "This is likely not intended, and the second source should be deleted."
+                raise ValueError(message)
+        models.append(model)
+
+    models = jnp.array(models)
+    num_models = len(models)
+
+    # independent channels, no mixing
+    # solve the linear inverse problem of the amplitudes in every channel
+    # given all the rendered morphologies
+    # spectrum = (M^T Sigma^-1 M)^-1 M^T Sigma^-1 * im
+    num_channels = obs.frame.C
+    images = obs.data
+    weights = obs.weights
+    morphs = jnp.stack([obs.render(model) for model in models], axis=0)
+    spectra = jnp.zeros((num_models, num_channels))
+    for c in range(num_channels):
+        im = images[c].reshape(-1)
+        w = weights[c].reshape(-1)
+        m = morphs[:, c, :, :].reshape(num_models, -1)
+        mw = m * w[None, :]
+        # check if all components have nonzero flux in c.
+        # because of convolutions, flux can be outside the box,
+        # so we need to compare weighted flux with unweighted flux,
+        # which is the same (up to a constant) for constant weights.
+        # so we check if *most* of the flux is from pixels with non-zero weight
+        nonzero = jnp.sum(mw, axis=1) / jnp.sum(m, axis=1) / jnp.mean(w) > 0.1
+        nonzero = jnp.flatnonzero(nonzero)
+        if len(nonzero) == num_models:
+            covar = jnp.linalg.inv(mw @ m.T)
+            spectra = spectra.at[:, c].set(covar @ m @ (im * w))
+        else:
+            covar = jnp.linalg.inv(mw[nonzero] @ m[nonzero].T)
+            spectra = spectra.at[nonzero, c].set(covar @ m[nonzero] @ (im * w))
+
+    return spectra

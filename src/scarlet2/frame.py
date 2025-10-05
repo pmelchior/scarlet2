@@ -324,7 +324,7 @@ def get_affine(wcs):
 # rotation matrix for counter-clockwise rotation from positive x-axis
 # uses (x,y) coordinates and phi in radian!!
 def _rot_matrix(phi):
-    sinphi, cosphi = np.sin(phi), np.cos(phi)
+    sinphi, cosphi = jnp.sin(phi), jnp.cos(phi)
     return jnp.array([[cosphi, -sinphi], [sinphi, cosphi]])
 
 
