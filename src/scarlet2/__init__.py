@@ -14,6 +14,18 @@ class Scenery:
     """Scene of the currently opened context"""
 
 
+class Parameterization:
+    """Class to hold the context for the current parameter set
+
+    See Also
+    --------
+    :py:class:`~scarlet2.Parameters`
+    """
+
+    parameters = None
+    """Parameters of the currently opened context"""
+
+
 from . import init, measure, plot
 from .bbox import Box
 from .frame import Frame
@@ -40,6 +52,7 @@ __all__ = [
     "measure",
     "plot",
     "Scenery",
+    "Parameterization",
     "Box",
     "Frame",
     "Parameter",
