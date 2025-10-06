@@ -1,3 +1,5 @@
+import logging
+
 import astropy.units as u
 import equinox as eqx
 import jax
@@ -134,11 +136,13 @@ class Parameter:
 
         # add this source to the active scene
         try:
-            Parameterization.parameters += self
+            Parameterization.parameters.__iadd__(self)
         except AttributeError:
-            print("A Parameter instance can only be created within the context of Parameters")
-            print("Use 'with Parameters(scene) as p: Parameter(...)'")
-            raise
+            # to be backwards compatible: only emit a warning, don't raise
+            msg = "A Parameter instance should only be created within the context of Parameters\n"
+            msg += "Use 'with Parameters(scene) as p: Parameter(...)'"
+            logging.warn(msg)
+            pass
 
     def apply_constraint(self):
         """Transform the value of the parameter to the unconstrained region"""

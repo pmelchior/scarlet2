@@ -67,10 +67,11 @@ def test_quickstart():
     import numpyro.distributions as dist
     from numpyro.infer.initialization import init_to_sample
 
-    with Parameters(scene_) as parameters:
-        p = scene_.sources[0].spectrum
-        prior = dist.Normal(p, scale=1)
-        Parameter(p, name="spectrum:0", prior=prior)
+    # old style of parameter declaration, check backward compatibility
+    parameters = scene_.make_parameters()
+    p = scene_.sources[0].spectrum
+    prior = dist.Normal(p, scale=1)
+    parameters += Parameter(p, name="spectrum:0", prior=prior)
     _ = scene_.sample(
         obs, parameters, num_samples=200, dense_mass=True, init_strategy=init_to_sample, progress_bar=False
     )
