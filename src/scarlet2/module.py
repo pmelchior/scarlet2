@@ -192,11 +192,11 @@ class Parameters:
         >>>     Source(center1, spectrum1, morph1)
         >>>     Source(center2, spectrum2, morph2)
         >>>
-        >>> parameters = scene.make_parameters()
-        >>> parameters += Parameter(scene.sources[0].spectrum.data,
-        >>>                         name=f"spectrum:0",
-        >>>                         constraint=constraints.positive,
-        >>>                         stepsize=relative_step)
+        >>> with Parameters(scene) as parameters:
+        >>>     Parameter(scene.sources[0].spectrum.data,
+        >>>               name=f"spectrum:0",
+        >>>               constraint=constraints.positive,
+        >>>               stepsize=relative_step)
         >>> maxiter = 200
         >>> scene_ = scene.fit(observation, parameters, max_iter=maxiter)
 

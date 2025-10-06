@@ -6,10 +6,10 @@
 import jax.numpy as jnp
 from huggingface_hub import hf_hub_download
 from numpyro.distributions import constraints
-from scarlet2 import *  # noqa: F403
+
 from scarlet2 import init
 from scarlet2.frame import Frame
-from scarlet2.module import Parameter, relative_step
+from scarlet2.module import Parameter, Parameters, relative_step
 from scarlet2.observation import Observation
 from scarlet2.psf import ArrayPSF, GaussianPSF
 from scarlet2.scene import Scene
@@ -47,17 +47,17 @@ def test_quickstart():
             Source(center, spectrum, morph)
 
     # fitting
-    parameters = scene.make_parameters()
-    for i in range(len(scene.sources)):
-        parameters += Parameter(
-            scene.sources[i].spectrum,
-            name=f"spectrum:{i}",
-            constraint=constraints.positive,
-            stepsize=spec_step,
-        )
-        parameters += Parameter(
-            scene.sources[i].morphology, name=f"morph:{i}", constraint=constraints.positive, stepsize=0.1
-        )
+    with Parameters(scene) as parameters:
+        for i in range(len(scene.sources)):
+            Parameter(
+                scene.sources[i].spectrum,
+                name=f"spectrum:{i}",
+                constraint=constraints.positive,
+                stepsize=spec_step,
+            )
+            Parameter(
+                scene.sources[i].morphology, name=f"morph:{i}", constraint=constraints.positive, stepsize=0.1
+            )
 
     maxiter = 100
     scene.set_spectra_to_match(obs, parameters)
@@ -67,10 +67,10 @@ def test_quickstart():
     import numpyro.distributions as dist
     from numpyro.infer.initialization import init_to_sample
 
-    parameters = scene_.make_parameters()
-    p = scene_.sources[0].spectrum
-    prior = dist.Normal(p, scale=1)
-    parameters += Parameter(p, name="spectrum:0", prior=prior)
+    with Parameters(scene_) as parameters:
+        p = scene_.sources[0].spectrum
+        prior = dist.Normal(p, scale=1)
+        Parameter(p, name="spectrum:0", prior=prior)
     _ = scene_.sample(
         obs, parameters, num_samples=200, dense_mass=True, init_strategy=init_to_sample, progress_bar=False
     )
