@@ -9,7 +9,7 @@ import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
 from jax import grad, jit, jvp
-from matplotlib.patches import Polygon, Rectangle
+from matplotlib.patches import Polygon
 
 from . import measure
 from .bbox import Box
@@ -765,6 +765,9 @@ def sources(
     if box_kwargs is None:
         box_kwargs = {"facecolor": "none", "edgecolor": "w", "lw": 0.5}
 
+    if show_rendered or show_observed:
+        assert observation is not None, "show_rendered or show_observed requires observation"
+
     sources = scene.sources
     n_sources = len(sources)
     panels = sum((show_model, show_observed, show_rendered, show_spectrum))
@@ -776,10 +779,6 @@ def sources(
     fig, ax = plt.subplots(n_sources, panels, figsize=figsize, squeeze=False, **fig_kwargs)
 
     for k, src in enumerate(sources):
-        center = np.array(src.center)[::-1]
-        start, stop = src.bbox.start[-2:][::-1], src.bbox.stop[-2:][::-1]
-        box_coords = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
-
         # model in its bbox
         panel = 0
         model = src()
@@ -792,13 +791,20 @@ def sources(
                 origin="lower",
             )
             ax[k][panel].set_title(f"Model Source {k}", **title_kwargs)
-            if center is not None and add_markers:
-                ax[k][panel].plot(*center, **marker_kwargs)
+            if add_markers:
+                center = src.center
+                ax[k][panel].plot(*(center[::-1]), **marker_kwargs)  # needs x,y
             panel += 1
 
         if show_rendered or show_observed:
-            assert observation is not None, "show_rendered or show_observed requires observation"
-            extent = observation.frame.bbox.get_extent()
+            if add_markers:
+                center_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
+            if add_boxes:
+                start, stop = src.bbox.spatial.start, src.bbox.spatial.stop
+                corners = jnp.array(
+                    [start, jnp.array((start[0], stop[1])), stop, jnp.array((stop[0], start[1]))]
+                )
+                corners_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(corners))
 
         # model in observation frame
         if show_rendered:
@@ -807,14 +813,13 @@ def sources(
 
             ax[k][panel].imshow(
                 img_to_rgb(model_, norm=norm, channel_map=channel_map, mask=model_mask),
-                extent=extent,
                 origin="lower",
             )
             ax[k][panel].set_title(f"Model Source {k} Rendered", **title_kwargs)
             if add_markers:
-                ax[k][panel].plot(*center, **marker_kwargs)
+                ax[k][panel].plot(*(center_obs[::-1]), **marker_kwargs)
             if add_boxes:
-                poly = Polygon(box_coords, closed=True, **box_kwargs)
+                poly = Polygon(corners_obs[:, ::-1], closed=True, **box_kwargs)
                 ax[k][panel].add_artist(poly)
             panel += 1
 
@@ -822,14 +827,13 @@ def sources(
             # Center the observation on the source and display it
             ax[k][panel].imshow(
                 img_to_rgb(observation.data, norm=norm, channel_map=channel_map),
-                extent=extent,
                 origin="lower",
             )
             ax[k][panel].set_title("Observation".format(), **title_kwargs)
             if add_markers:
-                ax[k][panel].plot(*center, **marker_kwargs)
+                ax[k][panel].plot(*(center_obs[::-1]), **marker_kwargs)
             if add_boxes:
-                poly = Polygon(box_coords, closed=True, **box_kwargs)
+                poly = Polygon(corners_obs[:, ::-1], closed=True, **box_kwargs)
                 ax[k][panel].add_artist(poly)
             panel += 1
 
@@ -1006,35 +1010,24 @@ def scene(
             panel += 1
 
         for k, src in enumerate(scene.sources):
-            start, stop = src.bbox.spatial.start[::-1], src.bbox.spatial.stop[::-1]
-
             if add_boxes:
-                panel = 0
-                if show_model:
-                    extent = [start[0], stop[0], start[1], stop[1]]
-                    rect = Rectangle(
-                        (extent[0], extent[2]), extent[1] - extent[0], extent[3] - extent[2], **box_kwargs
-                    )
-                    ax[row, panel].add_artist(rect)
-                    panel = 1
+                start, stop = src.bbox.spatial.start, src.bbox.spatial.stop
+                corners = jnp.array(
+                    [start, jnp.array((start[0], stop[1])), stop, jnp.array((stop[0], start[1]))]
+                )
                 if observation is not None:
-                    start = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(start))).flatten()
-                    stop = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(stop))).flatten()
-                    box_coords = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
-                    for panel in range(panel, panels):  # noqa: B020
-                        poly = Polygon(box_coords, closed=True, **box_kwargs)
-                        ax[row, panel].add_artist(poly)
+                    corners_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(corners))
+                    corners_ = corners if panel == 0 and show_model else corners_obs
+                    poly = Polygon(corners_[:, ::-1], closed=True, **box_kwargs)  # needs x,y
+                    ax[row, panel].add_artist(poly)
 
             if add_labels:
-                center = np.array(src.center)[::-1]
-                panel = 0
-                if show_model:
-                    ax[row, panel].text(*center, k, **label_kwargs)
-                    panel = 1
+                center = src.center
                 if observation is not None:
-                    center = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
-                    for panel in range(panel, panels):  # noqa: B020
-                        ax[row, panel].text(*center, k, **label_kwargs)
+                    center_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
+                for panel in range(panels):
+                    center_ = center if panel == 0 and show_model else center_obs
+                    ax[row, panel].text(*(center_[::-1]), k, **label_kwargs)  # x,y
 
     fig.tight_layout()
 
