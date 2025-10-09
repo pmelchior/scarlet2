@@ -55,10 +55,7 @@ class Frame(eqx.Module):
         float, astropy.units.quantity.Quantity
             Pixel size in units of the WCS sky coordinates
         """
-        if self.wcs is not None:
-            return get_scale(self.wcs)
-        else:
-            return 1
+        return get_scale(self.wcs)
 
     def get_pixel(self, pos):
         """Get the sky coordinates from a world coordinate
@@ -73,7 +70,6 @@ class Frame(eqx.Module):
         pixel coordinates in the model frame
         """
         if isinstance(pos, SkyCoord):
-            assert self.wcs is not None, "SkyCoord can only be converted with valid WCS"
             wcs_ = self.wcs.celestial  # only use celestial portion
             pixel = jnp.asarray(pos.to_pixel(wcs_), dtype="float32").T
             return pixel[..., ::-1]
@@ -89,14 +85,12 @@ class Frame(eqx.Module):
 
         Returns
         ----------
-        astropy.coordinates.SkyCoord if WCS is set, otherwise pos
+        astropy.coordinates.SkyCoord
         """
-        if self.wcs is not None:
-            pixels = pos.reshape(-1, 2)
-            wcs = self.wcs.celestial  # only use celestial portion
-            sky_coord = SkyCoord.from_pixel(pixels[:, 1], pixels[:, 0], wcs)
-            return sky_coord
-        return pos
+        pixels = pos.reshape(-1, 2)
+        wcs = self.wcs.celestial  # only use celestial portion
+        sky_coord = SkyCoord.from_pixel(pixels[:, 1], pixels[:, 0], wcs)
+        return sky_coord
 
     def convert_pixel_to(self, target, pixel=None):
         """Converts pixel coordinates from this frame to `target` frame
@@ -234,9 +228,9 @@ class Frame(eqx.Module):
         if model_psf is None:
             # create Gaussian PSF with a sigma smaller than the smallest observed PSF
             sigma = 0.7
-            assert (
-                small_psf_size / h > sigma
-            ), f"Default model PSF width ({sigma} pixel) too large for best-seeing observation"
+            assert small_psf_size / h > sigma, (
+                f"Default model PSF width ({sigma} pixel) too large for best-seeing observation"
+            )
             model_psf = GaussianPSF(sigma=sigma)
 
         # Dummy frame for WCS computations

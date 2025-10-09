@@ -1,6 +1,5 @@
 """Measurement methods"""
 
-
 import numpy as jnp
 import numpy.ma as ma
 
@@ -254,6 +253,18 @@ class Moments(dict):
         """
         ellipticity = (self[0, 2] - self[2, 0] + 2j * self[1, 1]) / (self[2, 0] + self[0, 2])
         return jnp.array((ellipticity.real, ellipticity.imag))
+
+    def normalize(self):
+        """Normalize moments with respect to the flux
+
+        Returns
+        -------
+        self
+        """
+        norm = self[0, 0]
+        for key in self.keys():
+            self[key] /= norm
+        return self
 
     def deconvolve(self, p):
         """Deconvolve moments from moments `p`
