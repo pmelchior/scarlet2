@@ -3,15 +3,15 @@ import jax
 import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
-from .frame import Frame
+from .frame import Frame, get_affine
 from .module import Module
 from .renderer import (
-    AdjustToFrame,
     ChannelRenderer,
     ConvolutionRenderer,
     NoRenderer,
     Renderer,
     ResamplingRenderer,
+    TrimSpatialBox,
 )
 from .validation_utils import (
     ValidationError,
@@ -146,31 +146,34 @@ class Observation(Module):
             renderers = []
 
             # note the order of renderers!
-            # 1) collapse channels that are not needed
+            # 1) get correct channels of frame
             if self.frame.channels != frame.channels:
                 renderers.append(ChannelRenderer(frame, self.frame))
 
-            if self.frame.bbox != frame.bbox:
-                renderers.append(AdjustToFrame(frame, self.frame))
-
-            if self.frame.psf != frame.psf:
-                if frame.wcs != self.frame.wcs:
-                    # 2) Pad model, model psf and obs psf and Fourier transform
-                    # 3)a) rotate and resample to obs orientation
-                    # 3)b) Resample at the obs resolution
-                    # 3)c) deconvolve with model PSF and re-convolve with obs PSF
-                    # 4) Wrap the Fourier image and crop to obs frame
-                    renderers.append(ResamplingRenderer(frame, self.frame))
-                    # TODO: Alternative:
-                    # 1) Use ConvolutionRenderer in model frame (obs PSF needs to be resampled to this frame)
-                    # 2) Apply Lanczos resampling to observed frame
-                    #
-                    # This should be much more flexible than the Kspace resampler and more accurate than
-                    # resampling to obs frame, followed by a convolution in obs frame because the difference
-                    # kernel would be expressed in obs pixel and can thus easily undersample the model PSF.
-
-                else:
+            # 2) get spatial properties of frame
+            M_self = get_affine(self.frame.wcs)  # noqa: N806
+            M_frame = get_affine(frame.wcs)  # noqa: N806
+            if jnp.allclose(M_self, M_frame):  # scale, orientation, and flip the same
+                # change PSF
+                if self.frame.psf != frame.psf:
                     renderers.append(ConvolutionRenderer(frame, self.frame))
+
+                if self.frame.bbox.spatial != frame.bbox.spatial:
+                    renderers.append(TrimSpatialBox(frame, self.frame))
+            else:
+                # 2) Pad model, model psf and obs psf and Fourier transform
+                # 3)a) rotate and resample to obs orientation
+                # 3)b) Resample at the obs resolution
+                # 3)c) deconvolve with model PSF and re-convolve with obs PSF
+                # 4) Wrap the Fourier image and crop to obs frame
+                renderers.append(ResamplingRenderer(frame, self.frame))
+                # TODO: Alternative:
+                # 1) Use ConvolutionRenderer in model frame (obs PSF needs to be resampled to this frame)
+                # 2) Apply Lanczos resampling to observed frame
+                #
+                # This should be much more flexible than the Kspace resampler and more accurate than
+                # resampling to obs frame, followed by a convolution in obs frame because the difference
+                # kernel would be expressed in obs pixel and can thus easily undersample the model PSF.
 
             if len(renderers) == 0:
                 renderer = NoRenderer()

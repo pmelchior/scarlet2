@@ -163,7 +163,7 @@ class ConvolutionRenderer(Renderer):
         return convolve(model, self._diff_kernel_fft, axes=(-2, -1))
 
 
-class AdjustToFrame(Renderer):
+class TrimSpatialBox(Renderer):
     """Extract cutout the observation box from the model frame box"""
 
     slices: HashableSlice
@@ -174,21 +174,21 @@ class AdjustToFrame(Renderer):
         x_min = jnp.floor(jnp.min(obs_coord[:, 1]))
         y_max = jnp.ceil(jnp.max(obs_coord[:, 0]))
         x_max = jnp.ceil(jnp.max(obs_coord[:, 1]))
-        num_channels = obs_frame.bbox.shape[0]
         this_box = Box.from_bounds(
-            (0, num_channels), (int(y_min) + 1, int(y_max) + 1), (int(x_min) + 1, int(x_max) + 1)
+            # (int(y_min) + 1, int(y_max) + 1), (int(x_min) + 1, int(x_max) + 1)
+            (int(y_min), int(y_max) + 1),
+            (int(x_min), int(x_max) + 1),
         )
 
-        im_slices, sub_slice = overlap_slices(model_frame.bbox, this_box)
+        im_slices, sub_slice = overlap_slices(model_frame.bbox.spatial, this_box)
         self.slices = (
-            HashableSlice.from_slice(im_slices[0]),  # channels
-            HashableSlice.from_slice(im_slices[1]),  # height
-            HashableSlice.from_slice(im_slices[2]),  # width
+            HashableSlice.from_slice(im_slices[-2]),  # height
+            HashableSlice.from_slice(im_slices[-1]),  # width
         )
 
     def __call__(self, model, key=None):
         """What to run when AdjustToFrame is called"""
-        sub = model[self.slices[0].get_slice(), self.slices[1].get_slice(), self.slices[2].get_slice()]
+        sub = model[:, self.slices[-2].get_slice(), self.slices[-1].get_slice()]
         return sub
 
 

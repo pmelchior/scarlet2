@@ -28,10 +28,14 @@ class Frame(eqx.Module):
     def __init__(self, bbox, psf=None, wcs=None, channels=None):
         self.bbox = bbox
         self.psf = psf
+        if wcs is None:
+            wcs = astropy.wcs.WCS(naxis=2)  # Dummy WCS
+            wcs._naxis = bbox.spatial.shape[::-1]
+            wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
         self.wcs = wcs
+
         if channels is None:
             channels = list(range(bbox.shape[0]))
-
         self.channels = channels
 
     def __hash__(self):
@@ -221,7 +225,7 @@ class Frame(eqx.Module):
 
         # Reference wcs
         if model_wcs is None:
-            model_wcs = obs_ref.frame.wcs
+            model_wcs = obs_ref.frame.wcs.deepcopy()
 
         # Scale of the model pixel
         h = get_pixel_size(model_wcs)
@@ -257,12 +261,14 @@ class Frame(eqx.Module):
                 else:
                     model_box &= this_box
 
+        # update model_wcs to change NAXIS1/2 and CRPIX1/2, but don't change frame_origin!
+        model_wcs._naxis = list(model_wcs._naxis)
+        model_wcs._naxis[:2] = model_box.shape[::-1]  # x/y needed here
+        model_wcs.wcs.crpix[:2] -= model_box.origin[::-1]  # x/y needed here
+
+        # frame_origin = (0,) + model_box.origin
         frame_shape = (len(channels),) + model_box.shape
-        frame_origin = (0,) + model_box.origin
-        # TODO: update model_wcs to change NAXIS1/2 and CRPIX1/2, but don't change frame_origin!
-        model_frame = Frame(
-            Box(shape=frame_shape, origin=frame_origin), channels=channels, psf=model_psf, wcs=model_wcs
-        )
+        model_frame = Frame(Box(shape=frame_shape), channels=channels, psf=model_psf, wcs=model_wcs)
 
         # Match observations to this frame
         for obs in observations:
@@ -366,7 +372,7 @@ def get_scale_angle_flip(trans):
     flip = -1 if improper else 1
     F = _flip_matrix(flip)  # noqa: N806, flip in y, is identity if flip = 1!!!
     M_ = F @ M  # noqa: N806, flip = inverse flip
-    angle = jnp.arctan2(M_[1, 0], M_[0, 0])
+    angle = jnp.arctan2(M_[1, 0], M_[0, 0]).item()
 
     return scale, angle, flip
 
