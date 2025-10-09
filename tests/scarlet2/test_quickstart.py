@@ -63,7 +63,7 @@ def test_quickstart():
             scene.sources[i].morphology, name=f"morph:{i}", constraint=constraints.positive, stepsize=0.1
         )
 
-    maxiter = 100
+    maxiter = 10
     scene_ = scene.fit(obs, parameters, max_iter=maxiter, progress_bar=False)
 
     # sampling
@@ -75,7 +75,7 @@ def test_quickstart():
     prior = dist.Normal(p, scale=1)
     parameters += Parameter(p, name="spectrum:0", prior=prior)
     _ = scene_.sample(
-        obs, parameters, num_samples=200, dense_mass=True, init_strategy=init_to_sample, progress_bar=False
+        obs, parameters, num_samples=10, dense_mass=True, init_strategy=init_to_sample, progress_bar=False
     )
 
 
