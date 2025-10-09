@@ -193,24 +193,7 @@ class TrimSpatialBox(Renderer):
 
 
 class ResamplingRenderer(Renderer):
-    """Renderer to resample image to different image placing or resolution
-
-    The renderer comprises three steps
-
-        Preprocess:
-            - padd img, psf_in and psf_out on the according goodfftsize
-            - return kimages
-
-        Resample:
-            - resample the three kimages on the target kgrid
-            - return these kimages
-
-        Postprocess:
-            - Deconvolve model PSF and convolve obs PSF in Fourier space
-            - kwrapping
-            - ifft and cropping to obs frame
-
-    """
+    """Renderer to resample image to different pixel grid (subpixel position, resolution, orientation)"""
 
     padding: int
     fft_shape_target: int = eqx.field(repr=False)
@@ -235,6 +218,15 @@ class ResamplingRenderer(Renderer):
             How many times to input image if padded to reduce FFT artifacts.
         """
         self.padding = padding
+
+        # TODO: Check for SIP distortions, which are not covered by this code!
+        # If those exists:
+        # 1) Use ConvolutionRenderer in model frame (obs PSF needs to be resampled to this frame)
+        # 2) Apply Lanczos resampling to observed frame
+        #
+        # This should be much more flexible than the Kspace resampler and more accurate than
+        # resampling to obs frame, followed by a convolution in obs frame because the difference
+        # kernel would be expressed in obs pixel and can thus easily undersample the model PSF.
 
         # create PSF model
         psf_model = model_frame.psf()

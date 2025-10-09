@@ -146,34 +146,28 @@ class Observation(Module):
             renderers = []
 
             # note the order of renderers!
-            # 1) get correct channels of frame
+            # 1) match channels of frame
             if self.frame.channels != frame.channels:
                 renderers.append(ChannelRenderer(frame, self.frame))
 
-            # 2) get spatial properties of frame
-            M_self = get_affine(self.frame.wcs)  # noqa: N806
-            M_frame = get_affine(frame.wcs)  # noqa: N806
-            if jnp.allclose(M_self, M_frame):  # scale, orientation, and flip the same
-                # change PSF
+            # 2) match spatial properties of frame
+            # if image has pixel grid (modulo an integer shift), avoid resampling
+            m_self = get_affine(self.frame.wcs)
+            m_frame = get_affine(frame.wcs)
+            same_matrix = jnp.allclose(m_self, m_frame)
+
+            ref_pixel = jnp.array(self.frame.bbox.spatial.origin)
+            shift = frame.get_pixel(self.frame.get_sky_coord(ref_pixel)) - ref_pixel
+            integer_shift = jnp.allclose(shift, jnp.round(shift))
+
+            # TODO: shift at same resolution should be treated with a k-space multiplication
+            if same_matrix and integer_shift:
                 if self.frame.psf != frame.psf:
                     renderers.append(ConvolutionRenderer(frame, self.frame))
-
                 if self.frame.bbox.spatial != frame.bbox.spatial:
                     renderers.append(TrimSpatialBox(frame, self.frame))
             else:
-                # 2) Pad model, model psf and obs psf and Fourier transform
-                # 3)a) rotate and resample to obs orientation
-                # 3)b) Resample at the obs resolution
-                # 3)c) deconvolve with model PSF and re-convolve with obs PSF
-                # 4) Wrap the Fourier image and crop to obs frame
                 renderers.append(ResamplingRenderer(frame, self.frame))
-                # TODO: Alternative:
-                # 1) Use ConvolutionRenderer in model frame (obs PSF needs to be resampled to this frame)
-                # 2) Apply Lanczos resampling to observed frame
-                #
-                # This should be much more flexible than the Kspace resampler and more accurate than
-                # resampling to obs frame, followed by a convolution in obs frame because the difference
-                # kernel would be expressed in obs pixel and can thus easily undersample the model PSF.
 
             if len(renderers) == 0:
                 renderer = NoRenderer()
