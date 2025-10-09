@@ -1,5 +1,6 @@
+from .module import ParameterValidator
 from .observation import ObservationValidator
-from .scene import FitValidator, SceneValidator
+from .scene import FitValidator
 from .source import SourceValidator
 from .validation_utils import ValidationResult
 
@@ -72,17 +73,13 @@ def check_observation(observation) -> list[ValidationResult]:
     return _check(validation_class=ObservationValidator, **{"observation": observation})
 
 
-def check_scene(scene, observation, parameters) -> list[ValidationResult]:
+def check_scene(scene) -> list[ValidationResult]:
     """Check the scene against the various validation rules.
 
     Parameters
     ----------
     scene : Scene
         The scene object to check.
-    observation : Observation
-        The observation object containing the data to validate against.
-    parameters : Parameters
-        The parameters of the scene to validate.
 
     Returns
     -------
@@ -93,13 +90,6 @@ def check_scene(scene, observation, parameters) -> list[ValidationResult]:
     validation_results = []
     for source in scene.sources:
         validation_results.extend(check_source(source))
-
-    validation_results.extend(
-        _check(
-            validation_class=SceneValidator,
-            **{"scene": scene, "observation": observation, "parameters": parameters},
-        )
-    )
 
     return validation_results
 
@@ -121,3 +111,41 @@ def check_source(source) -> list[ValidationResult]:
     """
 
     return _check(validation_class=SourceValidator, **{"source": source})
+
+
+def check_parameters(parameters) -> list[ValidationResult]:
+    """Check the parameter list against the various validation rules.
+
+    Parameters
+    ----------
+    parameters : Parameters
+        The parameters list to check
+
+    Returns
+    -------
+    list[ValidationResult]
+        A list of validation results from the validation checks of the parameters.
+    """
+
+    validation_results = []
+    for p in parameters:
+        validation_results.extend(check_parameter(p))
+
+    return validation_results
+
+
+def check_parameter(parameter) -> list[ValidationResult]:
+    """Check the parameter against the various validation rules.
+
+    Parameters
+    ----------
+    parameter : Parameter
+        The parameter  to check
+
+    Returns
+    -------
+    list[ValidationResult]
+        A list of validation results from the validation checks of the parameters.
+    """
+
+    return _check(validation_class=ParameterValidator, **{"parameter": parameter})
