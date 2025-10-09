@@ -5,9 +5,10 @@ import numpy as np
 import pytest
 from huggingface_hub import hf_hub_download
 from numpyro.distributions import constraints
+
 from scarlet2 import init
 from scarlet2.frame import Frame
-from scarlet2.module import Parameter, relative_step
+from scarlet2.module import Parameter, Parameters, relative_step
 from scarlet2.observation import Observation
 from scarlet2.psf import ArrayPSF
 from scarlet2.scene import Scene
@@ -113,23 +114,22 @@ def parameters(scene, good_obs):
     spec_step = partial(relative_step, factor=0.05)
     morph_step = partial(relative_step, factor=1e-3)
 
-    parameters = scene.make_parameters()
-    for i in range(len(scene.sources)):
-        parameters += Parameter(
-            scene.sources[i].spectrum,
-            name=f"spectrum:{i}",
-            constraint=constraints.positive,
-            stepsize=spec_step,
-        )
-        if i == 0:
-            parameters += Parameter(scene.sources[i].center, name=f"center:{i}", stepsize=0.1)
-        else:
-            parameters += Parameter(
-                scene.sources[i].morphology,
-                name=f"morph:{i}",
-                constraint=constraints.unit_interval,
-                stepsize=morph_step,
+    with Parameters(scene) as parameters:
+        for i in range(len(scene.sources)):
+            Parameter(
+                scene.sources[i].spectrum,
+                name=f"spectrum:{i}",
+                constraint=constraints.positive,
+                stepsize=spec_step,
             )
+            if i == 0:
+                Parameter(scene.sources[i].center, name=f"center:{i}", stepsize=0.1)
+            else:
+                Parameter(
+                    scene.sources[i].morphology,
+                    name=f"morph:{i}",
+                    constraint=constraints.unit_interval,
+                    stepsize=morph_step,
+                )
 
-    scene.set_spectra_to_match(good_obs, parameters)
     return parameters

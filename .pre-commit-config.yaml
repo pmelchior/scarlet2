@@ -47,19 +47,15 @@ repos:
         args: ["--verbose"]
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
-    rev: v0.2.1
+    rev: v0.13.3
     hooks:
-      - id: ruff
-        name: Lint code using ruff; sort and organize imports 
+      # Run the linter.
+      - id: ruff-check
         types_or: [ python, pyi ]
-        args: ["--fix"]
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Ruff version.
-    rev: v0.2.1
-    hooks:
+        args: [ --fix ]
+      # Run the formatter.
       - id: ruff-format
-        name: Format code using ruff
-        types_or: [ python, pyi, jupyter ]
+        types_or: [ python, pyi ]
     # Run unit tests, verify that they pass. Note that coverage is run against
     # the ./src directory here because that is what will be committed. In the
     # github workflow script, the coverage is run against the installed package
