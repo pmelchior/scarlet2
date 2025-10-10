@@ -3,15 +3,15 @@ import jax
 import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
-from .frame import Frame
+from .frame import Frame, get_affine
 from .module import Module
 from .renderer import (
-    AdjustToFrame,
     ChannelRenderer,
     ConvolutionRenderer,
     NoRenderer,
     Renderer,
     ResamplingRenderer,
+    TrimSpatialBox,
 )
 from .validation_utils import (
     ValidationError,
@@ -36,6 +36,7 @@ class Observation(Module):
     """Renderer to translate from the model frame the observation frame"""
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
+        # TODO: automatic conversion to jnp arrays
         self.data = data
         if self.data.ndim == 2:
             # add a channel dimension if it is missing
@@ -46,7 +47,7 @@ class Observation(Module):
             # add a channel dimension if it is missing
             self.weights = self.weights[None, ...]
 
-        self.frame = Frame(Box(data.shape), psf, wcs, channels=channels)
+        self.frame = Frame(Box(self.data.shape), psf, wcs, channels=channels)
         if renderer is None:
             renderer = NoRenderer()
         self.renderer = renderer
@@ -145,24 +146,28 @@ class Observation(Module):
             renderers = []
 
             # note the order of renderers!
-            # 1) collapse channels that are not needed
+            # 1) match channels of frame
             if self.frame.channels != frame.channels:
                 renderers.append(ChannelRenderer(frame, self.frame))
 
-            if self.frame.bbox != frame.bbox:
-                renderers.append(AdjustToFrame(frame, self.frame))
+            # 2) match spatial properties of frame
+            # if image has pixel grid (modulo an integer shift), avoid resampling
+            m_self = get_affine(self.frame.wcs)
+            m_frame = get_affine(frame.wcs)
+            same_matrix = jnp.allclose(m_self, m_frame)
 
-            if self.frame.psf != frame.psf:
-                if frame.wcs != self.frame.wcs:
-                    # 2) Pad model, model psf and obs psf and Fourier transform
-                    # 3)a) rotate and resample to obs orientation
-                    # 3)b) Resample at the obs resolution
-                    # 3)c) deconvolve with model PSF and re-convolve with obs PSF
-                    # 4) Wrap the Fourier image and crop to obs frame
-                    renderers.append(ResamplingRenderer(frame, self.frame))
+            ref_pixel = jnp.array(self.frame.bbox.spatial.origin)
+            shift = frame.get_pixel(self.frame.get_sky_coord(ref_pixel)) - ref_pixel
+            integer_shift = jnp.allclose(shift, jnp.round(shift))
 
-                else:
+            # TODO: shift at same resolution should be treated with a k-space multiplication
+            if same_matrix and integer_shift:
+                if self.frame.psf != frame.psf:
                     renderers.append(ConvolutionRenderer(frame, self.frame))
+                if self.frame.bbox.spatial != frame.bbox.spatial:
+                    renderers.append(TrimSpatialBox(frame, self.frame))
+            else:
+                renderers.append(ResamplingRenderer(frame, self.frame))
 
             if len(renderers) == 0:
                 renderer = NoRenderer()

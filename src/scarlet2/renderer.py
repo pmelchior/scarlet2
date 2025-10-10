@@ -6,8 +6,8 @@ import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
 from .fft import _get_fast_shape, _trim, _wrap_hermitian_x, convolve, deconvolve, good_fft_size, transform
+from .frame import get_affine, get_scale_angle_flip
 from .interpolation import resample_ops
-from .measure import get_angle, get_sign
 
 
 class Renderer(eqx.Module):
@@ -163,7 +163,7 @@ class ConvolutionRenderer(Renderer):
         return convolve(model, self._diff_kernel_fft, axes=(-2, -1))
 
 
-class AdjustToFrame(Renderer):
+class TrimSpatialBox(Renderer):
     """Extract cutout the observation box from the model frame box"""
 
     slices: HashableSlice
@@ -174,51 +174,33 @@ class AdjustToFrame(Renderer):
         x_min = jnp.floor(jnp.min(obs_coord[:, 1]))
         y_max = jnp.ceil(jnp.max(obs_coord[:, 0]))
         x_max = jnp.ceil(jnp.max(obs_coord[:, 1]))
-        num_channels = obs_frame.bbox.shape[0]
         this_box = Box.from_bounds(
-            (0, num_channels), (int(y_min) + 1, int(y_max) + 1), (int(x_min) + 1, int(x_max) + 1)
+            # (int(y_min) + 1, int(y_max) + 1), (int(x_min) + 1, int(x_max) + 1)
+            (int(y_min), int(y_max) + 1),
+            (int(x_min), int(x_max) + 1),
         )
 
-        im_slices, sub_slice = overlap_slices(model_frame.bbox, this_box)
+        im_slices, sub_slice = overlap_slices(model_frame.bbox.spatial, this_box)
         self.slices = (
-            HashableSlice.from_slice(im_slices[0]),  # channels
-            HashableSlice.from_slice(im_slices[1]),  # height
-            HashableSlice.from_slice(im_slices[2]),  # width
+            HashableSlice.from_slice(im_slices[-2]),  # height
+            HashableSlice.from_slice(im_slices[-1]),  # width
         )
 
     def __call__(self, model, key=None):
         """What to run when AdjustToFrame is called"""
-        sub = model[self.slices[0].get_slice(), self.slices[1].get_slice(), self.slices[2].get_slice()]
+        sub = model[:, self.slices[-2].get_slice(), self.slices[-1].get_slice()]
         return sub
 
 
 class ResamplingRenderer(Renderer):
-    """Renderer to resample image to different image placing or resolution
-
-    The renderer comprises three steps
-
-        Preprocess:
-            - padd img, psf_in and psf_out on the according goodfftsize
-            - return kimages
-
-        Resample:
-            - resample the three kimages on the target kgrid
-            - return these kimages
-
-        Postprocess:
-            - Deconvolve model PSF and convolve obs PSF in Fourier space
-            - kwrapping
-            - ifft and cropping to obs frame
-
-    """
+    """Renderer to resample image to different pixel grid (subpixel position, resolution, orientation)"""
 
     padding: int
     fft_shape_target: int = eqx.field(repr=False)
     fft_shape_model_im: int = eqx.field(repr=False)
-    res_in: float
-    res_out: float
-    rotation_angle: (None, float)
-    flip_sign: jnp.array
+    scale: float
+    angle: float
+    flip: int
     model_kpsf_interp: jnp.array = eqx.field(repr=False)
     obs_kpsf_interp: jnp.array = eqx.field(repr=False)
     real_shape_target: tuple = eqx.field(repr=False)
@@ -236,6 +218,15 @@ class ResamplingRenderer(Renderer):
             How many times to input image if padded to reduce FFT artifacts.
         """
         self.padding = padding
+
+        # TODO: Check for SIP distortions, which are not covered by this code!
+        # If those exists:
+        # 1) Use ConvolutionRenderer in model frame (obs PSF needs to be resampled to this frame)
+        # 2) Apply Lanczos resampling to observed frame
+        #
+        # This should be much more flexible than the Kspace resampler and more accurate than
+        # resampling to obs frame, followed by a convolution in obs frame because the difference
+        # kernel would be expressed in obs pixel and can thus easily undersample the model PSF.
 
         # create PSF model
         psf_model = model_frame.psf()
@@ -264,40 +255,26 @@ class ResamplingRenderer(Renderer):
         # Get maximum of the fft shapes to interpolate on the highest resolved FFT image
         # odd shape is required for k-wrapping later
         self.fft_shape_target = max(self.fft_shape_model_im, fft_shape_obs_psf) + 1
-        self.res_in = model_frame.pixel_size
-        self.res_out = obs_frame.pixel_size
 
-        # Extract rotation angle between WCSs using jacobian matrices
-        angle_in = get_angle(model_frame.wcs)
-        angle_out = get_angle(obs_frame.wcs)
-        if angle_out - angle_in == 0:
-            self.rotation_angle = None
-        else:
-            self.rotation_angle = angle_out - angle_in
-
-        # Get flip sign between WCSs using jacobian matrices
-        sign_in = get_sign(model_frame.wcs)
-        sign_out = get_sign(obs_frame.wcs)
-        if (sign_in != sign_out).any():
-            raise ValueError(
-                "model and observation WCSs have different sign conventions, \
-                    which is not yet handled by scarlet2"
-            )
-
-        self.flip_sign = sign_in * sign_out
+        # Extract rotation angle, flip, scale between WCSs
+        M_in = get_affine(model_frame.wcs)  # noqa: N806
+        M_out = get_affine(obs_frame.wcs)  # noqa: N806
+        M = jnp.linalg.inv(M_out) @ M_in  # noqa: N806, transformation from model pixel -> sky -> obs pixels
+        self.scale, self.angle, self.flip = get_scale_angle_flip(M)
 
         self.model_kpsf_interp = resample_ops(
             model_kpsf,
             model_kpsf.shape[-2],
             self.fft_shape_target,
-            self.res_in,
-            self.res_out,
-            phi=self.rotation_angle,
-            flip_sign=self.flip_sign,
+            scale=self.scale,
+            angle=self.angle,
+            flip=self.flip,
         )
 
         self.obs_kpsf_interp = resample_ops(
-            obs_kpsf, obs_kpsf.shape[-2], self.fft_shape_target, self.res_out, self.res_out
+            obs_kpsf,
+            obs_kpsf.shape[-2],
+            self.fft_shape_target,
         )
 
         self.real_shape_target = obs_frame.bbox.shape
@@ -314,10 +291,9 @@ class ResamplingRenderer(Renderer):
             model_kim,
             model_kim.shape[-2],
             self.fft_shape_target,
-            self.res_in,
-            self.res_out,
-            phi=self.rotation_angle,
-            flip_sign=self.flip_sign,
+            scale=self.scale,
+            angle=self.angle,
+            flip=self.flip,
         )
 
         # deconvolve with model psf, re-convolve with observation psf and Fourier transform back to real space

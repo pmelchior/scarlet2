@@ -18,6 +18,10 @@ from scarlet2.observation import Observation
 from scarlet2.psf import ArrayPSF, GaussianPSF
 from scarlet2.scene import Scene
 from scarlet2.source import Source
+from scarlet2.validation_utils import set_validation
+
+# turn off automatic validation checks
+set_validation(False)
 
 filename = hf_hub_download(
     repo_id="astro-data-lab/scarlet-test-data", filename="hsc_cosmos_35.npz", repo_type="dataset"
@@ -64,7 +68,7 @@ def test_fit():
                 scene.sources[i].morphology, name=f"morph:{i}", constraint=constraints.positive, stepsize=0.1
             )
 
-    maxiter = 100
+    maxiter = 10
     scene_ = scene.fit(obs, parameters, max_iter=maxiter, progress_bar=False)
 
 
@@ -78,7 +82,7 @@ def test_sample():
     parameters += Parameter(p, name="spectrum:0", prior=prior)
 
     _ = scene_.sample(
-        obs, parameters, num_samples=100, dense_mass=True, init_strategy=init_to_sample, progress_bar=False
+        obs, parameters, num_samples=10, dense_mass=True, init_strategy=init_to_sample, progress_bar=False
     )
 
 

@@ -53,9 +53,9 @@ def make_bbox(obs, center_pix, sizes=[11, 17, 25, 35, 47, 61, 77], min_snr=20, m
     """
     assert isinstance(obs, Observation)
     assert obs.weights is not None, "Observation weights are required"
-    assert obs.frame.bbox.spatial.contains(
-        center_pix
-    ), f"Center pixel {center_pix} not contained in observation"
+    assert obs.frame.bbox.spatial.contains(center_pix), (
+        f"Center pixel {center_pix} not contained in observation"
+    )
     assert len(sizes) > 0
 
     # increase box size from list until SNR is below threshold or spectrum changes significantly
@@ -149,7 +149,7 @@ def standardized_moments(
     Returns
     -------
     measure.Moments
-        2nd moments, deconvolved, and in the coordinate frame of the model frame
+        2nd moments, deconvolved, and in the coordinates of the model frame
 
     Raises
     ------
@@ -170,7 +170,7 @@ def standardized_moments(
     # cutout image and footprint
     cutout_img = obs.data[bbox.slices]
     cutout_fp = footprint[bbox.spatial.slices]
-    center -= jnp.array(bbox.spatial.origin)
+    center_ = center - jnp.array(bbox.spatial.origin)
 
     try:
         frame = Scenery.scene.frame
@@ -183,7 +183,7 @@ def standardized_moments(
 
     # getting moment measures:
     # 1) get convolved moments
-    g = measure.Moments(cutout_img, center=center, weight=cutout_fp[None, :, :], N=2)
+    g = measure.Moments(cutout_img, center=center_, weight=cutout_fp[None, :, :], N=2)
     # 2) adjust moments for model frame
     g.transfer(obs.frame.wcs, frame.wcs)
     # 3) deconvolve from PSF (actually: difference kernel between obs PSF and model frame PSF)
@@ -275,7 +275,6 @@ def from_gaussian_moments(
     else:
         assert len(box_sizes) > 0
         if u.get_physical_type(box_sizes[0]) == "angle":
-            assert frame.wcs is not None, "Boxsizes are given as angle, but model frame does not have WCS"
             box_sizes = [[obs.frame.u_to_pixel(size) for size in box_sizes] for obs in observations]
         else:
             # assume that all pixels are in proper observed frame
@@ -289,13 +288,13 @@ def from_gaussian_moments(
         standardized_moments(obs_, center_, bbox=bbox_)
         for obs_, center_, bbox_ in zip(observations, centers, boxes, strict=False)
     ]
-
     # flat lists of spectra, sorted as model frame channels
     spectra = jnp.concatenate([g[0, 0] for g in moments])
     channels = reduce(operator.add, [obs_.frame.channels for obs_ in observations])
     spectrum = _sort_spectra(spectra, channels)
 
     # average over all channels
+    moments = [m.normalize() for m in moments]  # flux normalization
     g = moments[0]  # moments from first observation
     for key in g:
         g[key] = jnp.concatenate([g[key] for g in moments])  # combine all observations
@@ -319,7 +318,7 @@ def from_gaussian_moments(
     # create morphology and evaluate at center
     morph = GaussianMorphology.from_moments(g, shape=(size, size))
     morph = morph()
-    spectrum /= morph.sum()
+    # spectrum /= morph.sum()
     morph = jnp.minimum(jnp.maximum(morph, min_value), max_value)
     return spectrum, morph
 

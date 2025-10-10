@@ -1,12 +1,9 @@
 """Measurement methods"""
 
-import math
-
-import astropy.units as u
 import numpy as jnp
 import numpy.ma as ma
 
-from .frame import get_angle, get_scale, get_sign
+from .frame import get_affine, get_scale_angle_flip
 from .source import Component
 
 
@@ -257,6 +254,18 @@ class Moments(dict):
         ellipticity = (self[0, 2] - self[2, 0] + 2j * self[1, 1]) / (self[2, 0] + self[0, 2])
         return jnp.array((ellipticity.real, ellipticity.imag))
 
+    def normalize(self):
+        """Normalize moments with respect to the flux
+
+        Returns
+        -------
+        self
+        """
+        norm = self[0, 0]
+        for key in self.keys():
+            self[key] /= norm
+        return self
+
     def deconvolve(self, p):
         """Deconvolve moments from moments `p`
 
@@ -271,7 +280,7 @@ class Moments(dict):
 
         Returns
         -------
-        None
+        self
         """
         g = self
         n_min = min(p.order, g.order)
@@ -300,6 +309,7 @@ class Moments(dict):
                                 for l in range(j):  # noqa: E741
                                     g[i, j] -= binomial(j, l) * g[i, l] * p[0, j - l]
                         g[i, j] /= p[0, 0]
+        return self
 
     def resize(self, c):
         """Change moments for a change of factor `c` of the size/spatial resolution
@@ -319,7 +329,7 @@ class Moments(dict):
 
         Returns
         -------
-        None
+        self
         """
         # Teague (1980), eq. 34
         if jnp.isscalar(c):
@@ -330,6 +340,7 @@ class Moments(dict):
                 self[e] = self[e] * c[0] ** (e[0] + 1) * c[1] ** (e[1] + 1)
         else:
             raise AttributeError("c must be a scalar of a list or array of two components")
+        return self
 
     def rotate(self, phi):
         """Change moments for rotation of angle `phi`.
@@ -340,16 +351,13 @@ class Moments(dict):
 
         Parameters
         ----------
-        phi: :py:class:`astropy.Quantity`
-            Rotation angle. Must be an astropy quantity of type="angle".
+        phi: float
+            Rotation angle, in radian
 
         Returns
         -------
-        None
+        self
         """
-        assert u.get_physical_type(phi) == "angle"  # check that it's an angle with a suitable unit
-        phi = phi.to(u.deg).value
-        phi = phi * math.pi / 180  # radian
 
         mu_p = {}
         for n in range(self.N + 1):
@@ -372,10 +380,12 @@ class Moments(dict):
         for e in self:
             self[e] = mu_p[e]
 
+        return self
+
     def transfer(self, wcs_in, wcs_out):
         """Compute rescaling and rotation from WCSs and apply to moments
 
-        This methods adjusts moments measured with a frame defined by `wcs_in` to to the frame `wcs_out`.
+        The method adjusts moments measured with a frame defined by `wcs_in` to the frame `wcs_out`.
         The moments are changed in place.
 
         Parameters
@@ -387,33 +397,27 @@ class Moments(dict):
 
         Returns
         -------
-        None
+        self
         """
 
         flux_in = self[0, 0]
 
         if (wcs_in is not None) and (wcs_out is not None):
-            # Rescale moments (amplitude rescaling)
-            scale_in = get_scale(wcs_in) * 60**2  # arcsec
-            scale_out = get_scale(wcs_out) * 60**2  # arcsec
-            c = jnp.array(scale_in) / jnp.array(scale_out)
-            self.resize(c)
+            M_in = get_affine(wcs_in)  # noqa: N806
+            M_out = get_affine(wcs_out)  # noqa: N806
+            M = jnp.linalg.inv(M_out) @ M_in  # noqa: N806, transformation from in pixel -> sky -> out pixels
+            scale, angle, flip = get_scale_angle_flip(M)
+            # as flip is the same as rescale(-1), combine both
+            # note flip is for y-flip, and we have y/x convention here
+            scale = jnp.array((flip, 1)) * scale
+            self.resize(scale).rotate(angle)
 
-            # Rotate moments
-            phi_in = get_angle(wcs_in)
-            phi_out = get_angle(wcs_out)
-            phi = (phi_out - phi_in) / jnp.pi * 180
-            self.rotate(phi * u.deg)
-
-            # Flip moments if WCSs don't share the same convention
-            sign_in = get_sign(wcs_in)
-            sign_out = get_sign(wcs_out)
-            self.resize(sign_in * sign_out)
-
+            # TODO: why are we doing a flux normalization???
             flux_out = self[0, 0]
-
             for key in self.keys():
                 self[key] /= flux_out / flux_in
+
+        return self
 
 
 # def moments(component, N=2, center=None, weight=None):
@@ -432,3 +436,74 @@ def binomial(n, k):
         result *= n - i + 1
         result //= i
     return result
+
+
+def forced_photometry(scene, obs):
+    """Computes the spectra of every source in the scene to match the observations
+
+    Computes the best-fit amplitude of the rendered model of all components in every
+    channel of every observation as a linear inverse problem.
+
+    If sources/sources components in `scene` have non-flat spectra, the output of this function is
+    the correction factor that needs to be applied to those spectra to best match each channel of `obs`.
+
+    Parameters
+    ----------
+    scene: :py:class:`scarlet2.scene.Scene`
+        Scene for which the spectra should be computed
+    obs: :py:class:`~scarlet2.Observation`
+        The observation used to determine the spectra.
+
+    Returns
+    -------
+    array
+        Array of the spectra, in the order of the sources in the scene
+    """
+
+    # extract multi-channel model for every source
+    models = []
+    for i, src in enumerate(scene.sources):
+        # evaluate the model for any source so that fit includes it even if its spectrum is not updated
+        model = scene.evaluate_source(src)  # assumes all sources are single components
+
+        # check for models with identical initializations, see scarlet repo issue #282
+        # if duplicate: raise ValueError
+        for model_indx in range(len(models)):
+            if jnp.allclose(model, models[model_indx]):
+                message = f"Source {i} has a model identical to source {model_indx}.\n"
+                message += "This is likely not intended, and the second source should be deleted."
+                raise ValueError(message)
+        models.append(model)
+
+    models = jnp.array(models)
+    num_models = len(models)
+
+    # independent channels, no mixing
+    # solve the linear inverse problem of the amplitudes in every channel
+    # given all the rendered morphologies
+    # spectrum = (M^T Sigma^-1 M)^-1 M^T Sigma^-1 * im
+    num_channels = obs.frame.C
+    images = obs.data
+    weights = obs.weights
+    morphs = jnp.stack([obs.render(model) for model in models], axis=0)
+    spectra = jnp.zeros((num_models, num_channels))
+    for c in range(num_channels):
+        im = images[c].reshape(-1)
+        w = weights[c].reshape(-1)
+        m = morphs[:, c, :, :].reshape(num_models, -1)
+        mw = m * w[None, :]
+        # check if all components have nonzero flux in c.
+        # because of convolutions, flux can be outside the box,
+        # so we need to compare weighted flux with unweighted flux,
+        # which is the same (up to a constant) for constant weights.
+        # so we check if *most* of the flux is from pixels with non-zero weight
+        nonzero = jnp.sum(mw, axis=1) / jnp.sum(m, axis=1) / jnp.mean(w) > 0.1
+        nonzero = jnp.flatnonzero(nonzero)
+        if len(nonzero) == num_models:
+            covar = jnp.linalg.inv(mw @ m.T)
+            spectra = spectra.at[:, c].set(covar @ m @ (im * w))
+        else:
+            covar = jnp.linalg.inv(mw[nonzero] @ m[nonzero].T)
+            spectra = spectra.at[nonzero, c].set(covar @ m[nonzero] @ (im * w))
+
+    return spectra
