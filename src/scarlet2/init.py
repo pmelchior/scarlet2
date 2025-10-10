@@ -318,7 +318,7 @@ def from_gaussian_moments(
     # create morphology and evaluate at center
     morph = GaussianMorphology.from_moments(g, shape=(size, size))
     morph = morph()
-    # spectrum /= morph.sum()
+    spectrum /= morph.sum()
     morph = jnp.minimum(jnp.maximum(morph, min_value), max_value)
     return spectrum, morph
 
