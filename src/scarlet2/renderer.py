@@ -187,7 +187,7 @@ class TrimSpatialBox(Renderer):
         )
 
     def __call__(self, model, key=None):
-        """What to run when AdjustToFrame is called"""
+        """What to run when TrimSpatialBox is called"""
         sub = model[:, self.slices[-2].get_slice(), self.slices[-1].get_slice()]
         return sub
 
@@ -196,14 +196,15 @@ class ResamplingRenderer(Renderer):
     """Renderer to resample image to different pixel grid (subpixel position, resolution, orientation)"""
 
     padding: int
-    fft_shape_target: int = eqx.field(repr=False)
-    fft_shape_model_im: int = eqx.field(repr=False)
+    shape_obs: tuple = eqx.field(repr=False)
+    shape_obs_k: int = eqx.field(repr=False)
+    shape_model_k: int = eqx.field(repr=False)
     scale: float
     angle: float
     flip: int
-    model_kpsf_interp: jnp.array = eqx.field(repr=False)
-    obs_kpsf_interp: jnp.array = eqx.field(repr=False)
-    real_shape_target: tuple = eqx.field(repr=False)
+    shift: tuple
+    psf_model_k: jnp.array = eqx.field(repr=False)
+    psf_obs_k: jnp.array = eqx.field(repr=False)
 
     def __init__(self, model_frame, obs_frame, padding=4):
         """Initialize preprocess renderer in multi-resolution mapping
@@ -230,9 +231,6 @@ class ResamplingRenderer(Renderer):
 
         # create PSF model
         psf_model = model_frame.psf()
-        if len(psf_model.shape) == 2:
-            psf_model = psf_model[None, ...]
-
         if len(psf_model.shape) == 2:  # only one image for all bands
             psf_model = jnp.tile(psf_model, (obs_frame.bbox.shape[0], 1, 1))
 
@@ -240,90 +238,92 @@ class ResamplingRenderer(Renderer):
         if len(psf_obs.shape) == 2:
             psf_obs = psf_obs[None, ...]
 
-        self.fft_shape_model_im = good_fft_size(padding * max(model_frame.bbox.shape))
-        fft_shape_model_psf = good_fft_size(padding * max(psf_model.shape))
-        fft_shape_obs_psf = good_fft_size(padding * max(psf_obs.shape))
+        self.shape_obs = obs_frame.bbox.shape
+        self.shape_obs_k = good_fft_size(padding * max(obs_frame.bbox.spatial.shape))
+        # if self.shape_obs_k % 2 == 0:
+        #     self.shape_obs_k += 1
+        self.shape_model_k = good_fft_size(padding * max(model_frame.bbox.spatial.shape))
+        # if self.shape_model_k % 2 == 0:
+        #     self.shape_model_k += 1
 
-        # Fourier transform model and observation PSFs
-        model_kpsf = jnp.fft.fftshift(
-            transform(psf_model, (fft_shape_model_psf, fft_shape_model_psf), (-2, -1)), (-2)
+        # Fourier transform of model and observation PSFs
+        self.psf_model_k = jnp.fft.fftshift(
+            transform(psf_model, (self.shape_model_k, self.shape_model_k), (-2, -1)), (-2)
         )
-        obs_kpsf = jnp.fft.fftshift(
-            transform(psf_obs, (fft_shape_obs_psf, fft_shape_obs_psf), (-2, -1)), (-2)
+        self.psf_obs_k = jnp.fft.fftshift(
+            transform(psf_obs, (self.shape_obs_k, self.shape_obs_k), (-2, -1)), (-2)
         )
 
-        # Get maximum of the fft shapes to interpolate on the highest resolved FFT image
-        # odd shape is required for k-wrapping later
-        self.fft_shape_target = max(self.fft_shape_model_im, fft_shape_obs_psf) + 1
+        # # Get maximum of the fft shapes to interpolate on the highest resolved FFT image
+        # # odd shape is required for k-wrapping later
+        # self.shape_obs_k = max(self.shape_model_k, fft_shape_obs_psf) + 1
 
         # Extract rotation angle, flip, scale between WCSs
         M_in = get_affine(model_frame.wcs)  # noqa: N806
         M_out = get_affine(obs_frame.wcs)  # noqa: N806
         M = jnp.linalg.inv(M_out) @ M_in  # noqa: N806, transformation from model pixel -> sky -> obs pixels
         self.scale, self.angle, self.flip = get_scale_angle_flip(M)
+        model_center = jnp.asarray(model_frame.bbox.spatial.center)
+        model_center_in_obs = obs_frame.get_pixel(model_frame.get_sky_coord(model_center)).flatten()
+        obs_center = obs_frame.bbox.spatial.center
+        self.shift = tuple(model_center_in_obs[c].item() - obs_center[c] for c in range(2))
 
-        self.model_kpsf_interp = resample_ops(
-            model_kpsf,
-            model_kpsf.shape[-2],
-            self.fft_shape_target,
-            scale=self.scale,
-            angle=self.angle,
-            flip=self.flip,
-        )
-
-        self.obs_kpsf_interp = resample_ops(
-            obs_kpsf,
-            obs_kpsf.shape[-2],
-            self.fft_shape_target,
-        )
-
-        self.real_shape_target = obs_frame.bbox.shape
+        # self.model_kpsf_interp = resample_ops(
+        #     model_kpsf,
+        #     model_kpsf.shape[-2],
+        #     self.fft_shape_target,
+        #     scale=self.scale,
+        #     angle=self.angle,
+        #     flip=self.flip,
+        # )
+        #
+        # self.obs_kpsf_interp = resample_ops(
+        #     obs_kpsf,
+        #     obs_kpsf.shape[-2],
+        #     self.fft_shape_target,
+        # )
 
     def __call__(self, model, key=None):
-        """What to run when MultiresolutionRenderer is called"""
+        """What to run when ResamplingRenderer is called"""
+
         # Fourier transform model
-        model_kim = jnp.fft.fftshift(
-            transform(model, (self.fft_shape_model_im, self.fft_shape_model_im), (-2, -1)), (-2)
-        )
+        model_k = jnp.fft.fftshift(transform(model, (self.shape_model_k, self.shape_model_k), (-2, -1)), (-2))
+
+        # deconvolve from the model psf
+        model_k /= self.psf_model_k
 
         # resample on target grid
         model_kim_interp = resample_ops(
-            model_kim,
-            model_kim.shape[-2],
-            self.fft_shape_target,
+            model_k,
+            model_k.shape[-2],
+            self.shape_obs_k,
             scale=self.scale,
             angle=self.angle,
             flip=self.flip,
+            shift=self.shift,
         )
 
-        # deconvolve with model psf, re-convolve with observation psf and Fourier transform back to real space
-        model_kim = model_kim_interp
-        model_kpsf = self.model_kpsf_interp
-        obs_kpsf = self.obs_kpsf_interp
+        # re-convolve with observation psf
+        model_kim_interp *= self.psf_obs_k
 
-        kimage_final = model_kim / model_kpsf * obs_kpsf
-
-        kimage_final_wrap = jax.vmap(_wrap_hermitian_x, in_axes=(0, None, None, None, None, None, None))(
-            kimage_final,
-            -self.fft_shape_target // 2,
-            -self.fft_shape_target // 2,
-            -self.fft_shape_target // 2 + 1,
-            -self.fft_shape_target // 2,
-            self.fft_shape_target - 1,
-            self.fft_shape_target - 1,
+        model_kim_wrap = jax.vmap(_wrap_hermitian_x, in_axes=(0, None, None, None, None, None, None))(
+            model_kim_interp,
+            -self.shape_obs_k // 2,
+            -self.shape_obs_k // 2,
+            -self.shape_obs_k // 2,
+            -self.shape_obs_k // 2,
+            self.shape_obs_k,
+            self.shape_obs_k,
         )
 
-        kimage_final_wrap = kimage_final_wrap[:, :-1, :]
-
-        kimg_shift = jnp.fft.ifftshift(kimage_final_wrap, axes=(-2,))
+        # model_kim_wrap = model_kim_wrap[:, :-1, :] # ???
+        kimg_shift = jnp.fft.ifftshift(model_kim_wrap, axes=(-2,))
 
         real_image_arr = jnp.fft.fftshift(
-            jnp.fft.irfft2(kimg_shift, [self.fft_shape_target - 1, self.fft_shape_target - 1], (-2, -1)),
+            jnp.fft.irfft2(kimg_shift, [self.shape_obs_k, self.shape_obs_k], (-2, -1)),
             (-2, -1),
         )
 
-        img_trimed = _trim(
-            real_image_arr, [real_image_arr.shape[0], self.real_shape_target[-2], self.real_shape_target[-1]]
-        )
+        img_trimed = _trim(real_image_arr, self.shape_obs)
 
         return img_trimed
