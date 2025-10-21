@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from .bbox import Box, overlap_slices
 from .fft import _get_fast_shape, _trim, _wrap_hermitian_x, convolve, deconvolve, good_fft_size, transform
 from .frame import _minmax_int, get_affine, get_scale_angle_flip
-from .interpolation import Interpolant, Lanczos, resample_ops
+from .interpolation import Interpolant, Lanczos, resample3d, resample_ops
 
 
 class Renderer(eqx.Module):
@@ -375,9 +375,7 @@ class LanczosResamplingRenderer(Renderer):
             warp_.shape[0], warp_.shape[1], 2
         )
         # interpolate observed to model pixels
-        psf_obs_interp = LanczosResamplingRenderer.resample3d(
-            psf_obs, coords=coords_, warp=warp__, interpolant=self.interpolant
-        )
+        psf_obs_interp = resample3d(psf_obs, coords=coords_, warp=warp__, interpolant=self.interpolant)
 
         # make sure fft uses a shape large enough to cover the convolved model
         padding = self.interpolant.extent
@@ -396,7 +394,7 @@ class LanczosResamplingRenderer(Renderer):
         """What to run when renderer is called"""
 
         _resample3d = partial(
-            LanczosResamplingRenderer.resample3d,
+            resample3d,
             coords=self.coords,
             warp=self.warp,
             interpolant=self.interpolant,
