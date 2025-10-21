@@ -7,17 +7,18 @@ import copy
 
 import astropy.units as u
 import jax.numpy as jnp
-import scarlet2
 from astropy.wcs import WCS
 from numpy.testing import assert_allclose
+
 from scarlet2.frame import _flip_matrix, _rot_matrix
+from scarlet2.measure import Moments
 from scarlet2.morphology import GaussianMorphology
 
 # create a test image and measure moments
-T0 = 30
+t0 = 10
 ellipticity = jnp.array((0.3, 0.5))
-morph = GaussianMorphology(size=T0, ellipticity=ellipticity)
-g = scarlet2.measure.Moments(component=morph(), N=2)
+morph = GaussianMorphology(size=t0, ellipticity=ellipticity)
+g = Moments(component=morph(), N=2)
 
 # create trivial WCS for that image
 wcs = WCS(naxis=2)
@@ -26,7 +27,7 @@ wcs.wcs.pc = jnp.diag(jnp.ones(2))
 
 
 def test_measure_size():
-    assert_allclose(T0, g.size, rtol=1e-3)
+    assert_allclose(t0, g.size, rtol=1e-3)
 
 
 def test_measure_ellipticity():
@@ -40,6 +41,20 @@ def test_gaussian_from_moments():
     morph2 = GaussianMorphology(t, ellipticity)
 
     assert_allclose(morph(), morph2(), rtol=1e-2)
+
+
+def test_convolve_moments():
+    g_ = copy.deepcopy(g)
+    tp = t0 / 2
+    psf = GaussianMorphology(size=tp, ellipticity=ellipticity)()
+    psf /= psf.sum()
+    p = Moments(psf, N=2)
+    g_.convolve(p)
+    assert_allclose(g_.size, jnp.sqrt(t0**2 + tp**2), rtol=3e-4)
+    assert_allclose(g_.ellipticity, ellipticity, rtol=2e-3)
+    g_.deconvolve(p)
+    assert_allclose(g_.size, t0, rtol=3e-4)
+    assert_allclose(g_.ellipticity, ellipticity, rtol=2e-3)
 
 
 def test_rotate_moments():
@@ -59,8 +74,8 @@ def test_rotate_moments():
 def test_resize_moments():
     # resize the image
     c = 0.5
-    morph2 = GaussianMorphology(size=T0 * c, ellipticity=ellipticity, shape=morph().shape)
-    g2 = scarlet2.measure.Moments(morph2(), 2)
+    morph2 = GaussianMorphology(size=t0 * c, ellipticity=ellipticity, shape=morph().shape)
+    g2 = Moments(morph2(), 2)
     g2.resize(1 / c)
 
     assert_allclose(g.size, g2.size, rtol=1e-3)
@@ -68,7 +83,7 @@ def test_resize_moments():
 
 def test_flip_moments():
     morph2 = jnp.fliplr(morph())
-    g2 = scarlet2.measure.Moments(morph2, 2)
+    g2 = Moments(morph2, 2)
     g2.resize((1, -1))  # flip second=x-axis
 
     assert_allclose(g.ellipticity, g2.ellipticity, rtol=1e-3)
@@ -77,7 +92,7 @@ def test_flip_moments():
 def test_wcs_transfer_moments_rot90():
     # create a 90 deg counter-clockwise version of the morph image
     im_ = jnp.rot90(morph(), axes=(1, 0))
-    g_ = scarlet2.measure.Moments(im_)
+    g_ = Moments(im_)
 
     # create mock WCS for that image
     wcs_ = WCS(naxis=2)
@@ -101,9 +116,9 @@ def test_wcs_transfer_moments():
     ellipticity_ *= jnp.exp(2j * a)
     ellipticity_ = jnp.array((ellipticity_.real, ellipticity_.imag))
     c = 0.5
-    morph2 = GaussianMorphology(size=T0 * c, ellipticity=ellipticity_, shape=morph().shape)
+    morph2 = GaussianMorphology(size=t0 * c, ellipticity=ellipticity_, shape=morph().shape)
     im_ = jnp.flipud(morph2())
-    g_ = scarlet2.measure.Moments(im_)
+    g_ = Moments(im_)
 
     # create mock WCS for that image
     wcs_ = WCS(naxis=2)

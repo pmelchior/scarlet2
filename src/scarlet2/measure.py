@@ -1,5 +1,7 @@
 """Measurement methods"""
 
+import copy
+
 import numpy as jnp
 import numpy.ma as ma
 
@@ -266,6 +268,36 @@ class Moments(dict):
             self[key] /= norm
         return self
 
+    def convolve(self, p):
+        """Convolve moments with moments `p`
+
+        The moments are changed in place.
+
+        See Melchior et al. (2010), "Weak gravitational lensing with Deimos", Equation 9
+
+        Parameters
+        ----------
+        p: Moments
+            Moments of the kernel to convolve with
+
+        Returns
+        -------
+        self
+        """
+
+        g_ = self
+        g = copy.deepcopy(g_)
+        n_min = min(p.order, g.order)
+
+        for n in range(n_min + 1):
+            for i in range(n + 1):
+                j = n - i
+                g_[i, j] = jnp.zeros_like(g_[i, j])
+                for k in range(i + 1):
+                    for l in range(j + 1):  # noqa: E741
+                        g_[i, j] += binomial(i, k) * binomial(j, l) * g[k, l] * p[i - k, j - l]
+        return self
+
     def deconvolve(self, p):
         """Deconvolve moments from moments `p`
 
@@ -292,23 +324,26 @@ class Moments(dict):
             g[1, 0] -= g[0, 0] * p[1, 0]
             g[0, 1] /= p[0, 0]
             g[1, 0] /= p[0, 0]
-            if n_min >= 2:
-                g[0, 2] -= g[0, 0] * p[0, 2] + 2 * g[0, 1] * p[0, 1]
-                g[1, 1] -= g[0, 0] * p[1, 1] + g[0, 1] * p[1, 0] + g[1, 0] * p[0, 1]
-                g[2, 0] -= g[0, 0] * p[2, 0] + 2 * g[1, 0] * p[1, 0]
-                if n_min >= 3:
-                    # use general formula
-                    for n in range(3, n_min + 1):
-                        for i in range(n + 1):
-                            for j in range(n - i):
-                                for k in range(i):
-                                    for l in range(j):  # noqa: E741
-                                        g[i, j] -= binomial(i, k) * binomial(j, l) * g[k, l] * p[i - k, j - l]
-                                for k in range(i):
-                                    g[i, j] -= binomial(i, k) * g[k, j] * p[i - k, 0]
-                                for l in range(j):  # noqa: E741
-                                    g[i, j] -= binomial(j, l) * g[i, l] * p[0, j - l]
-                        g[i, j] /= p[0, 0]
+        if n_min >= 2:
+            g[0, 2] -= g[0, 0] * p[0, 2] + 2 * g[0, 1] * p[0, 1]
+            g[1, 1] -= g[0, 0] * p[1, 1] + g[0, 1] * p[1, 0] + g[1, 0] * p[0, 1]
+            g[2, 0] -= g[0, 0] * p[2, 0] + 2 * g[1, 0] * p[1, 0]
+            g[0, 2] /= p[0, 0]
+            g[1, 1] /= p[0, 0]
+            g[2, 0] /= p[0, 0]
+        if n_min >= 3:
+            # use general formula
+            for n in range(3, n_min + 1):
+                for i in range(n + 1):
+                    for j in range(n - i):
+                        for k in range(i):
+                            for l in range(j):  # noqa: E741
+                                g[i, j] -= binomial(i, k) * binomial(j, l) * g[k, l] * p[i - k, j - l]
+                        for k in range(i):
+                            g[i, j] -= binomial(i, k) * g[k, j] * p[i - k, 0]
+                        for l in range(j):  # noqa: E741
+                            g[i, j] -= binomial(j, l) * g[i, l] * p[0, j - l]
+                g[i, j] /= p[0, 0]
         return self
 
     def resize(self, c):

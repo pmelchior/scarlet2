@@ -42,10 +42,10 @@ class ProfileMorphology(Morphology):
         self.size = size
         self.ellipticity = ellipticity
 
-        # default shape: square 10x size
+        # default shape: square 15x size
         if shape is None:
             # explicit call to int() to avoid bbox sizes being jax-traced
-            size = int(jnp.ceil(10 * self.size))
+            size = int(jnp.ceil(15 * self.size))
             # odd shapes for unique center pixel
             if size % 2 == 0:
                 size += 1
