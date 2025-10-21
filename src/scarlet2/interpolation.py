@@ -145,14 +145,14 @@ def resample2d(signal, coords, warp, interpolant=Lanczos(3)):  # noqa: B008
     ----------
     signal: array
         2d array containing the signal. We assume here that the coordinates of
-        the signal. Shape: `[Nx, Ny]`
+        the signal. Shape: `[Ny, Nx]`
     coords: array
         Coordinates on which the signal is sampled.
-        Shape: `[Nx, Ny, 2]`
-        x-coordinates are `coords[0,:,0]`, y-coordinates are `coords[:,0,1]`.
+        Shape: `[Ny, Nx, 2]`
+        y-coordinates are `coords[0,:,0]`, x-coordinates are `coords[:,0,1]`.
     warp: array
         Coordinates on which to resample the signal.
-        Shape:[nx, ny, 2]
+        Shape:[ny, nx, 2]
         [
         [[0,  0], [0,  1], ...,  [0,  N-1]],
         [ ... ],
@@ -166,25 +166,25 @@ def resample2d(signal, coords, warp, interpolant=Lanczos(3)):  # noqa: B008
     array
         Resampled `signal` at the location indicated by `warp`
     """
-    x = warp[..., 0].flatten()
-    y = warp[..., 1].flatten()
+    y = warp[..., 0].flatten()
+    x = warp[..., 1].flatten()
 
-    coords_x = coords[0, :, 0]
-    coords_y = coords[:, 0, 1]
+    coords_y = coords[0, :, 0]
+    coords_x = coords[:, 0, 1]
 
     h = coords_x[1] - coords_x[0]
 
     xi = jnp.floor((x - coords_x[0]) / h).astype(jnp.int32)
     yi = jnp.floor((y - coords_y[0]) / h).astype(jnp.int32)
 
-    n_x = coords.shape[0]
-    n_y = coords.shape[1]
+    n_y = coords.shape[0]
+    n_x = coords.shape[1]
 
     def body_fun_x(i, args):
         res, yind, ky, masky = args
 
         xind = xi + i
-        maskx = (xind >= 0) & (xind < n_y)
+        maskx = (xind >= 0) & (xind < n_x)
 
         kx = interpolant.kernel((x - coords_x[xind]) / h)
 
@@ -198,7 +198,7 @@ def resample2d(signal, coords, warp, interpolant=Lanczos(3)):  # noqa: B008
         res = args
 
         yind = yi + i
-        masky = (yind >= 0) & (yind < n_x)
+        masky = (yind >= 0) & (yind < n_y)
 
         ky = interpolant.kernel((y - coords_y[yind]) / h)
 
@@ -213,6 +213,43 @@ def resample2d(signal, coords, warp, interpolant=Lanczos(3)):  # noqa: B008
     )
 
     return res.reshape(warp[..., 0].shape)
+
+
+# @partial(jax.jit, static_argnums=(3))
+def resample3d(signal, coords, warp, interpolant):
+    """Resample a 3-dimensional image using a Lanczos kernel
+
+    Parameters
+    ----------
+    signal: array
+        3d array containing the signal. We assume here that the coordinates of
+        the signal. Shape: `[C, Ny, Nx]`
+    coords: array
+        Coordinates on which the signal is sampled.
+        Shape: `[Ny, Nx, 2]`
+        y-coordinates are `coords[0,:,0]`, x-coordinates are `coords[:,0,1]`.
+    warp: array
+        Coordinates on which to resample the signal.
+        Shape:[ny, nx, 2]
+        [
+        [[0,  0], [0,  1], ...,  [0,  N-1]],
+        [ ... ],
+        [[N-1,0], [N-1,1], ...,  [N-1,N  ]]
+        ]
+    interpolant: Interpolant
+        Instance of interpolant
+
+    Returns
+    -------
+    array
+        Resampled `signal` at the location indicated by `warp`
+
+    See Also
+    --------
+    resample2d
+    """
+    _resample2d = lambda s: resample2d(s, coords, warp, interpolant=interpolant)
+    return jax.vmap(_resample2d, in_axes=0, out_axes=0)(signal)
 
 
 def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):  # noqa: B008

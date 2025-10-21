@@ -1,13 +1,15 @@
 """Renderer classes"""
 
+from functools import partial
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
 from .fft import _get_fast_shape, _trim, _wrap_hermitian_x, convolve, deconvolve, good_fft_size, transform
-from .frame import get_affine, get_scale_angle_flip
-from .interpolation import resample_ops
+from .frame import _minmax_int, get_affine, get_scale_angle_flip
+from .interpolation import Interpolant, Lanczos, resample_ops
 
 
 class Renderer(eqx.Module):
@@ -327,3 +329,80 @@ class ResamplingRenderer(Renderer):
         img_trimed = _trim(real_image_arr, self.shape_obs)
 
         return img_trimed
+
+
+class LanczosResamplingRenderer(Renderer):
+    """Renderer to resample image to different pixel grid with a Lanczos kernel."""
+
+    interpolant: Interpolant
+    coords: jnp.ndarray = eqx.field(repr=False)
+    warp: jnp.ndarray = eqx.field(repr=False)
+    _diff_kernel_fft: jnp.array = eqx.field(repr=False)
+    _fft_shape: int = eqx.field(repr=False)
+
+    def __init__(self, model_frame, obs_frame):
+        self.interpolant = Lanczos(7)
+        model_shape = model_frame.bbox.spatial.shape
+        self.coords = jnp.stack(
+            jnp.meshgrid(jnp.arange(model_shape[0]), jnp.arange(model_shape[1])), -1
+        ).astype(jnp.float32)  # x/y
+        obs_shape = obs_frame.bbox.spatial.shape
+        self.warp = obs_frame.convert_pixel_to(model_frame).reshape(obs_shape[0], obs_shape[1], 2)
+
+        # construct diff kernel in model_space
+        # create PSF model
+        psf = model_frame.psf()
+        psf_model = jnp.tile(psf, (obs_frame.bbox.shape[0], 1, 1)) if len(psf.shape) == 2 else psf
+
+        # resample obs psf in model pixel
+        psf_obs = obs_frame.psf()
+        # TODO: what is different between indices and meshgrid???
+        # coords_ = jnp.stack(jnp.indices(obs_psf.shape[-2:]), axis=-1).astype(jnp.float32)
+        coords_ = jnp.stack(
+            jnp.meshgrid(jnp.arange(psf_obs.shape[-2]), jnp.arange(psf_obs.shape[-1])), -1
+        ).astype(jnp.float32)
+        coords_in_model_space = obs_frame.convert_pixel_to(model_frame, pixel=coords_)
+        ylims = _minmax_int(coords_in_model_space[..., 0])
+        xlims = _minmax_int(coords_in_model_space[..., 1])
+        warp_ = jnp.stack(
+            jnp.meshgrid(
+                jnp.arange(ylims[0] - 1, ylims[1] - 1),
+                jnp.arange(xlims[0], xlims[1]),
+            ),
+            -1,
+        ).astype(jnp.float32)
+        warp__ = model_frame.convert_pixel_to(obs_frame, pixel=warp_).reshape(
+            warp_.shape[0], warp_.shape[1], 2
+        )
+        # interpolate observed to model pixels
+        psf_obs_interp = LanczosResamplingRenderer.resample3d(
+            psf_obs, coords=coords_, warp=warp__, interpolant=self.interpolant
+        )
+
+        # make sure fft uses a shape large enough to cover the convolved model
+        padding = self.interpolant.extent
+        self._fft_shape = good_fft_size(max(max(psf_obs_interp.shape[-2:]), max(model_shape)) + padding)
+
+        # compute and store diff kernel in Fourier space
+        self._diff_kernel_fft = deconvolve(
+            psf_obs_interp,
+            psf_model,
+            axes=(-2, -1),
+            fft_shape=(self._fft_shape, self._fft_shape),
+            return_fft=True,
+        )
+
+    def __call__(self, model, key=None):
+        """What to run when renderer is called"""
+
+        _resample3d = partial(
+            LanczosResamplingRenderer.resample3d,
+            coords=self.coords,
+            warp=self.warp,
+            interpolant=self.interpolant,
+        )
+        model_ = convolve(
+            model, self._diff_kernel_fft, axes=(-2, -1), fft_shape=(self._fft_shape, self._fft_shape)
+        )
+        model_ = _resample3d(model_)
+        return model_

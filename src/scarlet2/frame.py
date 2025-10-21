@@ -240,10 +240,8 @@ class Frame(eqx.Module):
         # Determine overlap of all observations in pixel coordinates of the model frame
         for c, obs in enumerate(observations):
             obs_coord = obs.frame.convert_pixel_to(model_frame)
-            # round coordinate to nearest integer (use python, not jnp)
-            minmax_int = lambda x: (int(f) for f in jnp.round(jnp.sort(x)[jnp.array([0, -1])]))  # noqa:E731
-            y_min, y_max = minmax_int(obs_coord[:, 0])
-            x_min, x_max = minmax_int(obs_coord[:, 1])
+            y_min, y_max = _minmax_int(obs_coord[:, 0])
+            x_min, x_max = _minmax_int(obs_coord[:, 1])
 
             # +1 because Box.shape is a length, not a coordinate
             this_box = Box.from_bounds((y_min, y_max + 1), (x_min, x_max + 1))
@@ -334,6 +332,9 @@ _flip_matrix = lambda flip: jnp.diag(jnp.array((1.0, flip)))
 
 # 2x2 matrix determinant
 _det = lambda m: m[0, 0] * m[1, 1] - m[0, 1] * m[1, 0]
+
+# round coordinate to nearest integer (use python, not jnp)
+_minmax_int = lambda x: tuple(int(f) for f in jnp.round(jnp.sort(x)[jnp.array([0, -1])]))  # noqa:E731
 
 
 def get_scale_angle_flip(trans):
