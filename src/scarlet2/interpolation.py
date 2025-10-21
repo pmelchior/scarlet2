@@ -9,7 +9,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from .frame import _flip_matrix, _rot_matrix
+from .frame import _rot_matrix
 
 
 ### Interpolant class
@@ -378,25 +378,29 @@ def resample_ops(
     # Apply rescaling to the frequencies
     # [0, Fe/2+1]
     # [-Fe/2+1, Fe/2]
+    # Because we divide the scale in x-space, we multiply in k-space
     kcoords_out = jnp.stack(
         jnp.meshgrid(
-            jnp.linspace(0, shape_in / 2, shape_out // 2 + 1),
-            jnp.linspace(-shape_in / 2, shape_in / 2, shape_out),
+            jnp.linspace(0, shape_in / 2 * scale, shape_out // 2 + 1),
+            jnp.linspace(-shape_in / 2 * scale, shape_in / 2 * scale, shape_out) * flip,
         ),
         -1,
     )
+
     # Apply rotation to the frequencies
-    R = _rot_matrix(-angle) @ _flip_matrix(flip)  # noqa: N806
+    R = _rot_matrix(-angle)  # @ _flip_matrix(flip)  # noqa: N806
     b_shape = kcoords_out.shape
     kcoords_out = (R @ kcoords_out.reshape((-1, 2)).T).T.reshape(b_shape)
 
     # k interpolation of original signal
     k_resampled = jax.vmap(resample_hermitian, in_axes=(0, None, None, None, None))(
-        kimage, kcoords_out * scale, -shape_in / 2, -shape_in / 2, interpolant
+        kimage, kcoords_out, -shape_in / 2, -shape_in / 2, interpolant
     )
     # fft of x-interpolant
-    uscale = 1.0 / shape_in  # (2.0 * jnp.pi)
-    xint_val = interpolant.uval(kcoords_out[..., 0] * uscale) * interpolant.uval(kcoords_out[..., 1] * uscale)
+    kx = jnp.linspace(0, jnp.pi, shape_out // 2 + 1) * scale
+    ky = jnp.linspace(-jnp.pi, jnp.pi, shape_out) * scale * flip
+    coords = jnp.stack(jnp.meshgrid(kx, ky), -1) / 2 / jnp.pi
+    xint_val = interpolant.uval(coords[..., 0]) * interpolant.uval(coords[..., 1])
 
     # # apply shift
     # shift_ = shift[::-1]  # x,y needed here
