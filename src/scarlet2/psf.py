@@ -9,7 +9,10 @@ from .morphology import GaussianMorphology
 class PSF(Module):
     """PSF base class"""
 
-    pass
+    @property
+    def shape(self):
+        """Shape of the PSF model"""
+        return self.morphology.shape
 
 
 class ArrayPSF(PSF):

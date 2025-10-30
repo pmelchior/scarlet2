@@ -198,15 +198,17 @@ class ResamplingRenderer(Renderer):
     """Renderer to resample image to different pixel grid (subpixel position, resolution, orientation)"""
 
     padding: int
-    fft_shape_target: int = eqx.field(repr=False)
-    fft_shape_model_im: int = eqx.field(repr=False)
     scale: float
     angle: float
     handedness: int
     shift: tuple
+    has_psf_in: bool
+    has_psf_out: bool
+    fft_shape_target: int = eqx.field(repr=False)
+    fft_shape_model_im: int = eqx.field(repr=False)
     jacobian: jnp.array = eqx.field(repr=False)
-    model_kpsf_interp: jnp.array = eqx.field(repr=False)
-    obs_kpsf_interp: jnp.array = eqx.field(repr=False)
+    model_kpsf_interp: jnp.array = eqx.field(repr=False, default=None)
+    obs_kpsf_interp: jnp.array = eqx.field(repr=False, default=None)
     real_shape_target: tuple = eqx.field(repr=False)
 
     def __init__(self, model_frame, obs_frame, padding=4):
@@ -232,31 +234,6 @@ class ResamplingRenderer(Renderer):
         # resampling to obs frame, followed by a convolution in obs frame because the difference
         # kernel would be expressed in obs pixel and can thus easily undersample the model PSF.
 
-        # create PSF model
-        psf_model = model_frame.psf()
-        if len(psf_model.shape) == 2:  # only one image for all bands
-            psf_model = jnp.tile(psf_model, (obs_frame.bbox.shape[0], 1, 1))
-
-        psf_obs = obs_frame.psf()
-        if len(psf_obs.shape) == 2:
-            psf_obs = psf_obs[None, ...]
-
-        self.fft_shape_model_im = good_fft_size(padding * max(model_frame.bbox.shape))
-        fft_shape_model_psf = good_fft_size(padding * max(psf_model.shape))
-        fft_shape_obs_psf = good_fft_size(padding * max(psf_obs.shape))
-
-        # Fourier transform model and observation PSFs
-        model_kpsf = jnp.fft.fftshift(
-            transform(psf_model, (fft_shape_model_psf, fft_shape_model_psf), (-2, -1)), (-2)
-        )
-        obs_kpsf = jnp.fft.fftshift(
-            transform(psf_obs, (fft_shape_obs_psf, fft_shape_obs_psf), (-2, -1)), (-2)
-        )
-
-        # Get maximum of the fft shapes to interpolate on the highest resolved FFT image
-        # odd shape is required for k-wrapping later
-        self.fft_shape_target = max(self.fft_shape_model_im, fft_shape_obs_psf) + 1
-
         # Extract rotation angle, flip, scale between WCSs
         m_in = get_affine(model_frame.wcs)
         m_out = get_affine(obs_frame.wcs)
@@ -269,20 +246,56 @@ class ResamplingRenderer(Renderer):
         shift = center_obs - center_model_in_obs
         self.shift = tuple(c.item() for c in shift)  # avoid tracing
 
-        self.model_kpsf_interp = resample_fourier(
-            model_kpsf,
-            model_kpsf.shape[-2],
-            self.fft_shape_target,
-            jacobian=self.jacobian,
-        )
-
-        self.obs_kpsf_interp = resample_fourier(
-            obs_kpsf,
-            obs_kpsf.shape[-2],
-            self.fft_shape_target,
-        )
-
+        # Get maximum of the fft shapes to interpolate on the highest resolved FFT image
         self.real_shape_target = obs_frame.bbox.shape
+        self.fft_shape_model_im = good_fft_size(padding * max(model_frame.bbox.spatial.shape))
+        self.fft_shape_target = self.fft_shape_model_im
+        if obs_frame.psf is not None:
+            fft_shape_obs_psf = good_fft_size(padding * max(obs_frame.psf.shape))
+            self.fft_shape_target = max(self.fft_shape_model_im, fft_shape_obs_psf)
+        # odd shape is required for k-wrapping later
+        if self.fft_shape_target % 2 == 0:
+            self.fft_shape_target += 1
+
+        # PSF models in Fourier space
+        if model_frame.psf is None:
+            self.has_psf_in = False
+        else:
+            self.has_psf_in = True
+            psf_model = model_frame.psf()
+            if len(psf_model.shape) == 2:  # only one image for all bands
+                psf_model = jnp.tile(psf_model, (obs_frame.bbox.shape[0], 1, 1))
+
+            # Fourier transform model PSF
+            fft_shape_model_psf = good_fft_size(padding * max(psf_model.shape))
+            model_kpsf = jnp.fft.fftshift(
+                transform(psf_model, (fft_shape_model_psf, fft_shape_model_psf), (-2, -1)), (-2)
+            )
+            # resample with warp
+            self.model_kpsf_interp = resample_fourier(
+                model_kpsf,
+                model_kpsf.shape[-2],
+                self.fft_shape_target,
+                jacobian=self.jacobian,
+            )
+
+        if obs_frame.psf is None:
+            self.has_psf_out = False
+        else:
+            self.has_psf_out = True
+            psf_obs = obs_frame.psf()
+            if len(psf_obs.shape) == 2:
+                psf_obs = psf_obs[None, ...]
+
+            obs_kpsf = jnp.fft.fftshift(
+                transform(psf_obs, (fft_shape_obs_psf, fft_shape_obs_psf), (-2, -1)), (-2)
+            )
+            # resample without warp
+            self.obs_kpsf_interp = resample_fourier(
+                obs_kpsf,
+                obs_kpsf.shape[-2],
+                self.fft_shape_target,
+            )
 
     def __call__(self, model, key=None):
         """What to run when ResamplingRenderer is called"""
@@ -301,11 +314,11 @@ class ResamplingRenderer(Renderer):
         )
 
         # deconvolve with model psf, re-convolve with observation psf and Fourier transform back to real space
-        model_kim = model_kim_interp
-        model_kpsf = self.model_kpsf_interp
-        obs_kpsf = self.obs_kpsf_interp
-
-        kimage_final = model_kim / model_kpsf * obs_kpsf
+        kimage_final = model_kim_interp
+        if self.has_psf_in:
+            kimage_final /= self.model_kpsf_interp
+        if self.has_psf_out:
+            kimage_final *= self.obs_kpsf_interp
 
         kimage_final_wrap = jax.vmap(_wrap_hermitian_x, in_axes=(0, None, None, None, None, None, None))(
             kimage_final,
