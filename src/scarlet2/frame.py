@@ -441,7 +441,7 @@ def get_pixel_size(wcs):
     -------
     pixel_size: `float`
     """
-    scale, _ = get_scale_angle_flip_shift(wcs)
+    scale, _, _, _ = get_scale_angle_flip_shift(wcs)
     return scale
 
 
