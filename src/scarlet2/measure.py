@@ -205,7 +205,8 @@ class Moments(dict):
                 else:
                     center = jnp.asarray(center)
                     # centroid wrt given center
-                    self._centroid -= center * self[0, 0]
+                    self._centroid[0] -= center[0] * self[0, 0]
+                    self._centroid[1] -= center[1] * self[0, 0]
                     self[1, 0] -= center[0] * self[0, 0]
                     self[0, 1] -= center[1] * self[0, 0]
                 if model.ndim == 3 and center[0].ndim == 1:
