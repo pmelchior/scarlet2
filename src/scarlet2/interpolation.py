@@ -9,7 +9,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from .frame import _rot_matrix
+from .frame import _flip_matrix, _rot_matrix
 
 
 ### Interpolant class
@@ -343,6 +343,7 @@ def resample_ops(
     angle=0,
     flip=1,
     shift=(0, 0),
+    jacobian=None,
     interpolant=Quintic(),  # noqa: B008
 ):
     """Resampling operation
@@ -367,6 +368,8 @@ def resample_ops(
         Flip of the y-axis (if negative) to get an improper rotation
     shift: tuple
         Shift of the output image (in units of output pixels)
+    jacobian: jnp.array
+        Transformation matrix from warped to unwarped coordinates
     interpolant: Interpolant
         Interpolation kernel function
 
@@ -378,32 +381,32 @@ def resample_ops(
     # Apply rescaling to the frequencies
     # [0, Fe/2+1]
     # [-Fe/2+1, Fe/2]
-    # Because we divide the scale in x-space, we multiply in k-space
     kcoords_out = jnp.stack(
         jnp.meshgrid(
-            jnp.linspace(0, shape_in / 2 * scale, shape_out // 2 + 1),
-            jnp.linspace(-shape_in / 2 * scale, shape_in / 2 * scale, shape_out) * flip,
+            jnp.linspace(0, 1 / 2, shape_out // 2 + 1),
+            jnp.linspace(-1 / 2, 1 / 2, shape_out),
         ),
         -1,
     )
 
-    # Apply rotation to the frequencies
-    R = _rot_matrix(-angle)  # @ _flip_matrix(flip)  # noqa: N806
+    # Apply scale, rotation, flip to the frequencies: inverse in FFT than in pixel space
+    # TODO: use M only
+    # TODO: why is this not the inverse.T?? Means M needs to be inverted!!!
+    # because r is applied to the _output_ coordinates, so we need output -> input!!!!
+    r = scale * _rot_matrix(-angle) @ _flip_matrix(flip) if jacobian is None else jacobian.T
     b_shape = kcoords_out.shape
-    kcoords_out = (R @ kcoords_out.reshape((-1, 2)).T).T.reshape(b_shape)
+    kcoords_warped = (r @ kcoords_out.reshape((-1, 2)).T).T.reshape(b_shape)
 
     # k interpolation of original signal
+    # TODO: why do we need to multiply shape_in into coordinates?
     k_resampled = jax.vmap(resample_hermitian, in_axes=(0, None, None, None, None))(
-        kimage, kcoords_out, -shape_in / 2, -shape_in / 2, interpolant
+        kimage, kcoords_warped * shape_in, -shape_in / 2, -shape_in / 2, interpolant
     )
     # fft of x-interpolant
-    kx = jnp.linspace(0, jnp.pi, shape_out // 2 + 1) * scale
-    ky = jnp.linspace(-jnp.pi, jnp.pi, shape_out) * scale * flip
-    coords = jnp.stack(jnp.meshgrid(kx, ky), -1) / 2 / jnp.pi
-    xint_val = interpolant.uval(coords[..., 0]) * interpolant.uval(coords[..., 1])
+    xint_val = interpolant.uval(kcoords_out[..., 0]) * interpolant.uval(kcoords_out[..., 1])
 
-    # # apply shift
-    # shift_ = shift[::-1]  # x,y needed here
-    # pfac = jnp.exp(-1j * (kcoords_out[..., 0] * shift_[0] + kcoords_out[..., 1] * shift_[1]))
+    # apply shift
+    shift_ = shift[::-1]  # x,y needed here
+    pfac = jnp.exp(-1j * 2 * jnp.pi * (kcoords_out[..., 0] * shift_[0] + kcoords_out[..., 1] * shift_[1]))
 
-    return k_resampled * jnp.expand_dims(xint_val, 0)  # * pfac
+    return k_resampled * jnp.expand_dims(xint_val, 0) * pfac

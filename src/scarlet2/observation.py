@@ -158,9 +158,8 @@ class Observation(Module):
 
             ref_pixel = jnp.array(self.frame.bbox.spatial.origin)
             shift = frame.get_pixel(self.frame.get_sky_coord(ref_pixel)) - ref_pixel
-            integer_shift = jnp.allclose(shift, jnp.round(shift))
+            integer_shift = jnp.allclose(shift, jnp.round(shift), atol=1e-3)
 
-            # TODO: shift at same resolution should be treated with a k-space multiplication
             if same_matrix and integer_shift:
                 if self.frame.psf != frame.psf:
                     renderers.append(ConvolutionRenderer(frame, self.frame))
@@ -177,9 +176,10 @@ class Observation(Module):
                 renderer = eqx.nn.Sequential(renderers)
         else:
             assert isinstance(renderer, (Renderer, eqx.nn.Sequential))
-            assert (
-                renderer(jnp.zeros(frame.bbox.shape)).shape == self.frame.bbox.shape
-            ), "Renderer does not map model frame to observation frame"
+            # TODO: avoid call to renderer, use validator instead
+            assert renderer(jnp.zeros(frame.bbox.shape)).shape == self.frame.bbox.shape, (
+                "Renderer does not map model frame to observation frame"
+            )
         object.__setattr__(self, "renderer", renderer)
         return self
 

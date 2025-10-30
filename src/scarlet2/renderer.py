@@ -8,7 +8,7 @@ import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
 from .fft import _get_fast_shape, _trim, _wrap_hermitian_x, convolve, deconvolve, good_fft_size, transform
-from .frame import _minmax_int, get_affine, get_scale_angle_flip
+from .frame import _minmax_int, get_affine, get_scale_angle_flip_shift
 from .interpolation import Interpolant, Lanczos, resample3d, resample_ops
 
 
@@ -204,6 +204,7 @@ class ResamplingRenderer(Renderer):
     angle: float
     flip: int
     shift: tuple
+    jacobian: jnp.array = eqx.field(repr=False)
     model_kpsf_interp: jnp.array = eqx.field(repr=False)
     obs_kpsf_interp: jnp.array = eqx.field(repr=False)
     real_shape_target: tuple = eqx.field(repr=False)
@@ -259,12 +260,13 @@ class ResamplingRenderer(Renderer):
         # Extract rotation angle, flip, scale between WCSs
         M_in = get_affine(model_frame.wcs)  # noqa: N806
         M_out = get_affine(obs_frame.wcs)  # noqa: N806
-        M = jnp.linalg.inv(M_out) @ M_in  # noqa: N806, transformation from model pixel -> sky -> obs pixels
-        self.scale, self.angle, self.flip = get_scale_angle_flip(M)
-        model_center = jnp.asarray(model_frame.bbox.spatial.center)
-        model_center_in_obs = obs_frame.get_pixel(model_frame.get_sky_coord(model_center)).flatten()
-        obs_center = obs_frame.bbox.spatial.center
-        self.shift = tuple(model_center_in_obs[c].item() - obs_center[c] for c in range(2))
+        self.jacobian = jnp.linalg.inv(M_out) @ M_in  # noqa: N806, transformation from model pixel -> sky -> obs pixels
+        self.scale, self.angle, self.flip, _ = get_scale_angle_flip_shift(self.jacobian)
+        center_model = jnp.array(model_frame.bbox.spatial.center)
+        center_model_in_obs = obs_frame.get_pixel(model_frame.get_sky_coord(center_model))
+        center_obs = jnp.array(obs_frame.bbox.spatial.center)
+        shift = center_obs - center_model_in_obs
+        self.shift = tuple(c.item() for c in shift)  # avoid tracing
 
         self.model_kpsf_interp = resample_ops(
             model_kpsf,
@@ -273,6 +275,7 @@ class ResamplingRenderer(Renderer):
             scale=self.scale,
             angle=self.angle,
             flip=self.flip,
+            jacobian=self.jacobian,
         )
 
         self.obs_kpsf_interp = resample_ops(
@@ -299,6 +302,7 @@ class ResamplingRenderer(Renderer):
             angle=self.angle,
             flip=self.flip,
             shift=self.shift,
+            jacobian=self.jacobian,
         )
 
         # deconvolve with model psf, re-convolve with observation psf and Fourier transform back to real space
