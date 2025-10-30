@@ -9,8 +9,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from .frame import _flip_matrix, _rot_matrix
-
 
 ### Interpolant class
 class Interpolant(eqx.Module):
@@ -335,15 +333,12 @@ def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):  # no
     return res.reshape(warp[..., 0].shape)
 
 
-def resample_ops(
+def resample_fourier(
     kimage,
     shape_in,
     shape_out,
-    scale=1,
-    angle=0,
-    flip=1,
-    shift=(0, 0),
     jacobian=None,
+    shift=(0, 0),
     interpolant=Quintic(),  # noqa: B008
 ):
     """Resampling operation
@@ -360,16 +355,10 @@ def resample_ops(
         Shape of input image in configuration space
     shape_out: tuple
         Shape of output image in configuration space
-    scale: float
-        Scaling factor (= pixel_size_in / pixel_size_out)
-    angle: float
-        Angle of rotation (in radians, counter-clockwise) around the center of the image
-    flip: -1 or 1
-        Flip of the y-axis (if negative) to get an improper rotation
+    jacobian: jnp.array
+        2x2 transformation matrix from warped to unwarped coordinates (in x/y convention)
     shift: tuple
         Shift of the output image (in units of output pixels)
-    jacobian: jnp.array
-        Transformation matrix from warped to unwarped coordinates
     interpolant: Interpolant
         Interpolation kernel function
 
@@ -389,18 +378,23 @@ def resample_ops(
         -1,
     )
 
-    # Apply scale, rotation, flip to the frequencies: inverse in FFT than in pixel space
-    # TODO: use M only
-    # TODO: why is this not the inverse.T?? Means M needs to be inverted!!!
-    # because r is applied to the _output_ coordinates, so we need output -> input!!!!
-    r = scale * _rot_matrix(-angle) @ _flip_matrix(flip) if jacobian is None else jacobian.T
-    b_shape = kcoords_out.shape
-    kcoords_warped = (r @ kcoords_out.reshape((-1, 2)).T).T.reshape(b_shape)
+    # Apply scale, rotation, flip to the frequencies: inverse transpose in k-space than in x-space:
+    # FFT[f(Jx)] \propto FFT[f](J^-T k)
+    # by virtue of the affine theorem.
+    # (Ronald N. Bracewell, Fourier Analysis and Imaging, Springer (2003), p. 159–161)
+    # But the resampling jacobian goes from model to obs/warped coordinates, and the Fourier resampling needs
+    # to express the warped frequencies in the coordinates of the model (i.e. the mapping J^-1),
+    # we only need to transpose the jacobian below.
+    if jacobian is None:
+        kcoords_unwarped = kcoords_out
+    else:
+        b_shape = kcoords_out.shape
+        kcoords_unwarped = (jacobian.T @ kcoords_out.reshape((-1, 2)).T).T.reshape(b_shape)
 
     # k interpolation of original signal
     # TODO: why do we need to multiply shape_in into coordinates?
     k_resampled = jax.vmap(resample_hermitian, in_axes=(0, None, None, None, None))(
-        kimage, kcoords_warped * shape_in, -shape_in / 2, -shape_in / 2, interpolant
+        kimage, kcoords_unwarped * shape_in, -shape_in / 2, -shape_in / 2, interpolant
     )
     # fft of x-interpolant
     xint_val = interpolant.uval(kcoords_out[..., 0]) * interpolant.uval(kcoords_out[..., 1])
