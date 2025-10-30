@@ -73,8 +73,8 @@ class ProfileMorphology(Morphology):
 
     def __call__(self, delta_center=jnp.zeros(2)):  # noqa: B008
         """Evaluate the model"""
-        _y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) + delta_center[-2]
-        _x = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) + delta_center[-1]
+        _y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) - delta_center[-2]
+        _x = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) - delta_center[-1]
 
         if self.ellipticity is None:
             r2 = _y[:, None] ** 2 + _x[None, :] ** 2
@@ -109,8 +109,8 @@ class GaussianMorphology(ProfileMorphology):
         """Evaluate the model"""
         # faster circular 2D Gaussian: instead of N^2 evaluations, use outer product of 2 1D Gaussian evals
         if self.ellipticity is None:
-            _y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) + delta_center[-2]
-            _x = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) + delta_center[-1]
+            _y = jnp.arange(-(self.shape[-2] // 2), self.shape[-2] // 2 + 1, dtype=float) - delta_center[-2]
+            _x = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) - delta_center[-1]
 
             # with pixel integration
             f = lambda x, s: 0.5 * (  # noqa: E731

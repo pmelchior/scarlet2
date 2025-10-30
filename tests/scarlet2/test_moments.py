@@ -18,7 +18,8 @@ from scarlet2.morphology import GaussianMorphology
 t0 = 10
 ellipticity = jnp.array((0.3, 0.5))
 morph = GaussianMorphology(size=t0, ellipticity=ellipticity)
-g = Moments(component=morph(), N=2)
+img = morph()
+g = Moments(component=img, N=2)
 
 # create trivial WCS for that image
 wcs = WCS(naxis=2)
@@ -40,7 +41,7 @@ def test_gaussian_from_moments():
     ellipticity = g.ellipticity
     morph2 = GaussianMorphology(t, ellipticity)
 
-    assert_allclose(morph(), morph2(), rtol=1e-2)
+    assert_allclose(img, morph2(), rtol=1e-2)
 
 
 def test_convolve_moments():
@@ -74,7 +75,7 @@ def test_rotate_moments():
 def test_resize_moments():
     # resize the image
     c = 0.5
-    morph2 = GaussianMorphology(size=t0 * c, ellipticity=ellipticity, shape=morph().shape)
+    morph2 = GaussianMorphology(size=t0 * c, ellipticity=ellipticity, shape=img.shape)
     g2 = Moments(morph2(), 2)
     g2.resize(1 / c)
 
@@ -82,16 +83,20 @@ def test_resize_moments():
 
 
 def test_flip_moments():
-    morph2 = jnp.fliplr(morph())
-    g2 = Moments(morph2, 2)
-    g2.resize((1, -1))  # flip second=x-axis
-
+    img2 = jnp.fliplr(img)
+    g2 = Moments(img2, 2)
+    g2.fliplr()
     assert_allclose(g.ellipticity, g2.ellipticity, rtol=1e-3)
+
+    img3 = jnp.flipud(img)
+    g3 = Moments(img3, 2)
+    g3.flipud()
+    assert_allclose(g.ellipticity, g3.ellipticity, rtol=1e-3)
 
 
 def test_wcs_transfer_moments_rot90():
     # create a 90 deg counter-clockwise version of the morph image
-    im_ = jnp.rot90(morph(), axes=(1, 0))
+    im_ = jnp.rot90(img, axes=(1, 0))
     g_ = Moments(im_)
 
     # create mock WCS for that image
@@ -116,13 +121,16 @@ def test_wcs_transfer_moments():
     ellipticity_ *= jnp.exp(2j * a)
     ellipticity_ = jnp.array((ellipticity_.real, ellipticity_.imag))
     c = 0.5
-    morph2 = GaussianMorphology(size=t0 * c, ellipticity=ellipticity_, shape=morph().shape)
+    morph2 = GaussianMorphology(size=t0 * c, ellipticity=ellipticity_, shape=img.shape)
+    # note order: rescale+rotate, then flip.
     im_ = jnp.flipud(morph2())
     g_ = Moments(im_)
 
     # create mock WCS for that image
     wcs_ = WCS(naxis=2)
     wcs_.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    # because of the image creation above: altered order (rotation, then flip)
+    # this is unusual because for standard WCS, we correct handedness first, then rotate
     wcs_.wcs.pc = 1 / c * (_flip_matrix(-1) @ _rot_matrix(-a))
 
     # match WCS

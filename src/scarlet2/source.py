@@ -76,7 +76,7 @@ class Component(Module):
     def __call__(self):
         """What to run when Component is called"""
         # Boxed and centered model
-        delta_center = (self.bbox.center[-2] - self.center[-2], self.bbox.center[-1] - self.center[-1])
+        delta_center = (self.center[-2] - self.bbox.center[-2], self.center[-1] - self.bbox.center[-1])
         spectrum = self.spectrum() if isinstance(self.spectrum, Module) else self.spectrum
         morph = (
             self.morphology(delta_center=delta_center)
