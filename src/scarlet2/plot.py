@@ -588,9 +588,9 @@ def cut_square_box(arr, center, size):
             )
 
             # Place the original RGB array in the center of the padded array
-            padded_rgb_array[
-                pad_high : pad_high + original_height, pad_low : pad_low + original_width, :
-            ] = square_box
+            padded_rgb_array[pad_high : pad_high + original_height, pad_low : pad_low + original_width, :] = (
+                square_box
+            )
 
     return square_box
 
@@ -1043,13 +1043,13 @@ def scene(
                 model = observation.render(model)
 
             if show_rendered:
-                rendered_img.set_data(img_to_rgb(model, norm=norm, channel_map=channel_map, mask=mask))
+                rendered_img.set_data(img_to_rgb(model, norm=norm, channel_map=channel_map, mask=mask_))
                 updated.append(rendered_img)
 
             if show_residual:
                 residual = observation.data - model
                 norm_ = LinearPercentileNorm(residual)
-                residual_img.set_data(img_to_rgb(residual, norm=norm_, channel_map=channel_map, mask=mask))
+                residual_img.set_data(img_to_rgb(residual, norm=norm_, channel_map=channel_map, mask=mask_))
                 updated.append(residual_img)
             return updated
 
