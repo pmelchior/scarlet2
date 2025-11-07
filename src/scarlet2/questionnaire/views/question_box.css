@@ -1,0 +1,90 @@
+/* Add overflow-x: hidden to the question box to prevent horizontal scrolling */
+.question-box-container {
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 300px;  /* Ensure there's enough height for content */
+}
+
+/* Style for the save button container */
+.save-button-container {
+    margin-top: auto;
+    text-align: center;
+    padding: 5px;
+}
+
+/* Style for the save button */
+.save-button {
+    font-size: 0.9em;
+    background-color: #444444;
+    color: white;
+}
+
+.save-message {
+    margin-top: 10px;
+    text-align: left;
+}
+
+.prev-item { 
+    position: relative; 
+    overflow: visible;
+}
+.prev-btn { 
+    width: auto; 
+    text-align: left; 
+    border: none;
+    background: none;
+    box-shadow: none;
+    color: #555;
+    text-decoration: none;
+    cursor: pointer;
+    font-size: 0.9em;
+    margin: 2px;
+    padding: 2px 4px;
+    overflow: hidden;
+    max-width: 100%; /* Ensure button doesn't exceed container width */
+    text-overflow: ellipsis; /* Add ellipsis for text that overflows */
+}
+
+/* Container for the tooltip */
+.prev-item .tooltip {
+  position: absolute;
+  background: #333;
+  color: #fff;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.3;
+  box-shadow: 0 4px 12px rgba(0,0,0,.2);
+  white-space: normal;
+  min-width: 160px;
+  max-width: 320px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .12s ease;
+  pointer-events: none;
+  z-index: 9999;
+
+  /* Default position to the right of the button */
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%) translateX(8px);
+}
+
+/* When hovering over the container, show the tooltip */
+.prev-item:hover .tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Arrow for the tooltip */
+.prev-item .tooltip::before {
+  content: "";
+  position: absolute;
+  border-width: 6px;
+  border-style: solid;
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-color: transparent #333 transparent transparent;
+}

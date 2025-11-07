@@ -1,13 +1,15 @@
 import json
 import re
 from importlib.resources import files
+from pathlib import Path
 
-from ipywidgets import HTML, Button, HBox, Label, VBox
+import yaml
+from ipywidgets import HTML, Button, HBox, VBox
 from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.python import PythonLexer
 from pytest import fixture
-from scarlet2.questionnaire.models import Questionnaire
+from scarlet2.questionnaire.models import QuestionAnswer, QuestionAnswers, Questionnaire
 from scarlet2.questionnaire.questionnaire import (
     OUTPUT_BOX_LAYOUT,
     OUTPUT_BOX_STYLE_FILE,
@@ -17,79 +19,17 @@ from scarlet2.questionnaire.questionnaire import (
 
 
 @fixture
-def example_questionnaire_dict():
+def data_dir():
+    """Path to the data directory containing the example questionnaire YAML file."""
+    return Path(__file__).parent / "data"
+
+
+@fixture
+def example_questionnaire_dict(data_dir):
     """An example questionnaire dictionary"""
-    return {
-        "initial_template": "{{code}}",
-        "initial_commentary": "This is an example commentary.",
-        "questions": [
-            {
-                "question": "Example question?",
-                "answers": [
-                    {
-                        "answer": "Example answer",
-                        "tooltip": "This is an example tooltip.",
-                        "templates": [{"replacement": "code", "code": "example_code {{follow}}"}],
-                        "followups": [
-                            {
-                                "question": "Follow-up question?",
-                                "answers": [
-                                    {
-                                        "answer": "Follow-up answer",
-                                        "tooltip": "This is a follow-up tooltip.",
-                                        "templates": [
-                                            {"replacement": "follow", "code": "followup_code\n{{code}}"}
-                                        ],
-                                        "followups": [],
-                                        "commentary": "",
-                                    },
-                                    {
-                                        "answer": "Second follow-up answer",
-                                        "tooltip": "This is a second follow-up tooltip.",
-                                        "templates": [
-                                            {
-                                                "replacement": "follow",
-                                                "code": "second_followup_code\n{{code}}",
-                                            }
-                                        ],
-                                    },
-                                ],
-                            },
-                            {
-                                "question": "Another follow-up question?",
-                                "answers": [
-                                    {
-                                        "answer": "Another follow-up answer",
-                                        "templates": [],
-                                    }
-                                ],
-                            },
-                        ],
-                        "commentary": "This is some commentary.",
-                    },
-                    {
-                        "answer": "Another answer",
-                        "tooltip": "This is another tooltip.",
-                        "templates": [{"replacement": "code", "code": "another_code\n{{code}}"}],
-                        "followups": [],
-                        "commentary": "Some other commentary.",
-                    },
-                ],
-            },
-            {
-                "question": "Second question?",
-                "answers": [
-                    {
-                        "answer": "Second answer",
-                        "tooltip": "This is a second tooltip.",
-                        "templates": [{"replacement": "code", "code": "second_code"}],
-                        "followups": [],
-                        "commentary": "Next commentary.",
-                    }
-                ],
-            },
-        ],
-    }
+    yaml_path = data_dir / "example_questionnaire.yaml"
+    with yaml_path.open("r") as f:
+        return yaml.safe_load(f)
 
 
 @fixture
@@ -98,8 +38,99 @@ def example_questionnaire(example_questionnaire_dict):
     return Questionnaire.model_validate(example_questionnaire_dict)
 
 
+@fixture
+def example_questionnaire_with_switch_dict(data_dir):
+    """An example questionnaire dictionary with a switch question"""
+    yaml_path = data_dir / "example_questionnaire_switch.yaml"
+    with yaml_path.open("r") as f:
+        return yaml.safe_load(f)
+
+
+@fixture
+def example_questionnaire_with_switch(example_questionnaire_with_switch_dict):
+    """An example Questionnaire model instance with a switch question"""
+    return Questionnaire.model_validate(example_questionnaire_with_switch_dict)
+
+
+@fixture
+def questionnaire_with_followup_switch_example_dict(data_dir):
+    """An example questionnaire dictionary with a switch question"""
+    yaml_path = data_dir / "example_questionnaire_followup_switch.yaml"
+    with yaml_path.open("r") as f:
+        return yaml.safe_load(f)
+
+
+@fixture
+def example_questionnaire_with_followup_switch(questionnaire_with_followup_switch_example_dict):
+    """An example Questionnaire model instance with a switch question"""
+    return Questionnaire.model_validate(questionnaire_with_followup_switch_example_dict)
+
+
+@fixture
+def example_questionnaire_with_feedback(example_questionnaire):
+    """An example Questionnaire model instance with a feedback URL"""
+    questionnaire = example_questionnaire.model_copy(deep=True)
+    questionnaire.feedback_url = "https://example.com/feedback"
+    return questionnaire
+
+
+@fixture
+def example_question_answers(example_questionnaire):
+    """An example list of question answers for the exmaple questionnaire"""
+    answer_inds = [0, 1, 0]  # indices of answers to select for each question
+    questions = [
+        example_questionnaire.questions[0],
+        example_questionnaire.questions[0].answers[0].followups[0],
+        example_questionnaire.questions[0].answers[0].followups[1],
+    ]
+    qas = [
+        QuestionAnswer(question=q.question, answer=q.answers[i].answer, value=i)
+        for q, i in zip(questions, answer_inds, strict=False)
+    ]
+    return QuestionAnswers(answers=qas)
+
+
 class Helpers:
     """Helper functions for testing the QuestionnaireWidget"""
+
+    @staticmethod
+    def get_answer_button(widget, answer_index):
+        """Get an answer button from the question box children.
+
+        Args:
+            widget: The QuestionnaireWidget instance
+            answer_index: The index of the answer button to get
+
+        Returns:
+            The answer button widget
+        """
+        css_offset = 1
+        prev_questions_offset = len(widget.question_answers)
+        question_label_offset = 1
+
+        # Get the buttons container which is at index after the question label
+        buttons_container_index = css_offset + prev_questions_offset + question_label_offset
+        buttons_container = widget.question_box.children[buttons_container_index]
+
+        # Return the specific button from the buttons container
+        return buttons_container.children[answer_index]
+
+    @staticmethod
+    def get_prev_question_button(widget, question_index):
+        """Get a previous question button from the question box children.
+
+        Args:
+            widget: The QuestionnaireWidget instance
+            question_index: The index of the previous question to get
+
+        Returns:
+            The previous question button widget
+        """
+        css_offset = 1
+
+        container = widget.question_box.children[css_offset + question_index]
+        # The button is the first child of the container
+        return container.children[0]
 
     @staticmethod
     def assert_widget_ui_matches_state(widget):
@@ -141,33 +172,93 @@ class Helpers:
         assert isinstance(widget.question_box, VBox)
         assert widget.question_box.layout == QUESTION_BOX_LAYOUT
 
-        len_cur_answers = len(widget.current_question.answers) if widget.current_question else 0
-        expected_children_count = len(widget.question_answers) + 1 + len_cur_answers
+        css_snippet_count = 1
+        save_button_container_count = 1
+
+        # If there's a current question, we have:
+        # - CSS snippet
+        # - Previous question containers
+        # - Current question label
+        # - Buttons container
+        # - Save button container
+        if widget.current_question:
+            expected_children_count = (
+                css_snippet_count + len(widget.question_answers) + 1 + 1 + save_button_container_count
+            )
+        # If there's no current question, we have:
+        # - CSS snippet
+        # - Previous question containers
+        # - Final message container
+        # - Save button container
+        else:
+            expected_children_count = (
+                css_snippet_count + len(widget.question_answers) + 1 + save_button_container_count
+            )
 
         assert len(widget.question_box.children) == expected_children_count
+
+        # Skip the CSS snippet
+        css_offset = 1
+
         for i in range(len(widget.question_answers)):
-            assert isinstance(widget.question_box.children[i], HTML)
+            # Add the CSS offset to the index
+            child_index = i + css_offset
+            assert isinstance(widget.question_box.children[child_index], HBox)
+            # The button is the first child of the container
+            btn = widget.question_box.children[child_index].children[0]
             question = widget.question_answers[i][0]
-            assert question.question in widget.question_box.children[i].value
+            assert question.question in btn.description
             ans_index = widget.question_answers[i][1]
-            assert question.answers[ans_index].answer in widget.question_box.children[i].value
+            assert question.answers[ans_index].answer in btn.description
 
         if widget.current_question is not None:
-            qs_ind = len(widget.question_answers)
+            # Add the CSS offset to the index
+            qs_ind = len(widget.question_answers) + css_offset
 
             assert isinstance(widget.question_box.children[qs_ind], HTML)
             assert widget.current_question.question in widget.question_box.children[qs_ind].value
 
-            for btn, ans in zip(
-                widget.question_box.children[qs_ind + 1 :], widget.current_question.answers, strict=False
-            ):
+            # Get the buttons container which is at index after the question label
+            buttons_container_index = qs_ind + 1
+            buttons_container = widget.question_box.children[buttons_container_index]
+            assert isinstance(buttons_container, VBox)
+
+            # Check each button in the buttons container
+            for btn, ans in zip(buttons_container.children, widget.current_question.answers, strict=False):
                 assert isinstance(btn, Button)
                 assert btn.description == ans.answer
                 assert btn.tooltip == ans.tooltip
 
         else:
-            assert isinstance(widget.question_box.children[-1], Label)
-            assert "You're done" in widget.question_box.children[-1].value
+            # When there's no current question, we have:
+            # - CSS snippet
+            # - Previous question containers
+            # - Final message container
+            # - Save button container
+
+            # Get the final message container which is at index before the save button container
+            final_message_index = len(widget.question_box.children) - 2
+            final_message_container = widget.question_box.children[final_message_index]
+            assert isinstance(final_message_container, VBox)
+
+            # The final message is in the HTML child of the container
+            final_message_html = final_message_container.children[0]
+            assert isinstance(final_message_html, HTML)
+            final_message = final_message_html.value
+            assert "You're done" in final_message
+
+            # Check for feedback URL if present in the questionnaire
+            if widget.feedback_url:
+                assert widget.feedback_url in final_message
+                assert "feedback form" in final_message
+
+        # Check that the last child is the save button container
+        save_button_container = widget.question_box.children[-1]
+        assert isinstance(save_button_container, VBox)
+        assert len(save_button_container.children) > 0
+        save_button = save_button_container.children[-1]
+        assert isinstance(save_button, Button)
+        assert save_button.description == "Save Answers"
 
 
 @fixture

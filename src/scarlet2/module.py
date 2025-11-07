@@ -1,3 +1,5 @@
+import logging
+
 import astropy.units as u
 import equinox as eqx
 import jax
@@ -5,6 +7,15 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import varname
 from astropy.coordinates import SkyCoord
+
+from . import Parameterization
+from .validation_utils import (
+    ValidationError,
+    ValidationInfo,
+    ValidationMethodCollector,
+    ValidationResult,
+    print_validation_results,
+)
 
 
 class Module(eqx.Module):
@@ -123,6 +134,16 @@ class Parameter:
         self.prior = prior
         self.stepsize = stepsize
 
+        # add this source to the active scene
+        try:
+            Parameterization.parameters.__iadd__(self)
+        except AttributeError:
+            # to be backwards compatible: only emit a warning, don't raise
+            msg = "A Parameter instance should only be created within the context of Parameters\n"
+            msg += "Use 'with Parameters(scene) as p: Parameter(...)'"
+            logging.warn(msg)
+            pass
+
     def apply_constraint(self):
         """Transform the value of the parameter to the unconstrained region"""
 
@@ -175,11 +196,11 @@ class Parameters:
         >>>     Source(center1, spectrum1, morph1)
         >>>     Source(center2, spectrum2, morph2)
         >>>
-        >>> parameters = scene.make_parameters()
-        >>> parameters += Parameter(scene.sources[0].spectrum.data,
-        >>>                         name=f"spectrum:0",
-        >>>                         constraint=constraints.positive,
-        >>>                         stepsize=relative_step)
+        >>> with Parameters(scene) as parameters:
+        >>>     Parameter(scene.sources[0].spectrum.data,
+        >>>               name=f"spectrum:0",
+        >>>               constraint=constraints.positive,
+        >>>               stepsize=relative_step)
         >>> maxiter = 200
         >>> scene_ = scene.fit(observation, parameters, max_iter=maxiter)
 
@@ -195,6 +216,25 @@ class Parameters:
         self._base_leaves = jtu.tree_leaves(base)
         self._params = list()
         self._leave_idx = list()
+
+    def __enter__(self):
+        # context manager to register sources
+        # purpose is to provide scene.frame to source inits that will need some of its information
+        # also allows us to append the sources automatically to the scene
+        Parameterization.parameters = self
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        Parameterization.parameters = None
+
+        # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
+        from .validation_utils import VALIDATION_SWITCH
+
+        if VALIDATION_SWITCH:
+            from .validation import check_parameters
+
+            validation_results = check_parameters(self)
+            print_validation_results("Parameters validation results", validation_results)
 
     def __repr__(self):
         # equinox-like formatting
@@ -368,3 +408,95 @@ def relative_step(x, *args, factor=0.01, minimum=1e-6):
         factor*norm(x), or `minimum`, whichever is larger.
     """
     return jnp.maximum(minimum, factor * jnp.linalg.norm(x))
+
+
+class ParameterValidator(metaclass=ValidationMethodCollector):
+    """A class containing all of the validation checks for a Scene object.
+    A convenience function exists that will run all the checks in this class and
+    returns a list of validation results:
+
+    :py:func:`~scarlet2.validation.check_scene`.
+    """
+
+    def __init__(self, parameter: Parameter):
+        """Initialize the SceneValidator.
+
+        Parameters
+        ----------
+        parameter : Parameter
+            The parameter to validate.
+        """
+        self.parameter = parameter
+
+    def check_constrained_parameter_is_feasible(self) -> list[ValidationResult]:
+        """Check that a constrained parameter has a feasible value.
+
+        Returns
+        -------
+        list[ValidationResult]
+            A list of validation results, which can be either `ValidationInfo`
+            or `ValidationError`.
+        """
+        validation_results: list[ValidationResult] = []
+        param = self.parameter
+        constraint_is_none = param.constraint is None
+        if not constraint_is_none:
+            is_feasible = param.constraint.check(param.node)
+        if constraint_is_none or (not constraint_is_none and is_feasible.all()):
+            validation_results.append(
+                ValidationInfo(
+                    f"Parameter {param.name} value is feasible.",
+                    check=self.__class__.__name__,
+                )
+            )
+        else:
+            validation_results.append(
+                ValidationError(
+                    f"Parameter {param.name} value is infeasible.",
+                    check=self.__class__.__name__,
+                    context={
+                        "name": param.name,
+                        "constraint": param.constraint,
+                        "feasible": is_feasible,
+                    },
+                )
+            )
+        return validation_results
+
+    def check_parameter_has_necessary_fields(self) -> list[ValidationResult]:
+        """Check that all parameter ave the necessary fields set.
+
+        This checks that all parameters in the scene have the `prior` or `stepsize`
+        attributes set, but not both.
+
+        Returns
+        -------
+        list[ValidationResult]
+            A list of validation results, which can be either `ValidationInfo`
+            or `ValidationError`.
+        """
+        validation_results: list[ValidationResult] = []
+        param = self.parameter
+        prior_is_none = param.prior is None
+        stepsize_is_none = param.stepsize is None
+        if (prior_is_none and not stepsize_is_none) or (not prior_is_none and stepsize_is_none):
+            validation_results.append(
+                ValidationInfo(
+                    f"Parameter {param.name} has prior xor stepsize.",
+                    check=self.__class__.__name__,
+                )
+            )
+        if prior_is_none and stepsize_is_none:
+            validation_results.append(
+                ValidationError(
+                    f"Parameter {param.name} does not have prior or stepsize set.",
+                    check=self.__class__.__name__,
+                    context={
+                        "name": param.name,
+                        "prior": param.prior,
+                        "stepsize": param.stepsize,
+                    },
+                )
+            )
+
+        return validation_results

@@ -1,12 +1,11 @@
 """Measurement methods"""
 
-import math
+import copy
 
-import astropy.units as u
 import numpy as jnp
 import numpy.ma as ma
 
-from .frame import get_angle, get_scale, get_sign
+from .frame import get_affine, get_scale_angle_flip_shift
 from .source import Component
 
 
@@ -197,14 +196,17 @@ class Moments(dict):
                 self[m, n - m] = (grid_y**m * grid_x ** (n - m) * model * weight).sum(axis=(-2, -1))
 
             if n == 1:
+                self._centroid = jnp.array((self[1, 0] / self[0, 0], self[0, 1] / self[0, 0]))
                 # shift grid to produce centered moments
                 if center is None:
-                    center = self[1, 0] / self[0, 0], self[0, 1] / self[0, 0]  # centroid
+                    center = self._centroid
                     self[1, 0] = jnp.zeros_like(self[1, 0])
                     self[0, 1] = jnp.zeros_like(self[0, 1])
                 else:
                     center = jnp.asarray(center)
                     # centroid wrt given center
+                    self._centroid[0] -= center[0] * self[0, 0]
+                    self._centroid[1] -= center[1] * self[0, 0]
                     self[1, 0] -= center[0] * self[0, 0]
                     self[0, 1] -= center[1] * self[0, 0]
                 if model.ndim == 3 and center[0].ndim == 1:
@@ -224,6 +226,16 @@ class Moments(dict):
         return max(key[0] for key in self.keys())
 
     @property
+    def flux(self):
+        """Determine flux from 0th moment
+
+        Returns
+        -------
+        float
+        """
+        return self[0, 0]
+
+    @property
     def centroid(self):
         """Determine centroid from moments
 
@@ -232,7 +244,7 @@ class Moments(dict):
         array
             Coordinates of the centroid in the pixel frame of the data that defines these moments
         """
-        return jnp.array((self[1, 0] / self[0, 0], self[0, 1] / self[0, 0]))
+        return self._centroid
 
     @property
     def size(self):
@@ -257,6 +269,48 @@ class Moments(dict):
         ellipticity = (self[0, 2] - self[2, 0] + 2j * self[1, 1]) / (self[2, 0] + self[0, 2])
         return jnp.array((ellipticity.real, ellipticity.imag))
 
+    def normalize(self):
+        """Normalize moments with respect to the flux
+
+        Returns
+        -------
+        self
+        """
+        norm = self[0, 0]
+        for key in self.keys():
+            self[key] /= norm
+        return self
+
+    def convolve(self, p):
+        """Convolve moments with moments `p`
+
+        The moments are changed in place.
+
+        See Melchior et al. (2010), "Weak gravitational lensing with Deimos", Equation 9
+
+        Parameters
+        ----------
+        p: Moments
+            Moments of the kernel to convolve with
+
+        Returns
+        -------
+        self
+        """
+
+        g_ = self
+        g = copy.deepcopy(g_)
+        n_min = min(p.order, g.order)
+
+        for n in range(n_min + 1):
+            for i in range(n + 1):
+                j = n - i
+                g_[i, j] = jnp.zeros_like(g_[i, j])
+                for k in range(i + 1):
+                    for l in range(j + 1):  # noqa: E741
+                        g_[i, j] += binomial(i, k) * binomial(j, l) * g[k, l] * p[i - k, j - l]
+        return self
+
     def deconvolve(self, p):
         """Deconvolve moments from moments `p`
 
@@ -271,7 +325,7 @@ class Moments(dict):
 
         Returns
         -------
-        None
+        self
         """
         g = self
         n_min = min(p.order, g.order)
@@ -283,23 +337,27 @@ class Moments(dict):
             g[1, 0] -= g[0, 0] * p[1, 0]
             g[0, 1] /= p[0, 0]
             g[1, 0] /= p[0, 0]
-            if n_min >= 2:
-                g[0, 2] -= g[0, 0] * p[0, 2] + 2 * g[0, 1] * p[0, 1]
-                g[1, 1] -= g[0, 0] * p[1, 1] + g[0, 1] * p[1, 0] + g[1, 0] * p[0, 1]
-                g[2, 0] -= g[0, 0] * p[2, 0] + 2 * g[1, 0] * p[1, 0]
-                if n_min >= 3:
-                    # use general formula
-                    for n in range(3, n_min + 1):
-                        for i in range(n + 1):
-                            for j in range(n - i):
-                                for k in range(i):
-                                    for l in range(j):  # noqa: E741
-                                        g[i, j] -= binomial(i, k) * binomial(j, l) * g[k, l] * p[i - k, j - l]
-                                for k in range(i):
-                                    g[i, j] -= binomial(i, k) * g[k, j] * p[i - k, 0]
-                                for l in range(j):  # noqa: E741
-                                    g[i, j] -= binomial(j, l) * g[i, l] * p[0, j - l]
-                        g[i, j] /= p[0, 0]
+        if n_min >= 2:
+            g[0, 2] -= g[0, 0] * p[0, 2] + 2 * g[0, 1] * p[0, 1]
+            g[1, 1] -= g[0, 0] * p[1, 1] + g[0, 1] * p[1, 0] + g[1, 0] * p[0, 1]
+            g[2, 0] -= g[0, 0] * p[2, 0] + 2 * g[1, 0] * p[1, 0]
+            g[0, 2] /= p[0, 0]
+            g[1, 1] /= p[0, 0]
+            g[2, 0] /= p[0, 0]
+        if n_min >= 3:
+            # use general formula
+            for n in range(3, n_min + 1):
+                for i in range(n + 1):
+                    for j in range(n - i):
+                        for k in range(i):
+                            for l in range(j):  # noqa: E741
+                                g[i, j] -= binomial(i, k) * binomial(j, l) * g[k, l] * p[i - k, j - l]
+                        for k in range(i):
+                            g[i, j] -= binomial(i, k) * g[k, j] * p[i - k, 0]
+                        for l in range(j):  # noqa: E741
+                            g[i, j] -= binomial(j, l) * g[i, l] * p[0, j - l]
+                g[i, j] /= p[0, 0]
+        return self
 
     def resize(self, c):
         """Change moments for a change of factor `c` of the size/spatial resolution
@@ -308,6 +366,8 @@ class Moments(dict):
         This operation arises when one adjust the moments for a change in the size
         of pixels of the defining frame, e.g. when asking "what would the moments
         be if the pixels were factor c smaller (or the source c times larger)"?
+        The fluxes are unchanged, which corresponds to preservation of photons under resizing.
+
         The moments are changed in place.
 
         See Teague (1980), "Image  analysis via the general  theory of moments", eq. 34 for details.
@@ -319,17 +379,50 @@ class Moments(dict):
 
         Returns
         -------
-        None
+        self
         """
-        # Teague (1980), eq. 34
         if jnp.isscalar(c):
+            assert c > 0
+            flux_change = c**2
             for e in self:
-                self[e] = self[e] * c ** (2 + e[0] + e[1])
+                self[e] = self[e] * c ** (2 + e[0] + e[1]) / flux_change
         elif len(c) == 2:
+            assert c[0] > 0 and c[1] > 0
+            flux_change = c[0] * c[1]
             for e in self:
-                self[e] = self[e] * c[0] ** (e[0] + 1) * c[1] ** (e[1] + 1)
+                self[e] = self[e] * c[0] ** (e[0] + 1) * c[1] ** (e[1] + 1) / flux_change
         else:
             raise AttributeError("c must be a scalar of a list or array of two components")
+
+        return self
+
+    def fliplr(self):
+        """Flip moments along the x-axis
+
+        The moments are changed in place.
+
+        Returns
+        -------
+        self
+        """
+        for e in self:
+            if e[1] % 2 == 1:
+                self[e] *= -1
+        return self
+
+    def flipud(self):
+        """Flip moments along the y-axis
+
+        The moments are changed in place.
+
+        Returns
+        -------
+        self
+        """
+        for e in self:
+            if e[0] % 2 == 1:
+                self[e] *= -1
+        return self
 
     def rotate(self, phi):
         """Change moments for rotation of angle `phi`.
@@ -340,22 +433,18 @@ class Moments(dict):
 
         Parameters
         ----------
-        phi: :py:class:`astropy.Quantity`
-            Rotation angle. Must be an astropy quantity of type="angle".
+        phi: float
+            Rotation angle, in radian
 
         Returns
         -------
-        None
+        self
         """
-        assert u.get_physical_type(phi) == "angle"  # check that it's an angle with a suitable unit
-        phi = phi.to(u.deg).value
-        phi = phi * math.pi / 180  # radian
 
         mu_p = {}
         for n in range(self.N + 1):
-            for m in range(n + 1):
-                j = m
-                k = n - m
+            for j in range(n + 1):
+                k = n - j
                 value = 0
                 for r in range(j + 1):
                     for s in range(k + 1):
@@ -367,15 +456,55 @@ class Moments(dict):
                             * jnp.sin(phi) ** (k + r - s)
                             * self[j + k - r - s, r + s]
                         )
-                mu_p[m, n - m] = value
+                mu_p[j, k] = value
 
         for e in self:
             self[e] = mu_p[e]
 
+        return self
+
+    def translate(self, shift):
+        """Change moments for translation `shift`
+
+        The moments are changed in place.
+
+        Note: This changes all the moments, not just the dipole, for the new reference center.
+
+        See Teague (1980), "Image  analysis via the general  theory of moments", eq. 30 for details.
+
+        Parameters
+        ----------
+        shift: (y, x)
+            translation, in pixels
+
+        Returns
+        -------
+        self
+        """
+        mu = {}
+        for n in range(self.N + 1):
+            for j in range(n + 1):
+                k = n - j
+                value = 0
+                for r in range(j + 1):
+                    for s in range(k + 1):
+                        value += (
+                            binomial(j, r)
+                            * binomial(k, s)
+                            * (shift[0]) ** (j - r)
+                            * (shift[1]) ** (k - s)
+                            * self[r, s]
+                        )
+                mu[j, k] = value
+
+        for e in self:
+            self[e] = mu[e]
+        return self
+
     def transfer(self, wcs_in, wcs_out):
         """Compute rescaling and rotation from WCSs and apply to moments
 
-        This methods adjusts moments measured with a frame defined by `wcs_in` to to the frame `wcs_out`.
+        The method adjusts moments measured with a frame defined by `wcs_in` to the frame `wcs_out`.
         The moments are changed in place.
 
         Parameters
@@ -387,33 +516,20 @@ class Moments(dict):
 
         Returns
         -------
-        None
+        self
         """
 
-        flux_in = self[0, 0]
-
         if (wcs_in is not None) and (wcs_out is not None):
-            # Rescale moments (amplitude rescaling)
-            scale_in = get_scale(wcs_in) * 60**2  # arcsec
-            scale_out = get_scale(wcs_out) * 60**2  # arcsec
-            c = jnp.array(scale_in) / jnp.array(scale_out)
-            self.resize(c)
+            M_in = get_affine(wcs_in)  # noqa: N806
+            M_out = get_affine(wcs_out)  # noqa: N806
+            M = jnp.linalg.inv(M_out) @ M_in  # noqa: N806, transformation from in pixel -> sky -> out pixels
+            scale, angle, flip, _ = get_scale_angle_flip_shift(M)
+            # if flipped: go to right-handed coord first before applying rotation
+            if flip == -1:
+                self.flipud()  # our flip convention is along y-axis
+            self.rotate(angle).resize(scale)
 
-            # Rotate moments
-            phi_in = get_angle(wcs_in)
-            phi_out = get_angle(wcs_out)
-            phi = (phi_out - phi_in) / jnp.pi * 180
-            self.rotate(phi * u.deg)
-
-            # Flip moments if WCSs don't share the same convention
-            sign_in = get_sign(wcs_in)
-            sign_out = get_sign(wcs_out)
-            self.resize(sign_in * sign_out)
-
-            flux_out = self[0, 0]
-
-            for key in self.keys():
-                self[key] /= flux_out / flux_in
+        return self
 
 
 # def moments(component, N=2, center=None, weight=None):
@@ -432,3 +548,74 @@ def binomial(n, k):
         result *= n - i + 1
         result //= i
     return result
+
+
+def forced_photometry(scene, obs):
+    """Computes the spectra of every source in the scene to match the observations
+
+    Computes the best-fit amplitude of the rendered model of all components in every
+    channel of every observation as a linear inverse problem.
+
+    If sources/sources components in `scene` have non-flat spectra, the output of this function is
+    the correction factor that needs to be applied to those spectra to best match each channel of `obs`.
+
+    Parameters
+    ----------
+    scene: :py:class:`scarlet2.scene.Scene`
+        Scene for which the spectra should be computed
+    obs: :py:class:`~scarlet2.Observation`
+        The observation used to determine the spectra.
+
+    Returns
+    -------
+    array
+        Array of the spectra, in the order of the sources in the scene
+    """
+
+    # extract multi-channel model for every source
+    models = []
+    for i, src in enumerate(scene.sources):
+        # evaluate the model for any source so that fit includes it even if its spectrum is not updated
+        model = scene.evaluate_source(src)  # assumes all sources are single components
+
+        # check for models with identical initializations, see scarlet repo issue #282
+        # if duplicate: raise ValueError
+        for model_indx in range(len(models)):
+            if jnp.allclose(model, models[model_indx]):
+                message = f"Source {i} has a model identical to source {model_indx}.\n"
+                message += "This is likely not intended, and the second source should be deleted."
+                raise ValueError(message)
+        models.append(model)
+
+    models = jnp.array(models)
+    num_models = len(models)
+
+    # independent channels, no mixing
+    # solve the linear inverse problem of the amplitudes in every channel
+    # given all the rendered morphologies
+    # spectrum = (M^T Sigma^-1 M)^-1 M^T Sigma^-1 * im
+    num_channels = obs.frame.C
+    images = obs.data
+    weights = obs.weights
+    morphs = jnp.stack([obs.render(model) for model in models], axis=0)
+    spectra = jnp.zeros((num_models, num_channels))
+    for c in range(num_channels):
+        im = images[c].reshape(-1)
+        w = weights[c].reshape(-1)
+        m = morphs[:, c, :, :].reshape(num_models, -1)
+        mw = m * w[None, :]
+        # check if all components have nonzero flux in c.
+        # because of convolutions, flux can be outside the box,
+        # so we need to compare weighted flux with unweighted flux,
+        # which is the same (up to a constant) for constant weights.
+        # so we check if *most* of the flux is from pixels with non-zero weight
+        nonzero = jnp.sum(mw, axis=1) / jnp.sum(m, axis=1) / jnp.mean(w) > 0.1
+        nonzero = jnp.flatnonzero(nonzero)
+        if len(nonzero) == num_models:
+            covar = jnp.linalg.inv(mw @ m.T)
+            spectra = spectra.at[:, c].set(covar @ m @ (im * w))
+        else:
+            covar = jnp.linalg.inv(mw[nonzero] @ m[nonzero].T)
+            spectra = spectra.at[nonzero, c].set(covar @ m[nonzero] @ (im * w))
+
+    return spectra

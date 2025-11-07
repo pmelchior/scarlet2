@@ -89,28 +89,6 @@ class Box(eqx.Module):
                 return False
         return True
 
-    def insert_into(self, image, sub):
-        """Insert `sub` into `image` according to this bbox
-
-        Inverse operation to :func:`~scarlet.bbox.Box.extract_from`.
-
-        Parameters
-        ----------
-        image: array
-            Full image
-        sub: array
-            Extracted sub-image
-
-        Returns
-        -------
-        image: array
-        """
-        imbox = Box(image.shape)
-
-        im_slices, sub_slices = overlap_slices(imbox, self)
-        image[im_slices] = sub[sub_slices]
-        return image
-
     def get_extent(self):
         """Return the start and end coordinates."""
         return [self.start[-1], self.stop[-1], self.start[-2], self.stop[-2]]
@@ -283,3 +261,31 @@ def overlap_slices(bbox1, bbox2, return_boxes=False):
         _bbox2.slices,
     )
     return slices
+
+
+def insert_into(image, sub, bbox):
+    """Insert `sub` into `image` according to this bbox
+
+    Inverse operation to :func:`~scarlet.bbox.Box.extract_from`.
+
+    Parameters
+    ----------
+    image: array
+        Full image
+    sub: array
+        Smaller sub-image
+    bbox: Box
+        Bounding box that describes the shape and position of `sub` in the pixel coordinates of `image`.
+    Returns
+    -------
+    image: array
+        Image with `sub` inserted at `bbox`.
+    """
+    imbox = Box(image.shape)
+
+    im_slices, sub_slices = overlap_slices(imbox, bbox)
+    try:
+        image[im_slices] = sub[sub_slices]  # numpy arrays
+    except TypeError:
+        image = image.at[im_slices].set(sub[sub_slices])  # jax arrays
+    return image

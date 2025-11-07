@@ -5,6 +5,7 @@
 
 import os
 
+import astropy.wcs as wcs
 import h5py
 import jax
 import jax.numpy as jnp
@@ -18,6 +19,10 @@ from scarlet2.observation import Observation
 from scarlet2.psf import ArrayPSF, GaussianPSF
 from scarlet2.scene import Scene
 from scarlet2.source import Source
+from scarlet2.validation_utils import set_validation
+
+# turn off automatic validation checks
+set_validation(False)
 
 
 def test_save_output():
@@ -73,7 +78,10 @@ def test_save_output():
     loaded = jax.tree_util.tree_leaves(scene_loaded)
     status = True
     for leaf_saved, leaf_loaded in zip(saved, loaded, strict=False):
-        if hasattr(leaf_saved, "__iter__"):
+        if isinstance(leaf_saved, wcs.WCS):  # wcs doesn't allow direct == comparison...
+            if not leaf_saved.wcs.compare(leaf_loaded.wcs):
+                status = False
+        elif hasattr(leaf_saved, "__iter__"):
             if (leaf_saved != leaf_loaded).all():
                 status = False
         else:

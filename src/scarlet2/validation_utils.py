@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from colorama import Back, Fore, Style
 
@@ -35,10 +35,10 @@ class ValidationResult:
 
     message: str
     check: str
-    context: Optional[Any] = None
+    context: Any | None = None
 
     def __str__(self):
-        base = f"{self.message} | Check={self.check}"
+        base = f"{self.message}"
         if self.context is not None:
             base += f" | Context={self.context})"
         return base
@@ -94,7 +94,8 @@ def print_validation_results(preamble: str, results: list[ValidationResult]):
     results : list[_ValidationResult]
         A list of validation results to print.
     """
-
+    if len(results) == 0:
+        return
     print(
         f"{preamble}:\n" + "\n".join(f"[{str(i).zfill(3)}] {str(result)}" for i, result in enumerate(results))
     )

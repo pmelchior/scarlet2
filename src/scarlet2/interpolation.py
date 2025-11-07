@@ -136,21 +136,21 @@ class Lanczos(Interpolant):
 ### Resampling function
 
 
-def resample2d(signal, coords, warp, interpolant=Quintic()):  # noqa: B008
+def resample2d(signal, coords, warp, interpolant=Lanczos(3)):  # noqa: B008
     """Resample a 2-dimensional image using a Lanczos kernel
 
     Parameters
     ----------
     signal: array
         2d array containing the signal. We assume here that the coordinates of
-        the signal. Shape: `[Nx, Ny]`
+        the signal. Shape: `[Ny, Nx]`
     coords: array
         Coordinates on which the signal is sampled.
-        Shape: `[Nx, Ny, 2]`
-        x-coordinates are `coords[0,:,0]`, y-coordinates are `coords[:,0,1]`.
+        Shape: `[Ny, Nx, 2]`
+        y-coordinates are `coords[0,:,0]`, x-coordinates are `coords[:,0,1]`.
     warp: array
         Coordinates on which to resample the signal.
-        Shape:[nx, ny, 2]
+        Shape:[ny, nx, 2]
         [
         [[0,  0], [0,  1], ...,  [0,  N-1]],
         [ ... ],
@@ -164,25 +164,25 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):  # noqa: B008
     array
         Resampled `signal` at the location indicated by `warp`
     """
-    x = warp[..., 0].flatten()
-    y = warp[..., 1].flatten()
+    y = warp[..., 0].flatten()
+    x = warp[..., 1].flatten()
 
-    coords_x = coords[0, :, 0]
-    coords_y = coords[:, 0, 1]
+    coords_y = coords[0, :, 0]
+    coords_x = coords[:, 0, 1]
 
     h = coords_x[1] - coords_x[0]
 
     xi = jnp.floor((x - coords_x[0]) / h).astype(jnp.int32)
     yi = jnp.floor((y - coords_y[0]) / h).astype(jnp.int32)
 
-    n_x = coords.shape[0]
-    n_y = coords.shape[1]
+    n_y = coords.shape[0]
+    n_x = coords.shape[1]
 
     def body_fun_x(i, args):
         res, yind, ky, masky = args
 
         xind = xi + i
-        maskx = (xind >= 0) & (xind < n_y)
+        maskx = (xind >= 0) & (xind < n_x)
 
         kx = interpolant.kernel((x - coords_x[xind]) / h)
 
@@ -196,7 +196,7 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):  # noqa: B008
         res = args
 
         yind = yi + i
-        masky = (yind >= 0) & (yind < n_x)
+        masky = (yind >= 0) & (yind < n_y)
 
         ky = interpolant.kernel((y - coords_y[yind]) / h)
 
@@ -213,8 +213,45 @@ def resample2d(signal, coords, warp, interpolant=Quintic()):  # noqa: B008
     return res.reshape(warp[..., 0].shape)
 
 
+# @partial(jax.jit, static_argnums=(3))
+def resample3d(signal, coords, warp, interpolant):
+    """Resample a 3-dimensional image using a Lanczos kernel
+
+    Parameters
+    ----------
+    signal: array
+        3d array containing the signal. We assume here that the coordinates of
+        the signal. Shape: `[C, Ny, Nx]`
+    coords: array
+        Coordinates on which the signal is sampled.
+        Shape: `[Ny, Nx, 2]`
+        y-coordinates are `coords[0,:,0]`, x-coordinates are `coords[:,0,1]`.
+    warp: array
+        Coordinates on which to resample the signal.
+        Shape:[ny, nx, 2]
+        [
+        [[0,  0], [0,  1], ...,  [0,  N-1]],
+        [ ... ],
+        [[N-1,0], [N-1,1], ...,  [N-1,N  ]]
+        ]
+    interpolant: Interpolant
+        Instance of interpolant
+
+    Returns
+    -------
+    array
+        Resampled `signal` at the location indicated by `warp`
+
+    See Also
+    --------
+    resample2d
+    """
+    _resample2d = lambda s: resample2d(s, coords, warp, interpolant=interpolant)
+    return jax.vmap(_resample2d, in_axes=0, out_axes=0)(signal)
+
+
 def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):  # noqa: B008
-    """Resample a 2-dimensional image using a Lanczos kernel
+    """Resample a 2-dimensional image using an interpolation kernel
 
     This is assuming that the signal is Hermitian and starting at 0 on axis=2,
     i.e. f(-x, -y) = conjugate(f(x, y))
@@ -296,21 +333,38 @@ def resample_hermitian(signal, warp, x_min, y_min, interpolant=Quintic()):  # no
     return res.reshape(warp[..., 0].shape)
 
 
-def resample_ops(
+def resample_fourier(
     kimage,
     shape_in,
     shape_out,
-    res_in,
-    res_out,
-    phi=None,
-    flip_sign=None,
+    jacobian=None,
+    shift=(0, 0),
     interpolant=Quintic(),  # noqa: B008
 ):
     """Resampling operation
 
-    This method is used by :py:class:`~scarlet2.renderer.MultiresolutionRenderer`
-    and assumes that the signal is Hermitian and starting at 0 on axis=2,
+    This method uses the Fourier space resampling technique from Gruen & Bernstein (2014).
+    It assumes that the signal is Hermitian and starting at 0 on axis=2,
     i.e. f(-x, -y) = conjugate(f(x, y))
+
+    Parameters
+    ----------
+    kimage: array
+        Complex array of image in Fourier space
+    shape_in: tuple
+        Shape of input image in configuration space
+    shape_out: tuple
+        Shape of output image in configuration space
+    jacobian: jnp.array
+        2x2 transformation matrix from warped to unwarped coordinates (in x/y convention)
+    shift: tuple
+        Shift of the output image (in units of output pixels)
+    interpolant: Interpolant
+        Interpolation kernel function
+
+    Returns
+    -------
+    array
     """
 
     # Apply rescaling to the frequencies
@@ -318,27 +372,35 @@ def resample_ops(
     # [-Fe/2+1, Fe/2]
     kcoords_out = jnp.stack(
         jnp.meshgrid(
-            jnp.linspace(0, shape_in / 2 / res_out * res_in, shape_out // 2 + 1),
-            jnp.linspace(-shape_in / 2 / res_out * res_in, shape_in / 2 / res_out * res_in, shape_out),
+            jnp.linspace(0, 1 / 2, shape_out // 2 + 1),
+            jnp.linspace(-1 / 2, 1 / 2, shape_out),
         ),
         -1,
     )
 
-    # Apply rotation to the frequencies
-    if phi is not None:
-        r = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
-
+    # Apply scale, rotation, flip to the frequencies: inverse transpose in k-space than in x-space:
+    # FFT[f(Jx)] \propto FFT[f](J^-T k)
+    # by virtue of the affine theorem.
+    # (Ronald N. Bracewell, Fourier Analysis and Imaging, Springer (2003), p. 159–161)
+    # But the resampling jacobian goes from model to obs/warped coordinates, and the Fourier resampling needs
+    # to express the warped frequencies in the coordinates of the model (i.e. the mapping J^-1),
+    # we only need to transpose the jacobian below.
+    if jacobian is None:
+        kcoords_unwarped = kcoords_out
+    else:
         b_shape = kcoords_out.shape
-        kcoords_out = (r @ kcoords_out.reshape((-1, 2)).T).T.reshape(b_shape)
+        kcoords_unwarped = (jacobian.T @ kcoords_out.reshape((-1, 2)).T).T.reshape(b_shape)
 
+    # k interpolation of original signal
+    # TODO: why do we need to multiply shape_in into coordinates?
     k_resampled = jax.vmap(resample_hermitian, in_axes=(0, None, None, None, None))(
-        kimage, kcoords_out, -shape_in / 2, -shape_in / 2, interpolant
+        kimage, kcoords_unwarped * shape_in, -shape_in / 2, -shape_in / 2, interpolant
     )
+    # fft of x-interpolant
+    xint_val = interpolant.uval(kcoords_out[..., 0]) * interpolant.uval(kcoords_out[..., 1])
 
-    kx = jnp.linspace(0, jnp.pi, shape_out // 2 + 1) * res_in / res_out
-    ky = jnp.linspace(-jnp.pi, jnp.pi, shape_out)
-    coords = jnp.stack(jnp.meshgrid(kx, ky), -1) / 2 / jnp.pi
+    # apply shift
+    shift_ = shift[::-1]  # x,y needed here
+    pfac = jnp.exp(-1j * 2 * jnp.pi * (kcoords_out[..., 0] * shift_[0] + kcoords_out[..., 1] * shift_[1]))
 
-    xint_val = interpolant.uval(coords[..., 0]) * interpolant.uval(coords[..., 1])
-
-    return k_resampled * jnp.expand_dims(xint_val, 0)
+    return k_resampled * jnp.expand_dims(xint_val, 0) * pfac

@@ -9,10 +9,10 @@ import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
 from jax import grad, jit, jvp
-from matplotlib.patches import Polygon, Rectangle
+from matplotlib.patches import Polygon
 
 from . import measure
-from .bbox import Box
+from .bbox import Box, insert_into
 from .renderer import ChannelRenderer
 
 
@@ -498,7 +498,7 @@ def observation(
             full_box = Box(psf_image.shape)
             shift = tuple(psf_image.shape[d] // 2 - psf.shape[d] // 2 for d in range(full_box.D))
             model_box = Box(psf.shape) + shift
-            model_box.insert_into(psf_image, psf)
+            psf_image = insert_into(psf_image, psf, model_box)
             # slices = scarlet.box.overlapped_slices
             ax[row, panel].imshow(img_to_rgb(psf_image, norm=norm), origin="lower")
             ax[row, panel].set_title("PSF", **title_kwargs)
@@ -588,9 +588,9 @@ def cut_square_box(arr, center, size):
             )
 
             # Place the original RGB array in the center of the padded array
-            padded_rgb_array[
-                pad_high : pad_high + original_height, pad_low : pad_low + original_width, :
-            ] = square_box
+            padded_rgb_array[pad_high : pad_high + original_height, pad_low : pad_low + original_width, :] = (
+                square_box
+            )
 
     return square_box
 
@@ -703,11 +703,11 @@ def sources(
     show_rendered=False,
     show_spectrum=True,
     model_mask=None,
-    add_markers=True,
+    add_labels=False,
     add_boxes=False,
     fig_kwargs=None,
     title_kwargs=None,
-    marker_kwargs=None,
+    label_kwargs=None,
     box_kwargs=None,
 ):
     """Plot all sources in `scene`
@@ -736,16 +736,15 @@ def sources(
         Whether to show the spectrum of each source
     model_mask: array, optional
         A mask to apply to the model. If not given, no mask is applied
-    add_markers: bool, optional
-        Whether to plot a marker at the center for each source
-        Requires the source to have a `center` attribute.
+    add_labels: bool, optional
+        Whether each source is labeled with its numerical index in the source list
     add_boxes: bool, optional
         Whether to plot the bounding box of each source
     fig_kwargs: dict, optional
         Additional arguments for `mpl.subplots`
     title_kwargs: dict, optional
         Additional arguments for `mpl.set_title`
-    marker_kwargs: dict, optional
+    label_kwargs: dict, optional
         Additional arguments for `mpl.plot` of the source centers. Defaults to
         {"color": "w", "marker": "x", "mew": 1, "ms": 10}
     box_kwargs: dict, optional
@@ -760,10 +759,13 @@ def sources(
         fig_kwargs = {}
     if title_kwargs is None:
         title_kwargs = {}
-    if marker_kwargs is None:
-        marker_kwargs = {"color": "w", "marker": "x", "mew": 1, "ms": 10}
+    if label_kwargs is None:
+        label_kwargs = {"color": "w", "ha": "center", "va": "center"}
     if box_kwargs is None:
         box_kwargs = {"facecolor": "none", "edgecolor": "w", "lw": 0.5}
+
+    if show_rendered or show_observed:
+        assert observation is not None, "show_rendered or show_observed requires observation"
 
     sources = scene.sources
     n_sources = len(sources)
@@ -776,10 +778,6 @@ def sources(
     fig, ax = plt.subplots(n_sources, panels, figsize=figsize, squeeze=False, **fig_kwargs)
 
     for k, src in enumerate(sources):
-        center = np.array(src.center)[::-1]
-        start, stop = src.bbox.start[-2:][::-1], src.bbox.stop[-2:][::-1]
-        box_coords = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
-
         # model in its bbox
         panel = 0
         model = src()
@@ -792,13 +790,20 @@ def sources(
                 origin="lower",
             )
             ax[k][panel].set_title(f"Model Source {k}", **title_kwargs)
-            if center is not None and add_markers:
-                ax[k][panel].plot(*center, **marker_kwargs)
+            if add_labels:
+                center = src.center
+                ax[k][panel].text(*(center[::-1]), k, **label_kwargs)  # x,y
             panel += 1
 
         if show_rendered or show_observed:
-            assert observation is not None, "show_rendered or show_observed requires observation"
-            extent = observation.frame.bbox.get_extent()
+            if add_labels:
+                center_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
+            if add_boxes:
+                start, stop = src.bbox.spatial.start, src.bbox.spatial.stop
+                corners = jnp.array(
+                    [start, jnp.array((start[0], stop[1])), stop, jnp.array((stop[0], start[1]))]
+                )
+                corners_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(corners))
 
         # model in observation frame
         if show_rendered:
@@ -807,14 +812,13 @@ def sources(
 
             ax[k][panel].imshow(
                 img_to_rgb(model_, norm=norm, channel_map=channel_map, mask=model_mask),
-                extent=extent,
                 origin="lower",
             )
             ax[k][panel].set_title(f"Model Source {k} Rendered", **title_kwargs)
-            if add_markers:
-                ax[k][panel].plot(*center, **marker_kwargs)
+            if add_labels:
+                ax[k][panel].text(*(center_obs[::-1]), k, **label_kwargs)  # x,y
             if add_boxes:
-                poly = Polygon(box_coords, closed=True, **box_kwargs)
+                poly = Polygon(corners_obs[:, ::-1], closed=True, **box_kwargs)
                 ax[k][panel].add_artist(poly)
             panel += 1
 
@@ -822,14 +826,13 @@ def sources(
             # Center the observation on the source and display it
             ax[k][panel].imshow(
                 img_to_rgb(observation.data, norm=norm, channel_map=channel_map),
-                extent=extent,
                 origin="lower",
             )
             ax[k][panel].set_title("Observation".format(), **title_kwargs)
-            if add_markers:
-                ax[k][panel].plot(*center, **marker_kwargs)
+            if add_labels:
+                ax[k][panel].text(*(center_obs[::-1]), k, **label_kwargs)  # x,y
             if add_boxes:
-                poly = Polygon(box_coords, closed=True, **box_kwargs)
+                poly = Polygon(corners_obs[:, ::-1], closed=True, **box_kwargs)
                 ax[k][panel].add_artist(poly)
             panel += 1
 
@@ -957,11 +960,6 @@ def scene(
         panel = 0
         if show_model:
             extent = scene.frame.bbox.get_extent()
-            # if scene.frame.wcs is not None:
-            #     extent = scene.frame.get_pixel(
-            #         scene.frame.get_sky_coord(np.array([[extent[0], extent[1]], [extent[2], extent[3]]]))
-            #     ).flatten()
-
             model_img = ax[row, panel].imshow(
                 img_to_rgb(model[sel], norm=norm, channel_map=channel_map),
                 extent=extent,
@@ -1006,35 +1004,25 @@ def scene(
             panel += 1
 
         for k, src in enumerate(scene.sources):
-            start, stop = src.bbox.spatial.start[::-1], src.bbox.spatial.stop[::-1]
-
             if add_boxes:
-                panel = 0
-                if show_model:
-                    extent = [start[0], stop[0], start[1], stop[1]]
-                    rect = Rectangle(
-                        (extent[0], extent[2]), extent[1] - extent[0], extent[3] - extent[2], **box_kwargs
-                    )
-                    ax[row, panel].add_artist(rect)
-                    panel = 1
+                start, stop = src.bbox.spatial.start, src.bbox.spatial.stop
+                corners = jnp.array(
+                    [start, jnp.array((start[0], stop[1])), stop, jnp.array((stop[0], start[1]))]
+                )
                 if observation is not None:
-                    start = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(start))).flatten()
-                    stop = observation.frame.get_pixel(scene.frame.get_sky_coord(np.array(stop))).flatten()
-                    box_coords = (start, (start[0], stop[1]), stop, (stop[0], start[1]))
-                    for panel in range(panel, panels):  # noqa: B020
-                        poly = Polygon(box_coords, closed=True, **box_kwargs)
-                        ax[row, panel].add_artist(poly)
+                    corners_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(corners))
+                for panel in range(panels):
+                    corners_ = corners if panel == 0 and show_model else corners_obs
+                    poly = Polygon(corners_[:, ::-1], closed=True, **box_kwargs)  # needs x,y
+                    ax[row, panel].add_artist(poly)
 
             if add_labels:
-                center = np.array(src.center)[::-1]
-                panel = 0
-                if show_model:
-                    ax[row, panel].text(*center, k, **label_kwargs)
-                    panel = 1
+                center = src.center
                 if observation is not None:
-                    center = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
-                    for panel in range(panel, panels):  # noqa: B020
-                        ax[row, panel].text(*center, k, **label_kwargs)
+                    center_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
+                for panel in range(panels):
+                    center_ = center if panel == 0 and show_model else center_obs
+                    ax[row, panel].text(*(center_[::-1]), k, **label_kwargs)  # x,y
 
     fig.tight_layout()
 
@@ -1055,13 +1043,13 @@ def scene(
                 model = observation.render(model)
 
             if show_rendered:
-                rendered_img.set_data(img_to_rgb(model, norm=norm, channel_map=channel_map, mask=mask))
+                rendered_img.set_data(img_to_rgb(model, norm=norm, channel_map=channel_map, mask=mask_))
                 updated.append(rendered_img)
 
             if show_residual:
                 residual = observation.data - model
                 norm_ = LinearPercentileNorm(residual)
-                residual_img.set_data(img_to_rgb(residual, norm=norm_, channel_map=channel_map, mask=mask))
+                residual_img.set_data(img_to_rgb(residual, norm=norm_, channel_map=channel_map, mask=mask_))
                 updated.append(residual_img)
             return updated
 

@@ -3,185 +3,139 @@
 # ruff: noqa: D103
 # ruff: noqa: D106
 
-import astropy.io.fits as fits
+import copy
+
 import astropy.units as u
 import jax.numpy as jnp
-import scarlet2
 from astropy.wcs import WCS
-from huggingface_hub import hf_hub_download
-from jax import vmap
 from numpy.testing import assert_allclose
-from scarlet2 import *  # noqa: F403
-from scarlet2.measure import get_scale
+
+from scarlet2.frame import _flip_matrix, _rot_matrix
+from scarlet2.measure import Moments
 from scarlet2.morphology import GaussianMorphology
 
-# load test data from HSC and HST
-filename_hsc = hf_hub_download(
-    repo_id="astro-data-lab/scarlet-test-data",
-    filename="test_resampling/Cut_HSC1.fits.gz",
-    repo_type="dataset",
-)
-hsc_hdu = fits.open(filename_hsc)
-wcs_hsc = WCS(hsc_hdu[0].header)
-
-filename_hst = hf_hub_download(
-    repo_id="astro-data-lab/scarlet-test-data",
-    filename="test_resampling/Cut_HST1.fits.gz",
-    repo_type="dataset",
-)
-hst_hdu = fits.open(filename_hst)
-wcs_hst = WCS(hst_hdu[0].header)
-
-T0 = 30
+# create a test image and measure moments
+t0 = 10
 ellipticity = jnp.array((0.3, 0.5))
-morph = GaussianMorphology(size=T0, ellipticity=ellipticity)
+morph = GaussianMorphology(size=t0, ellipticity=ellipticity)
+img = morph()
+g = Moments(component=img, N=2)
 
-print("Constructed moments")
-print(f"Size: {T0}, Ellipticity: {ellipticity}")
-
-g = scarlet2.measure.Moments(component=morph(), N=2)
+# create trivial WCS for that image
+wcs = WCS(naxis=2)
+wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+wcs.wcs.pc = jnp.diag(jnp.ones(2))
 
 
 def test_measure_size():
-    g = scarlet2.measure.Moments(component=morph(), N=2)
-    print("Measured moments")
-    print(f"Size: {g.size}")
-    assert_allclose(T0, g.size, rtol=1e-3)
+    assert_allclose(t0, g.size, rtol=1e-3)
 
 
 def test_measure_ellipticity():
-    g = scarlet2.measure.Moments(component=morph(), N=2)
-    print("Measured moments")
-    print(f"Ellipticity: {g.ellipticity}")
     assert_allclose(ellipticity, g.ellipticity, rtol=2e-3)
 
 
 def test_gaussian_from_moments():
-    g = scarlet2.measure.Moments(component=morph(), N=2)
     # generate Gaussian from moments
     t = g.size
     ellipticity = g.ellipticity
     morph2 = GaussianMorphology(t, ellipticity)
-    assert_allclose(morph(), morph2(), rtol=1e-2)
+
+    assert_allclose(img, morph2(), rtol=1e-2)
+
+
+def test_convolve_moments():
+    g_ = copy.deepcopy(g)
+    tp = t0 / 2
+    psf = GaussianMorphology(size=tp, ellipticity=ellipticity)()
+    psf /= psf.sum()
+    p = Moments(psf, N=2)
+    g_.convolve(p)
+    assert_allclose(g_.size, jnp.sqrt(t0**2 + tp**2), rtol=3e-4)
+    assert_allclose(g_.ellipticity, ellipticity, rtol=2e-3)
+    g_.deconvolve(p)
+    assert_allclose(g_.size, t0, rtol=3e-4)
+    assert_allclose(g_.ellipticity, ellipticity, rtol=2e-3)
 
 
 def test_rotate_moments():
-    a = 90 * u.deg
-    a.to(u.deg).value  # noqa: B018
-    # rotate 90 degrees counterclockwise the image
-    # and measure its moments
-    g2 = scarlet2.measure.Moments(jnp.rot90(morph()))
+    # rotate moments counter-clockwise 30 deg
+    g_ = copy.deepcopy(g)
+    a = 30 * u.deg
+    g_.rotate(a)
 
-    # rotate moments computed on the original image
-    g.rotate(a)
+    # apply theoretical rotation to spin-2 vector
+    ellipticity_ = ellipticity[0] + 1j * ellipticity[1]
+    ellipticity_ *= jnp.exp(2j * a.to(u.rad).value)
+    ellipticity_ = jnp.array((ellipticity_.real, ellipticity_.imag))
 
-    assert_allclose(g.ellipticity, g2.ellipticity, rtol=1e-6)
+    assert_allclose(g_.ellipticity, ellipticity_, rtol=2e-3)
 
 
 def test_resize_moments():
-    c = 0.5
-
     # resize the image
-    morph2 = GaussianMorphology(size=T0 * c, ellipticity=ellipticity, shape=morph().shape)
-    g2 = scarlet2.measure.Moments(morph2(), 2)
-
-    # resize moments computed on the original image
-    g = scarlet2.measure.Moments(component=morph(), N=2)
-    g.resize(0.5)
+    c = 0.5
+    morph2 = GaussianMorphology(size=t0 * c, ellipticity=ellipticity, shape=img.shape)
+    g2 = Moments(morph2(), 2)
+    g2.resize(1 / c)
 
     assert_allclose(g.size, g2.size, rtol=1e-3)
 
 
+def test_flip_moments():
+    img2 = jnp.fliplr(img)
+    g2 = Moments(img2, 2)
+    g2.fliplr()
+    assert_allclose(g.ellipticity, g2.ellipticity, rtol=1e-3)
+
+    img3 = jnp.flipud(img)
+    g3 = Moments(img3, 2)
+    g3.flipud()
+    assert_allclose(g.ellipticity, g3.ellipticity, rtol=1e-3)
+
+
+def test_wcs_transfer_moments_rot90():
+    # create a 90 deg counter-clockwise version of the morph image
+    im_ = jnp.rot90(img, axes=(1, 0))
+    g_ = Moments(im_)
+
+    # create mock WCS for that image
+    wcs_ = WCS(naxis=2)
+    wcs_.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    phi = (-90 * u.deg).to(u.rad).value  # clockwise to counteract the rotation above
+    wcs_.wcs.pc = _rot_matrix(phi)
+
+    # match WCS
+    g_.transfer(wcs_, wcs)
+
+    # Check that size and ellipticity are conserved
+    assert_allclose(g_.size, g.size, rtol=1e-3)
+    assert_allclose(g_.ellipticity, g.ellipticity, rtol=1e-2)
+
+
 def test_wcs_transfer_moments():
-    # Mock a rotation of 90 deg counter-clockwise of the HST WCS
-    phi = 90 / 180 * jnp.pi  # in rad
-    r = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
+    # create a rotated, resized, flipped version of the morph image
+    # apply theoretical rotation to spin-2 vector
+    a = (30 * u.deg).to(u.rad).value
+    ellipticity_ = ellipticity[0] + 1j * ellipticity[1]
+    ellipticity_ *= jnp.exp(2j * a)
+    ellipticity_ = jnp.array((ellipticity_.real, ellipticity_.imag))
+    c = 0.5
+    morph2 = GaussianMorphology(size=t0 * c, ellipticity=ellipticity_, shape=img.shape)
+    # note order: rescale+rotate, then flip.
+    im_ = jnp.flipud(morph2())
+    g_ = Moments(im_)
 
-    wcs_hst = WCS(hst_hdu[0].header)  # need to recreate to change in the next step
-    wcs_hst.wcs.pc = r @ wcs_hst.wcs.pc
-    im_hst = jnp.rot90(morph())
+    # create mock WCS for that image
+    wcs_ = WCS(naxis=2)
+    wcs_.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    # because of the image creation above: altered order (rotation, then flip)
+    # this is unusual because for standard WCS, we correct handedness first, then rotate
+    wcs_.wcs.pc = 1 / c * (_flip_matrix(-1) @ _rot_matrix(-a))
 
-    # Generate the same image seen from HSC
-    h = (get_scale(wcs_hst) / get_scale(wcs_hsc)).mean()
-    t1 = T0 * h
-    ellipticity1 = jnp.array((0.3, 0.5))
-    morph1 = GaussianMorphology(size=t1, ellipticity=ellipticity1, shape=im_hst.shape)
-    im_hsc = morph1()
-
-    # Measure moments of the HST image
-    g0 = scarlet2.measure.Moments(im_hst)
-
-    # Measure moments of the HSC image
-    g1 = scarlet2.measure.Moments(im_hsc)
-
-    # Transfer moments from HST to HSC frame
-    g0.transfer(wcs_hst, wcs_hsc)
+    # match WCS
+    g_.transfer(wcs_, wcs)
 
     # Check that size and ellipticity are conserved
-    assert_allclose(g1.size, g0.size, rtol=1e-3)
-    assert_allclose(g1.ellipticity, g0.ellipticity, rtol=1e-2)
-
-
-def test_wcs_transfer_w_flip_moments():
-    # Mock a rotation of 90 deg counter-clockwise of the HST WCS
-    phi = 90 / 180 * jnp.pi  # in rad
-    r = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
-
-    wcs_hst = WCS(hst_hdu[0].header)  # need to recreate to change in the next step
-    wcs_hst.wcs.pc = r @ wcs_hst.wcs.pc
-    wcs_hst.wcs.pc *= jnp.array([[-1], [1]])
-
-    # rotate and flip x
-    im_hst = jnp.rot90(morph())[:, ::-1]
-
-    # Generate the same image seen from HSC
-    h = (get_scale(wcs_hst) / get_scale(wcs_hsc)).mean()
-    t1 = T0 * h
-    ellipticity1 = jnp.array((0.3, 0.5))
-    morph1 = GaussianMorphology(size=t1, ellipticity=ellipticity1, shape=im_hst.shape)
-    im_hsc = morph1()
-
-    # Measure moments of the HST image
-    g0 = scarlet2.measure.Moments(im_hst)
-
-    # Measure moments of the HSC image
-    g1 = scarlet2.measure.Moments(im_hsc)
-
-    # Transfer moments from HST to HSC frame
-    g0.transfer(wcs_hst, wcs_hsc)
-
-    # Check that size and ellipticity are conserved
-    assert_allclose(g1.size, g0.size, rtol=1e-3)
-    assert_allclose(g1.ellipticity, g0.ellipticity, rtol=1e-2)
-
-
-def test_wcs_transfer_moments_multichannels():
-    # Mock a rotation of 90 deg counter-clockwise of the HST WCS
-    phi = 90 / 180 * jnp.pi  # in rad
-    r = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
-
-    wcs_hst = WCS(hst_hdu[0].header)  # need to recreate to change in the next step
-    wcs_hst.wcs.pc = r @ wcs_hst.wcs.pc
-
-    nc = 5
-    im_hst = jnp.repeat(morph()[None, :, :], repeats=nc, axis=0)
-    im_hst = vmap(jnp.rot90)(im_hst)
-
-    # Generate the same image seen from HSC
-    h = (get_scale(wcs_hst) / get_scale(wcs_hsc)).mean()
-    t1 = T0 * h
-    ellipticity1 = jnp.array((0.3, 0.5))
-    morph1 = GaussianMorphology(size=t1, ellipticity=ellipticity1, shape=im_hst.shape)
-    im_hsc = morph1()
-
-    # Measure moments of the HST image
-    g0 = scarlet2.measure.Moments(im_hst)
-
-    # Measure moments of the HSC image
-    g1 = scarlet2.measure.Moments(im_hsc)
-
-    # Transfer moments from HST to HSC frame
-    g0.transfer(wcs_hst, wcs_hsc)
-    # Check that size and ellipticity are conserved
-    assert_allclose(jnp.repeat(g1.size, nc), g0.size, rtol=1e-3)
-    assert_allclose(jnp.repeat(g1.ellipticity[:, None], nc, 1), g0.ellipticity, rtol=1e-2)
+    assert_allclose(g_.size, g.size, rtol=1e-3)
+    assert_allclose(g_.ellipticity, g.ellipticity, rtol=1e-2)

@@ -2,6 +2,7 @@ import astropy.units as u
 import astropy.wcs
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from astropy.coordinates import SkyCoord
 
 from .bbox import Box
@@ -27,10 +28,12 @@ class Frame(eqx.Module):
     def __init__(self, bbox, psf=None, wcs=None, channels=None):
         self.bbox = bbox
         self.psf = psf
+        if wcs is None:
+            wcs = _wcs_default(bbox.spatial.shape)
         self.wcs = wcs
+
         if channels is None:
             channels = list(range(bbox.shape[0]))
-
         self.channels = channels
 
     def __hash__(self):
@@ -47,14 +50,10 @@ class Frame(eqx.Module):
 
         Returns
         -------
-        float
-            Pixel size in arcsec, averaged over x and y direction
+        float, astropy.units.quantity.Quantity
+            Pixel size in units of the WCS sky coordinates
         """
-        if self.wcs is not None:
-            # return get_pixel_size(get_affine(self.wcs)) * 60 * 60  # in arcsec
-            return get_scale(self.wcs).mean() * 60 * 60  # in arcsec
-        else:
-            return 1
+        return get_scale(self.wcs)
 
     def get_pixel(self, pos):
         """Get the sky coordinates from a world coordinate
@@ -69,10 +68,10 @@ class Frame(eqx.Module):
         pixel coordinates in the model frame
         """
         if isinstance(pos, SkyCoord):
-            assert self.wcs is not None, "SkyCoord can only be converted with valid WCS"
-            wcs_ = self.wcs.celestial  # only use celestial portion
-            pixel = jnp.asarray(pos.to_pixel(wcs_), dtype="float32").T
-            return pixel[..., ::-1]
+            # WCS uses x/y convention
+            wcs = self.wcs.celestial  # only use celestial portion
+            x, y = pos.to_pixel(wcs)
+            pos = jnp.stack([y, x], axis=-1)  # convert to y/x
         return pos
 
     def get_sky_coord(self, pos):
@@ -85,14 +84,13 @@ class Frame(eqx.Module):
 
         Returns
         ----------
-        astropy.coordinates.SkyCoord if WCS is set, otherwise pos
+        astropy.coordinates.SkyCoord
         """
-        if self.wcs is not None:
-            pixels = pos.reshape(-1, 2)
-            wcs = self.wcs.celestial  # only use celestial portion
-            sky_coord = SkyCoord.from_pixel(pixels[:, 1], pixels[:, 0], wcs)
-            return sky_coord
-        return pos
+        wcs = self.wcs.celestial  # only use celestial portion
+        if jnp.ndim(pos) > 1:
+            pos = jnp.asarray(pos).reshape(-1, 2).T.reshape(2, *jnp.shape(pos)[:-1])
+        sky_coord = SkyCoord.from_pixel(pos[1], pos[0], wcs)
+        return sky_coord
 
     def convert_pixel_to(self, target, pixel=None):
         """Converts pixel coordinates from this frame to `target` frame
@@ -130,12 +128,11 @@ class Frame(eqx.Module):
         float
             size in pixels
         """
-        assert u.get_physical_type(distance) == "angle"
-
-        # first computer the pixel size
-        pixel_size = get_pixel_size(self.wcs.celestial) * 60 * 60  # in arcsec/pixel
-
-        return distance.to(u.arcsec).value / pixel_size
+        if self.wcs is not None:
+            pixel_size = get_pixel_size(self.wcs)
+            return distance / pixel_size
+        else:
+            return distance
 
     def pixel_to_angle(self, size):
         """Converts pixel size to celestial distance according to this frame WCS
@@ -148,12 +145,10 @@ class Frame(eqx.Module):
         Returns
         -------
         distance: :py:class:`astropy.units.Quantity`
-            Physical size, must be `PhysicalType("angle")`
         """
-        # first computer the pixel size
-        pixel_size = get_pixel_size(self.wcs.celestial) * 60 * 60  # in arcsec/pixel
 
-        distance = size * pixel_size * u.arcsec
+        pixel_size = get_pixel_size(self.wcs)
+        distance = size * pixel_size
         return distance
 
     @staticmethod
@@ -189,7 +184,6 @@ class Frame(eqx.Module):
         # Array of pixel sizes for each observation
         pix_tab = []
         # Array of psf size for each psf of each observation
-        fat_psf_size = None
         small_psf_size = None
         channels = []
         # Create frame channels and find smallest and largest psf
@@ -199,14 +193,14 @@ class Frame(eqx.Module):
 
             # concatenate all pixel sizes
             h_temp = get_pixel_size(obs.frame.wcs)
-
+            if isinstance(h_temp, u.Quantity):
+                h_temp = h_temp.to(u.arcsec).value  # standardize pixel sizes, using simple scalars below
             pix_tab.append(h_temp)
-            # Looking for the sharpest and the fatest psf
+
+            # Looking for the sharpest PSF
             psf = obs.frame.psf.morphology
             for psf_channel in psf:
                 psf_size = get_psf_size(psf_channel) * h_temp
-                if (fat_psf_size is None) or (psf_size > fat_psf_size):
-                    fat_psf_size = psf_size
                 if (
                     model_psf is None
                     and ((obs_id is None) or (c == obs_id))
@@ -225,32 +219,29 @@ class Frame(eqx.Module):
 
         # Reference wcs
         if model_wcs is None:
-            model_wcs = obs_ref.frame.wcs
+            model_wcs = obs_ref.frame.wcs.deepcopy()
 
-        # Scale of the smallest pixel
+        # Scale of the model pixel
         h = get_pixel_size(model_wcs)
 
         # If needed and psf is not provided: interpolate psf to smallest pixel
         if model_psf is None:
             # create Gaussian PSF with a sigma smaller than the smallest observed PSF
             sigma = 0.7
-            assert (
-                small_psf_size / h > sigma
-            ), f"Default model PSF width ({sigma} pixel) too large for best-seeing observation"
+            assert small_psf_size / h > sigma, (
+                f"Default model PSF width ({sigma} pixel) too large for best-seeing observation"
+            )
             model_psf = GaussianPSF(sigma=sigma)
 
         # Dummy frame for WCS computations
         model_shape = (len(channels), 0, 0)
-
         model_frame = Frame(Box(model_shape), channels=channels, psf=model_psf, wcs=model_wcs)
 
         # Determine overlap of all observations in pixel coordinates of the model frame
         for c, obs in enumerate(observations):
             obs_coord = obs.frame.convert_pixel_to(model_frame)
-            # round coordinate to nearest integer (use python, not jnp)
-            minmax_int = lambda x: (int(f) for f in jnp.round(jnp.sort(x)[jnp.array([0, -1])]))  # noqa:E731
-            y_min, y_max = minmax_int(obs_coord[:, 0])
-            x_min, x_max = minmax_int(obs_coord[:, 1])
+            y_min, y_max = _minmax_int(obs_coord[:, 0])
+            x_min, x_max = _minmax_int(obs_coord[:, 1])
 
             # +1 because Box.shape is a length, not a coordinate
             this_box = Box.from_bounds((y_min, y_max + 1), (x_min, x_max + 1))
@@ -262,11 +253,14 @@ class Frame(eqx.Module):
                 else:
                     model_box &= this_box
 
+        # update model_wcs to change NAXIS1/2 and CRPIX1/2, but don't change frame_origin!
+        model_wcs._naxis = list(model_wcs._naxis)
+        model_wcs._naxis[:2] = model_box.shape[::-1]  # x/y needed here
+        model_wcs.wcs.crpix[:2] -= model_box.origin[::-1]  # x/y needed here
+
+        # frame_origin = (0,) + model_box.origin
         frame_shape = (len(channels),) + model_box.shape
-        frame_origin = (0,) + model_box.origin
-        model_frame = Frame(
-            Box(shape=frame_shape, origin=frame_origin), channels=channels, psf=model_psf, wcs=model_wcs
-        )
+        model_frame = Frame(Box(shape=frame_shape), channels=channels, psf=model_psf, wcs=model_wcs)
 
         # Match observations to this frame
         for obs in observations:
@@ -309,70 +303,227 @@ def get_psf_size(psf):
     return sigma3
 
 
-def get_affine(wcs):
-    """Return the WCS transformation matrix"""
+def get_affine(wcs=None, linear=True):
+    """Return the WCS transformation matrix
+
+    The transformation to intermediate world coordinates is given by the equation
+    $q = M\\cdot (p - r)$, where $p$ is the pixel coordinate, $r$ is `CRPIX`, and $M$ is the `CD` matrix.
+
+    This method provides the augmented matrix of the affine transformation:
+    $T = \begin{bmatrix} M & -M\\cdot r\\ 0 & 1\\end{bmatrix}$, for the extended vector $(p,1)$.
+
+    See Greisen & Calabretta (2002) for details.
+
+    Parameters
+    ----------
+    wcs: `astropy.wcs.WCS`
+        WCS structure
+    linear: `bool`
+        Return only linear 2x2 matrix
+
+    Returns
+    -------
+    array (3x3 or 2x2)
+    """
+    if wcs is None:
+        return jnp.diag(jnp.ones(3))
+    wcs_ = wcs.celestial
     try:
-        model_affine = wcs.wcs.pc
+        m = wcs_.wcs.pc
     except AttributeError:
         try:
-            model_affine = wcs.cd
+            m = wcs_.cd
         except AttributeError:
-            model_affine = wcs.wcs.cd
-    return model_affine
+            m = wcs_.wcs.cd
+    m = m[:2, :2]  # avoid using channel information that is not declared "spectral" in the WCS
+    if linear:
+        return m
+    r = wcs_.wcs.crpix - 1  # CRPIX is 1-based!?!
+    b = -m @ r
+    t = jnp.zeros((3, 3))
+    t = t.at[:2, :2].set(m).at[:2, 2].set(b).at[2, 2].set(1)
+    return t
+
+
+# for WCS linear matrix calculations:
+# rotation matrix for counter-clockwise rotation from positive x-axis
+# uses (x,y) coordinates and phi in radian!!
+def _rot_matrix(phi, d=2):
+    sinphi, cosphi = jnp.sin(phi), jnp.cos(phi)
+    if d == 2:
+        return jnp.array([[cosphi, -sinphi], [sinphi, cosphi]])
+    else:
+        return jnp.array([[cosphi, -sinphi, 0], [sinphi, cosphi, 0], [0, 0, 1]])
+
+
+# flip in y!!!
+# uses (x,y) coordinates!
+_flip_matrix = flip_matrix = (
+    lambda flip, d=2: jnp.diag(jnp.array((1, flip), dtype=float))
+    if d == 2
+    else jnp.diag(jnp.array((1, flip, 1), dtype=float))
+)
+
+# 2x2 matrix determinant
+_det2 = lambda m: m[0, 0] * m[1, 1] - m[0, 1] * m[1, 0]
+
+# round coordinate to nearest integer (use python, not jnp)
+_minmax_int = lambda x: tuple(int(f) for f in jnp.round(jnp.sort(x)[jnp.array([0, -1])]))  # noqa:E731
+
+
+# create trivial WCS for image with given shape
+# scale = 1, pixel center in the middle of image
+def _wcs_default(shape):
+    shape_ = shape[-2:][::-1]  # x/y
+    wcs = astropy.wcs.WCS(naxis=2)
+    wcs._naxis = shape_
+    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    wcs.wcs.crpix = jnp.array((shape_[0] // 2, shape_[1] // 2)) + 1  # 1-based pixel coordinates
+    return wcs
+
+
+def get_scale_angle_flip_shift(trans):
+    """Return, scale, angle, flip, translation from the WCS transformation matrix
+
+    Parameters
+    ----------
+    trans: (`astropy.wcs.WCS`, array)
+        WCS or WCS transformation matrix
+
+    Returns
+    -------
+    scale: `float`
+    angle: `float`, in radian
+    flip: -1 or 1
+    shift: `numpy.ndarray`
+
+    See Also
+    --------
+    get_affine
+    """
+    if isinstance(trans, (np.ndarray, jnp.ndarray)):  # noqa: SIM108
+        m = trans  # noqa: N806
+    else:
+        m = get_affine(trans)  # noqa: N806
+
+    # get shift and then reduce to 2x2 for linear part
+    if m.shape == (3, 3):
+        shift = tuple(b.item() for b in m[:2, 2])[::-1]  # prevent tracing, y/x convention
+        m = m[:2, :2]
+    else:
+        shift = (0, 0)
+
+    det = _det2(m)
+    # this requires pixels to be square
+    # if not, use scale = jnp.linalg.svd(M, compute_uv=False)
+    # but be careful with rotations as anisotropic stretch and rotation do not commute
+    scale = jnp.sqrt(jnp.abs(det)).item(0)
+
+    # if rotation is improper: need to apply y-flip to M to get pure rotation matrix (and unique angle)
+    improper = det < 0
+    flip = -1 if improper else 1
+    f = _flip_matrix(flip)  # noqa: N806, flip in y, is identity if flip = 1!!!
+    m_ = f @ m  # noqa: N806, flip = inverse flip
+    angle = jnp.arctan2(m_[1, 0], m_[0, 0]).item()
+
+    return scale, angle, flip, shift
 
 
 def get_pixel_size(wcs):
-    """Extracts the pixel size from a wcs, and returns it in deg/pixel"""
-    if wcs is None:
-        return 1
-    model_affine = get_affine(wcs)
-    pix = jnp.sqrt(
-        jnp.abs(model_affine[0, 0]) * jnp.abs(model_affine[1, 1] - model_affine[0, 1] * model_affine[1, 0])
-    )
-    return pix
+    """Extracts the pixel size from a wcs, and returns it in deg/pixel
+
+    Parameters
+    ----------
+    wcs: `astropy.wcs.WCS`
+        WCS structure or transformation matrix
+
+    Returns
+    -------
+    pixel_size: `float`
+    """
+    scale, _, _, _ = get_scale_angle_flip_shift(wcs)
+    return scale
 
 
-def get_scale(wcs):
+def get_scale(wcs, separate=False):
+    """Get WCS axis scales in deg/pixel
+
+    Parameters
+    ----------
+    wcs: `astropy.wcs.WCS`
+        WCS structure or transformation matrix
+    separate: `bool`
+          Compute separate axis scales
+
+    Returns
+    -------
+    float
     """
-    Return WCS axis scales in deg/pixel
-    """
-    if wcs is None:
-        return 1
-    model_affine = get_affine(wcs)
-    c1 = (model_affine[0, :2] ** 2).sum() ** 0.5
-    c2 = (model_affine[1, :2] ** 2).sum() ** 0.5
-    return jnp.array([c1, c2])
+    if separate:
+        M = get_affine(wcs)  # noqa: N806
+        c1 = (M[0, :] ** 2).sum() ** 0.5
+        c2 = (M[1, :] ** 2).sum() ** 0.5
+        return jnp.array([c1, c2])
+    else:
+        scale, _ = get_scale_angle_flip_shift(wcs)
+        return scale
 
 
 def get_angle(wcs):
+    """Get WCS rotation angle
+
+    The angle is computed counter-clockwise from the positive x-axis, in radians.
+
+    Parameters
+    ----------
+    wcs: `astropy.wcs.WCS`
+        WCS structure or transformation matrix
+
+    Returns
+    -------
+    `astropy.units.quantity.Quantity`, unit = u.rad
     """
-    Return WCS rotation angle in rad
+    scale, angle, flip, shift = get_scale_angle_flip_shift(wcs)
+    return angle
+
+
+def get_flip(wcs):
+    """Return WCS sign convention
+
+    A negative sign means that the rotation is improper and requires a flip.
+    By convention, we define this to be a flip in the y-axis.
+
+    Parameters
+    ----------
+    wcs: `astropy.wcs.WCS`
+        WCS structure or transformation matrix
+
+    Returns
+    -------
+    -1 or 1
     """
-    if wcs is None:
-        return 0
-    model_affine = get_affine(wcs)
-    c = get_scale(wcs)
-    c = c.reshape([c.shape[-1], 1])
-    r = model_affine[:2, :2] / c  # removing the scaling factors from the pc
-
-    if r[0, 0] == 0.0:
-        return jnp.arcsin(r[0, 1])
-    else:
-        return jnp.arctan(r[0, 1] / r[0, 0])
+    scale, angle, flip, shift = get_scale_angle_flip_shift(wcs)
+    return flip
 
 
-def get_sign(wcs):
+def get_shift(wcs):
+    """Return WCS shift
+
+    The WCS specify an affine transformation via the `CRPIX` keyword. This method
+    returns the affine shift parameter in standard form.
+
+    Parameters
+    ----------
+    wcs: `astropy.wcs.WCS`
+        WCS structure or transformation matrix
+
+    Returns
+    -------
+    array
+
+    See Also
+    --------
+    get_affine
     """
-    Return WCS flip signs
-    """
-    model_affine = get_affine(wcs)
-    c = get_scale(wcs)
-    c = c.reshape([c.shape[-1], 1])
-    r = model_affine[:2, :2] / c  # removing the absolute scaling factors from the pc
-
-    phi = jnp.arcsin(r[0, 1]) if r[0, 0] == 0.0 else jnp.arctan(r[0, 1] / r[0, 0])
-
-    r_inv = jnp.array([[jnp.cos(phi), -jnp.sin(phi)], [jnp.sin(phi), jnp.cos(phi)]])
-
-    r = r_inv @ r
-    return jnp.round(jnp.diag(r))
+    scale, angle, flip, shift = get_scale_angle_flip_shift(wcs)
+    return shift

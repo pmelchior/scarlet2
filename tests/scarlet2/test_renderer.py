@@ -3,171 +3,190 @@
 # ruff: noqa: D103
 # ruff: noqa: D106
 
-import warnings
-
-import astropy.io.fits as fits
-import jax
+import astropy.units as u
 import jax.numpy as jnp
+from numpy.testing import assert_allclose
+
 import scarlet2
-from astropy.wcs import WCS
-from huggingface_hub import hf_hub_download
+from scarlet2 import ArrayPSF
+from scarlet2.frame import _flip_matrix, _rot_matrix, _wcs_default, get_affine
+from scarlet2.measure import Moments
+from scarlet2.morphology import GaussianMorphology
 
-warnings.filterwarnings("ignore")
+# resampling renderer to test
+cls = scarlet2.renderer.ResamplingRenderer
 
-# Load the HSC image data
-# load test data from HSC and HST
-filename = hf_hub_download(
-    repo_id="astro-data-lab/scarlet-test-data",
-    filename="test_resampling/Cut_HSC1.fits.gz",
-    repo_type="dataset",
-)
-obs_hdu = fits.open(filename)
-data_hsc = jnp.array(obs_hdu[0].data, jnp.float32)
-wcs_hsc = WCS(obs_hdu[0].header)
-channels_hsc = ["g", "r", "i", "z", "y"]
-obs_hdu.close()
+# create a Gaussian as model
+T = 10
+eps = jnp.array((0.5, 0.3))
+model = GaussianMorphology(size=T, ellipticity=eps, shape=(150, 151))()[None, ...]  # test even & odd
+g = scarlet2.measure.Moments(component=model[0], N=2)
 
-# Load the HSC PSF data
-filename = hf_hub_download(
-    repo_id="astro-data-lab/scarlet-test-data",
-    filename="test_resampling/PSF_HSC.fits.gz",
-    repo_type="dataset",
-)
-psf_hsc_data = jnp.array(fits.open(filename)[0].data, jnp.float32)
-Np1, Np2 = psf_hsc_data[0].shape
-psf_hsc_data = jnp.pad(psf_hsc_data, ((0, 0), (1, 0), (1, 0)))
-psf_hsc_single_band_ = psf_hsc_data[:1]
-psf_hsc = scarlet2.ArrayPSF(psf_hsc_data)
-psf_hsc_single_band = scarlet2.ArrayPSF(psf_hsc_single_band_)
-
-# Load the HST image data
-filename = hf_hub_download(
-    repo_id="astro-data-lab/scarlet-test-data",
-    filename="test_resampling/Cut_HST1.fits.gz",
-    repo_type="dataset",
-)
-obs_hdu = fits.open(filename)
-data_hst = jnp.array(obs_hdu[0].data, jnp.float32)
-wcs_hst = WCS(obs_hdu[0].header)
-channels_hst = ["F814W"]
-obs_hdu.close()
-
-# Load the HST PSF data
-filename = hf_hub_download(
-    repo_id="astro-data-lab/scarlet-test-data",
-    filename="test_resampling/PSF_HST.fits.gz",
-    repo_type="dataset",
-)
-psf_hst = jnp.array(fits.open(filename)[0].data, jnp.float32)
-psf_hst = psf_hst[None, :, :]
-psf_hst = jnp.pad(psf_hst, ((0, 0), (1, 0), (1, 0)))
-psf_hst_ = jnp.repeat(psf_hst, 5, 0)
-psf_hst_single_band_ = psf_hst_[:1]
-psf_hst = scarlet2.ArrayPSF(psf_hst_)
-psf_hst_single_band = scarlet2.ArrayPSF(psf_hst_single_band_)
-
-# Scale the HST data
-n1, n2 = jnp.shape(data_hst)
-data_hst = data_hst.reshape(1, n1, n2)
-data_hst *= data_hsc.max() / data_hst.max()
-
-r, N1, N2 = data_hsc.shape
-
-# define two observation packages and match to frame
-obs_hst = scarlet2.Observation(
-    data_hst[:1, ...], wcs=wcs_hst, psf=psf_hst_single_band, channels=["channel"], weights=None
-)
-
-obs_hsc = scarlet2.Observation(
-    data_hsc[:1, ...], wcs=wcs_hsc, psf=psf_hsc_single_band, channels=["channel"], weights=None
-)
-
-# Building a Frame from hst obs
-
-hst_frame = scarlet2.Frame(
-    bbox=scarlet2.Box(shape=data_hst.shape), channels=["channel"], psf=psf_hst, wcs=wcs_hst
-)
-
-# compare to galsim
-# Perform the same operations with galsim
-filename = hf_hub_download(
-    repo_id="astro-data-lab/scarlet-test-data",
-    filename="test_resampling/galsim_hst_to_hsc_resolution.npy",
-    repo_type="dataset",
-)
-out_galsim = jnp.load(filename)
+# make a Frame
+model_frame = scarlet2.Frame(scarlet2.Box(model.shape))
 
 
-def test_hst_to_hsc_against_galsim():
-    # Initializing renderers
-    obs_hsc.match(hst_frame)
+def test_rescale():
+    # how does this model look if we change the WCS scale
+    # if scale becomes larger, the image gets smaller
+    scale = 3.1
+    shape = (int(model.shape[-2] / scale) + 1, int(model.shape[-1] / scale))
+    wcs_obs = _wcs_default(shape)
+    m = scarlet2.frame.get_affine(wcs_obs)
+    m = scale * m
+    wcs_obs.wcs.pc = m
 
-    # Deconvolution, Resampling and Reconvolution
-    hst_resampled = obs_hsc.render(data_hst)
+    obs_frame = scarlet2.Frame(scarlet2.Box(shape), wcs=wcs_obs)
+    renderer = cls(model_frame, obs_frame)
+    model_ = renderer(model)
 
-    assert jnp.allclose(out_galsim, hst_resampled[0], atol=2.3e-4)
+    # for testing outputs...
+    # print(renderer)
+    # fig, ax = plt.subplots(1, 2, figsize=(8, 4))
+    # ax[0].imshow(model[0])
+    # ax[1].imshow(model_[0])
 
-
-# Rotate WCS
-# Remember images coordinates are [y, x]
-# Update CRPIX for the 90-degree clockwise rotation
-wcs_hst_rot = wcs_hst.deepcopy()
-crpix1_new = n1 - wcs_hst.wcs.crpix[1]
-crpix2_new = wcs_hst.wcs.crpix[0]
-
-wcs_hst_rot.wcs.crpix = [crpix1_new, crpix2_new]
-
-# # Mock a rotation of 90 deg clockwise of the HST WCS
-phi = -90 / 180 * jnp.pi  # in rad
-R = jnp.array([[jnp.cos(phi), jnp.sin(phi)], [-jnp.sin(phi), jnp.cos(phi)]])
-
-data_hst_rot = jax.vmap(jnp.rot90)(data_hst)
-psf_hst_rot = jax.vmap(jnp.rot90)(psf_hst_)
-psf_hst_rot = scarlet2.ArrayPSF(psf_hst_rot)
-
-wcs_hst_rot.wcs.pc = R @ wcs_hst.wcs.pc
-
-hst_frame_rot = scarlet2.Frame(
-    bbox=scarlet2.Box(shape=data_hst_rot.shape), channels=["channel"], psf=psf_hst_rot, wcs=wcs_hst_rot
-)
-
-assert wcs_hst_rot != wcs_hst
+    # undo resizing
+    g_obs = Moments(model_[0])
+    g_obs.resize(scale)
+    assert_allclose(g_obs.flux, g.flux, atol=3e-3)
+    shift_ = jnp.asarray(g_obs.centroid) - jnp.asarray(obs_frame.bbox.spatial.center)
+    assert_allclose(shift_, (0, 0), atol=1e-4)
+    assert_allclose(g_obs.size, g.size, rtol=3e-5)
+    assert_allclose(g_obs.ellipticity, g.ellipticity, atol=3e-5)
 
 
-def test_hst_to_hsc_against_galsim_rotated_wcs():
-    obs_hsc = scarlet2.Observation(
-        data_hsc[:1, ...], wcs=wcs_hsc, psf=psf_hsc_single_band, channels=["channel"], weights=None
-    )
+def test_rotate():
+    # how does this model look if we rotated the WCS scale
+    # because we change the frame, this will appear as a rotation in the opposite direction
+    shape = model.shape
+    phi = (30 * u.deg).to(u.rad).value
+    wcs_obs = _wcs_default(shape)
+    m = scarlet2.frame.get_affine(wcs_obs)
+    r = _rot_matrix(phi)
+    m = r @ m
+    wcs_obs.wcs.pc = m
 
-    # Automatically find the difference between observation and model WCSs
-    obs_hsc.match(hst_frame_rot)
+    obs_frame = scarlet2.Frame(scarlet2.Box(shape), wcs=wcs_obs)
+    renderer = cls(model_frame, obs_frame)
+    model_ = renderer(model)
 
-    # Deconvolution, Resampling and Reconvolution
-    hst_resampled = obs_hsc.render(data_hst_rot)
-
-    assert jnp.allclose(out_galsim, hst_resampled[0], atol=2.3e-4)
-
-
-def test_no_channel_axis_in_obs_psf():
-    assert len(psf_hsc_data[0].shape) == 2
-    obs_hsc = scarlet2.Observation(
-        data_hsc[:1, ...],
-        wcs=wcs_hsc,
-        psf=scarlet2.ArrayPSF(psf_hsc_data[:1]),
-        channels=["channel"],
-        weights=None,
-    )
-
-    # Initializing renderers
-    obs_hsc.match(hst_frame)
-
-    # Deconvolution, Resampling and Reconvolution
-    hst_resampled = obs_hsc.render(data_hst)
-
-    assert jnp.allclose(out_galsim, hst_resampled[0], atol=2.3e-4)
+    # rotate to correct for the counter-rotation of the frame
+    g_obs = Moments(model_[0])
+    g_obs.rotate(phi)
+    assert_allclose(g_obs.flux, g.flux, atol=3e-3)
+    assert_allclose(g_obs.centroid, g.centroid, atol=1e-4)
+    assert_allclose(g_obs.size, g.size, rtol=3e-5)
+    assert_allclose(g_obs.ellipticity, g.ellipticity, atol=3e-5)
 
 
-if __name__ == "__main__":
-    test_hst_to_hsc_against_galsim()
-    test_hst_to_hsc_against_galsim_rotated_wcs()
-    test_no_channel_axis_in_obs_psf()
+def test_flip():
+    shape = model.shape
+    wcs_obs = _wcs_default(shape)
+    m = scarlet2.frame.get_affine(wcs_obs)
+    f = _flip_matrix(-1)
+    m = f @ m
+    wcs_obs.wcs.pc = m
+
+    obs_frame = scarlet2.Frame(scarlet2.Box(shape), wcs=wcs_obs)
+    renderer = cls(model_frame, obs_frame)
+    model_ = renderer(model)
+
+    # undo the flip
+    g_obs = Moments(model_[0])
+    g_obs.flipud()
+    assert_allclose(g_obs.flux, g.flux, atol=3e-3)
+    assert_allclose(g_obs.centroid, g.centroid, atol=1e-4)
+    assert_allclose(g_obs.size, g.size, rtol=3e-5)
+    assert_allclose(g_obs.ellipticity, g.ellipticity, atol=3e-5)
+
+
+def test_translation():
+    shift = jnp.array((12, -1.9))
+    shape = model.shape
+    wcs_obs = _wcs_default(shape)
+    wcs_obs.wcs.crpix += shift[::-1]  # x/y
+
+    shape = model.shape
+    obs_frame = scarlet2.Frame(scarlet2.Box(shape), wcs=wcs_obs)
+    renderer = cls(model_frame, obs_frame)
+    model_ = renderer(model)
+
+    g_obs = Moments(model_[0])
+    shift_ = jnp.asarray(g_obs.centroid) - jnp.asarray(g.centroid)
+
+    assert_allclose(g_obs.flux, g.flux, rtol=2e-3)
+    assert_allclose(shift_, -shift, atol=1e-4)
+    assert_allclose(g_obs.size, g.size, rtol=3e-5)
+    assert_allclose(g_obs.ellipticity, g.ellipticity, atol=3e-5)
+
+
+def test_convolution():
+    # create model PSF and convolve g
+    t_p = 0.7
+    eps_p = None
+    psf = GaussianMorphology(size=t_p, ellipticity=eps_p)()
+    psf /= psf.sum()
+    p = Moments(psf, N=2)
+    psf = ArrayPSF(psf[None, ...])
+    model_frame_ = scarlet2.Frame(scarlet2.Box(model.shape), psf=psf)
+
+    # create obs PSF
+    t_obs, eps_obs = 5, jnp.array((-0.1, 0.1))
+    psf_obs = GaussianMorphology(size=t_obs, ellipticity=eps_obs)()
+    psf_obs /= psf_obs.sum()
+    p_obs = Moments(psf_obs, N=2)
+    psf_obs = ArrayPSF(psf_obs[None, ...])
+
+    # render: deconvolve, reconcolve
+    shape = model.shape
+    obs_frame = scarlet2.Frame(scarlet2.Box(shape), psf=psf_obs)
+    renderer = cls(model_frame_, obs_frame)
+    model_ = renderer(model)
+    g_obs = Moments(model_[0])
+
+    g_obs.deconvolve(p_obs).convolve(p)
+    assert_allclose(g_obs.flux, g.flux, atol=3e-3)
+    assert_allclose(g_obs.centroid, g.centroid, atol=1e-4)
+    assert_allclose(g_obs.size, g.size, rtol=3e-5)
+    assert_allclose(g_obs.ellipticity, g.ellipticity, atol=3e-5)
+
+
+def test_all():
+    scale = 2.1
+    phi = (70 * u.deg).to(u.rad).value
+    shift = jnp.array((1.4, -0.456))
+    shape = (int(model.shape[1] // scale), int(model.shape[2] // scale))
+    wcs_obs = _wcs_default(shape)
+    m = get_affine(wcs_obs)
+    wcs_obs.wcs.pc = scale * _rot_matrix(phi) @ _flip_matrix(-1) @ m
+    wcs_obs.wcs.crpix += shift[::-1]  # x/y
+
+    # create model PSF and convolve g
+    t_p = 1
+    eps_p = None
+    psf = GaussianMorphology(size=t_p, ellipticity=eps_p)()
+    psf /= psf.sum()
+    p = Moments(psf, N=2)
+    psf = ArrayPSF(psf[None, ...])
+    model_frame_ = scarlet2.Frame(scarlet2.Box(model.shape), psf=psf)
+
+    # obs PSF
+    t_obs, eps_obs = 3, jnp.array((0.1, -0.1))
+    psf_obs = GaussianMorphology(size=t_obs, ellipticity=eps_obs)()
+    psf_obs /= psf_obs.sum()
+    p_obs = Moments(psf_obs, N=2)
+    psf_obs = ArrayPSF(psf_obs[None, ...])
+
+    obs_frame = scarlet2.Frame(scarlet2.Box(shape), psf=psf_obs, wcs=wcs_obs)
+    renderer = cls(model_frame_, obs_frame)
+    model_ = renderer(model)
+
+    g_obs = Moments(model_[0])
+    g_obs.deconvolve(p_obs).flipud().rotate(phi).resize(scale).convolve(p)
+    shift_ = jnp.asarray(g_obs.centroid) - jnp.asarray(obs_frame.bbox.spatial.center)
+
+    assert_allclose(g_obs.flux, g.flux, rtol=2e-3)
+    assert_allclose(shift_, -shift, atol=1e-4)
+    assert_allclose(g_obs.size, g.size, rtol=3e-5)
+    assert_allclose(g_obs.ellipticity, g.ellipticity, atol=3e-5)
