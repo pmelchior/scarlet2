@@ -12,7 +12,7 @@ from jax import grad, jit, jvp
 from matplotlib.patches import Polygon
 
 from . import measure
-from .bbox import Box
+from .bbox import Box, insert_into
 from .renderer import ChannelRenderer
 
 
@@ -498,7 +498,7 @@ def observation(
             full_box = Box(psf_image.shape)
             shift = tuple(psf_image.shape[d] // 2 - psf.shape[d] // 2 for d in range(full_box.D))
             model_box = Box(psf.shape) + shift
-            model_box.insert_into(psf_image, psf)
+            psf_image = insert_into(psf_image, psf, model_box)
             # slices = scarlet.box.overlapped_slices
             ax[row, panel].imshow(img_to_rgb(psf_image, norm=norm), origin="lower")
             ax[row, panel].set_title("PSF", **title_kwargs)

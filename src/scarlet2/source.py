@@ -10,10 +10,7 @@ from .module import Module
 from .morphology import Morphology
 from .spectrum import Spectrum
 from .validation_utils import (
-    ValidationError,
-    ValidationInfo,
     ValidationMethodCollector,
-    ValidationResult,
 )
 
 
@@ -76,7 +73,7 @@ class Component(Module):
     def __call__(self):
         """What to run when Component is called"""
         # Boxed and centered model
-        delta_center = (self.bbox.center[-2] - self.center[-2], self.bbox.center[-1] - self.center[-1])
+        delta_center = (self.center[-2] - self.bbox.center[-2], self.center[-1] - self.bbox.center[-1])
         spectrum = self.spectrum() if isinstance(self.spectrum, Module) else self.spectrum
         morph = (
             self.morphology(delta_center=delta_center)
@@ -254,24 +251,24 @@ class SourceValidator(metaclass=ValidationMethodCollector):
     def __init__(self, source: Source):
         self.source = source
 
-    def check_source_has_positive_contribution(self) -> ValidationResult:
-        """Check that the source has a positive contribution i.e. that the result
-        of evaluating self.source() does not contain negative values.
-
-        Returns
-        -------
-        ValidationResult
-            A subclass of ValidationResult indicating the result of the check.
-        """
-        model = self.source()
-        if jnp.any(model < 0):
-            return ValidationError(
-                "Source model has negative contributions.",
-                check=self.__class__.__name__,
-                context={"source": self.source},
-            )
-        else:
-            return ValidationInfo(
-                "Source model has positive contributions.",
-                check=self.__class__.__name__,
-            )
+    # def check_source_has_positive_contribution(self) -> ValidationResult:
+    #     """Check that the source has a positive contribution i.e. that the result
+    #     of evaluating self.source() does not contain negative values.
+    #
+    #     Returns
+    #     -------
+    #     ValidationResult
+    #         A subclass of ValidationResult indicating the result of the check.
+    #     """
+    #     model = self.source()
+    #     if jnp.any(model < 0):
+    #         return ValidationError(
+    #             "Source model has negative contributions.",
+    #             check=self.__class__.__name__,
+    #             context={"source": self.source},
+    #         )
+    #     else:
+    #         return ValidationInfo(
+    #             "Source model has positive contributions.",
+    #             check=self.__class__.__name__,
+    #         )

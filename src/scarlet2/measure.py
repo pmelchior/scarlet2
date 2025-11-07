@@ -1,9 +1,11 @@
 """Measurement methods"""
 
+import copy
+
 import numpy as jnp
 import numpy.ma as ma
 
-from .frame import get_affine, get_scale_angle_flip
+from .frame import get_affine, get_scale_angle_flip_shift
 from .source import Component
 
 
@@ -194,14 +196,17 @@ class Moments(dict):
                 self[m, n - m] = (grid_y**m * grid_x ** (n - m) * model * weight).sum(axis=(-2, -1))
 
             if n == 1:
+                self._centroid = jnp.array((self[1, 0] / self[0, 0], self[0, 1] / self[0, 0]))
                 # shift grid to produce centered moments
                 if center is None:
-                    center = self[1, 0] / self[0, 0], self[0, 1] / self[0, 0]  # centroid
+                    center = self._centroid
                     self[1, 0] = jnp.zeros_like(self[1, 0])
                     self[0, 1] = jnp.zeros_like(self[0, 1])
                 else:
                     center = jnp.asarray(center)
                     # centroid wrt given center
+                    self._centroid[0] -= center[0] * self[0, 0]
+                    self._centroid[1] -= center[1] * self[0, 0]
                     self[1, 0] -= center[0] * self[0, 0]
                     self[0, 1] -= center[1] * self[0, 0]
                 if model.ndim == 3 and center[0].ndim == 1:
@@ -221,6 +226,16 @@ class Moments(dict):
         return max(key[0] for key in self.keys())
 
     @property
+    def flux(self):
+        """Determine flux from 0th moment
+
+        Returns
+        -------
+        float
+        """
+        return self[0, 0]
+
+    @property
     def centroid(self):
         """Determine centroid from moments
 
@@ -229,7 +244,7 @@ class Moments(dict):
         array
             Coordinates of the centroid in the pixel frame of the data that defines these moments
         """
-        return jnp.array((self[1, 0] / self[0, 0], self[0, 1] / self[0, 0]))
+        return self._centroid
 
     @property
     def size(self):
@@ -266,6 +281,36 @@ class Moments(dict):
             self[key] /= norm
         return self
 
+    def convolve(self, p):
+        """Convolve moments with moments `p`
+
+        The moments are changed in place.
+
+        See Melchior et al. (2010), "Weak gravitational lensing with Deimos", Equation 9
+
+        Parameters
+        ----------
+        p: Moments
+            Moments of the kernel to convolve with
+
+        Returns
+        -------
+        self
+        """
+
+        g_ = self
+        g = copy.deepcopy(g_)
+        n_min = min(p.order, g.order)
+
+        for n in range(n_min + 1):
+            for i in range(n + 1):
+                j = n - i
+                g_[i, j] = jnp.zeros_like(g_[i, j])
+                for k in range(i + 1):
+                    for l in range(j + 1):  # noqa: E741
+                        g_[i, j] += binomial(i, k) * binomial(j, l) * g[k, l] * p[i - k, j - l]
+        return self
+
     def deconvolve(self, p):
         """Deconvolve moments from moments `p`
 
@@ -292,23 +337,26 @@ class Moments(dict):
             g[1, 0] -= g[0, 0] * p[1, 0]
             g[0, 1] /= p[0, 0]
             g[1, 0] /= p[0, 0]
-            if n_min >= 2:
-                g[0, 2] -= g[0, 0] * p[0, 2] + 2 * g[0, 1] * p[0, 1]
-                g[1, 1] -= g[0, 0] * p[1, 1] + g[0, 1] * p[1, 0] + g[1, 0] * p[0, 1]
-                g[2, 0] -= g[0, 0] * p[2, 0] + 2 * g[1, 0] * p[1, 0]
-                if n_min >= 3:
-                    # use general formula
-                    for n in range(3, n_min + 1):
-                        for i in range(n + 1):
-                            for j in range(n - i):
-                                for k in range(i):
-                                    for l in range(j):  # noqa: E741
-                                        g[i, j] -= binomial(i, k) * binomial(j, l) * g[k, l] * p[i - k, j - l]
-                                for k in range(i):
-                                    g[i, j] -= binomial(i, k) * g[k, j] * p[i - k, 0]
-                                for l in range(j):  # noqa: E741
-                                    g[i, j] -= binomial(j, l) * g[i, l] * p[0, j - l]
-                        g[i, j] /= p[0, 0]
+        if n_min >= 2:
+            g[0, 2] -= g[0, 0] * p[0, 2] + 2 * g[0, 1] * p[0, 1]
+            g[1, 1] -= g[0, 0] * p[1, 1] + g[0, 1] * p[1, 0] + g[1, 0] * p[0, 1]
+            g[2, 0] -= g[0, 0] * p[2, 0] + 2 * g[1, 0] * p[1, 0]
+            g[0, 2] /= p[0, 0]
+            g[1, 1] /= p[0, 0]
+            g[2, 0] /= p[0, 0]
+        if n_min >= 3:
+            # use general formula
+            for n in range(3, n_min + 1):
+                for i in range(n + 1):
+                    for j in range(n - i):
+                        for k in range(i):
+                            for l in range(j):  # noqa: E741
+                                g[i, j] -= binomial(i, k) * binomial(j, l) * g[k, l] * p[i - k, j - l]
+                        for k in range(i):
+                            g[i, j] -= binomial(i, k) * g[k, j] * p[i - k, 0]
+                        for l in range(j):  # noqa: E741
+                            g[i, j] -= binomial(j, l) * g[i, l] * p[0, j - l]
+                g[i, j] /= p[0, 0]
         return self
 
     def resize(self, c):
@@ -318,6 +366,8 @@ class Moments(dict):
         This operation arises when one adjust the moments for a change in the size
         of pixels of the defining frame, e.g. when asking "what would the moments
         be if the pixels were factor c smaller (or the source c times larger)"?
+        The fluxes are unchanged, which corresponds to preservation of photons under resizing.
+
         The moments are changed in place.
 
         See Teague (1980), "Image  analysis via the general  theory of moments", eq. 34 for details.
@@ -331,15 +381,47 @@ class Moments(dict):
         -------
         self
         """
-        # Teague (1980), eq. 34
         if jnp.isscalar(c):
+            assert c > 0
+            flux_change = c**2
             for e in self:
-                self[e] = self[e] * c ** (2 + e[0] + e[1])
+                self[e] = self[e] * c ** (2 + e[0] + e[1]) / flux_change
         elif len(c) == 2:
+            assert c[0] > 0 and c[1] > 0
+            flux_change = c[0] * c[1]
             for e in self:
-                self[e] = self[e] * c[0] ** (e[0] + 1) * c[1] ** (e[1] + 1)
+                self[e] = self[e] * c[0] ** (e[0] + 1) * c[1] ** (e[1] + 1) / flux_change
         else:
             raise AttributeError("c must be a scalar of a list or array of two components")
+
+        return self
+
+    def fliplr(self):
+        """Flip moments along the x-axis
+
+        The moments are changed in place.
+
+        Returns
+        -------
+        self
+        """
+        for e in self:
+            if e[1] % 2 == 1:
+                self[e] *= -1
+        return self
+
+    def flipud(self):
+        """Flip moments along the y-axis
+
+        The moments are changed in place.
+
+        Returns
+        -------
+        self
+        """
+        for e in self:
+            if e[0] % 2 == 1:
+                self[e] *= -1
         return self
 
     def rotate(self, phi):
@@ -361,9 +443,8 @@ class Moments(dict):
 
         mu_p = {}
         for n in range(self.N + 1):
-            for m in range(n + 1):
-                j = m
-                k = n - m
+            for j in range(n + 1):
+                k = n - j
                 value = 0
                 for r in range(j + 1):
                     for s in range(k + 1):
@@ -375,11 +456,49 @@ class Moments(dict):
                             * jnp.sin(phi) ** (k + r - s)
                             * self[j + k - r - s, r + s]
                         )
-                mu_p[m, n - m] = value
+                mu_p[j, k] = value
 
         for e in self:
             self[e] = mu_p[e]
 
+        return self
+
+    def translate(self, shift):
+        """Change moments for translation `shift`
+
+        The moments are changed in place.
+
+        Note: This changes all the moments, not just the dipole, for the new reference center.
+
+        See Teague (1980), "Image  analysis via the general  theory of moments", eq. 30 for details.
+
+        Parameters
+        ----------
+        shift: (y, x)
+            translation, in pixels
+
+        Returns
+        -------
+        self
+        """
+        mu = {}
+        for n in range(self.N + 1):
+            for j in range(n + 1):
+                k = n - j
+                value = 0
+                for r in range(j + 1):
+                    for s in range(k + 1):
+                        value += (
+                            binomial(j, r)
+                            * binomial(k, s)
+                            * (shift[0]) ** (j - r)
+                            * (shift[1]) ** (k - s)
+                            * self[r, s]
+                        )
+                mu[j, k] = value
+
+        for e in self:
+            self[e] = mu[e]
         return self
 
     def transfer(self, wcs_in, wcs_out):
@@ -400,22 +519,15 @@ class Moments(dict):
         self
         """
 
-        flux_in = self[0, 0]
-
         if (wcs_in is not None) and (wcs_out is not None):
             M_in = get_affine(wcs_in)  # noqa: N806
             M_out = get_affine(wcs_out)  # noqa: N806
             M = jnp.linalg.inv(M_out) @ M_in  # noqa: N806, transformation from in pixel -> sky -> out pixels
-            scale, angle, flip = get_scale_angle_flip(M)
-            # as flip is the same as rescale(-1), combine both
-            # note flip is for y-flip, and we have y/x convention here
-            scale = jnp.array((flip, 1)) * scale
-            self.resize(scale).rotate(angle)
-
-            # TODO: why are we doing a flux normalization???
-            flux_out = self[0, 0]
-            for key in self.keys():
-                self[key] /= flux_out / flux_in
+            scale, angle, flip, _ = get_scale_angle_flip_shift(M)
+            # if flipped: go to right-handed coord first before applying rotation
+            if flip == -1:
+                self.flipud()  # our flip convention is along y-axis
+            self.rotate(angle).resize(scale)
 
         return self
 
