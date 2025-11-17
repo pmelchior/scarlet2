@@ -468,7 +468,7 @@ def observation(
             data = observation.data
             # Mask any pixels with zero weight in all channels
             mask = np.sum(observation.weights, axis=0) == 0
-            name = ""
+            name = "".join(observation.frame.channels)
             if show_psf:
                 psf = psf_model
                 # make PSF as bright as the brightest pixel of the observation
@@ -789,7 +789,7 @@ def sources(
                 extent=extent,
                 origin="lower",
             )
-            ax[k][panel].set_title(f"Model Source {k}", **title_kwargs)
+            ax[k][panel].set_title(f"Source {k}", **title_kwargs)
             if add_labels:
                 center = src.center
                 ax[k][panel].text(*(center[::-1]), k, **label_kwargs)  # x,y
@@ -814,7 +814,7 @@ def sources(
                 img_to_rgb(model_, norm=norm, channel_map=channel_map, mask=model_mask),
                 origin="lower",
             )
-            ax[k][panel].set_title(f"Model Source {k} Rendered", **title_kwargs)
+            ax[k][panel].set_title(f"Source {k} Rendered", **title_kwargs)
             if add_labels:
                 ax[k][panel].text(*(center_obs[::-1]), k, **label_kwargs)  # x,y
             if add_boxes:
@@ -823,12 +823,13 @@ def sources(
             panel += 1
 
         if show_observed:
+            name = "".join(observation.frame.channels)
             # Center the observation on the source and display it
             ax[k][panel].imshow(
                 img_to_rgb(observation.data, norm=norm, channel_map=channel_map),
                 origin="lower",
             )
-            ax[k][panel].set_title("Observation".format(), **title_kwargs)
+            ax[k][panel].set_title(f"Observation {name}", **title_kwargs)
             if add_labels:
                 ax[k][panel].text(*(center_obs[::-1]), k, **label_kwargs)  # x,y
             if add_boxes:
@@ -849,7 +850,7 @@ def sources(
                 ax[k][panel].set_xticklabels(scene.frame.channels)
             ax[k][panel].set_title("Spectrum", **title_kwargs)
             ax[k][panel].set_xlabel("Channel")
-            ax[k][panel].set_ylabel("Intensity")
+            ax[k][panel].set_ylabel("Flux")
 
     fig.tight_layout()
     return fig
@@ -955,7 +956,7 @@ def scene(
             channel_map = None
         else:
             sel = slice(None)
-            name = ""
+            name = "".join(observation.frame.channels)
 
         panel = 0
         if show_model:
@@ -965,7 +966,7 @@ def scene(
                 extent=extent,
                 origin="lower",
             )
-            ax[row, panel].set_title(f"Model {name}", **title_kwargs)
+            ax[row, panel].set_title("Model", **title_kwargs)
             panel += 1
 
         if show_rendered:
@@ -990,7 +991,7 @@ def scene(
                 img_to_rgb(data[sel], norm=norm, channel_map=channel_map, mask=mask_),
                 origin="lower",
             )
-            ax[row, panel].set_title("Observation", **title_kwargs)
+            ax[row, panel].set_title(f"Observation {name}", **title_kwargs)
             panel += 1
 
         if show_residual:
@@ -1000,7 +1001,7 @@ def scene(
                 img_to_rgb(residual, norm=norm_, channel_map=channel_map, mask=mask_),
                 origin="lower",
             )
-            ax[row, panel].set_title("Data - Model", **title_kwargs)
+            ax[row, panel].set_title("Obs - Model", **title_kwargs)
             panel += 1
 
         for k, src in enumerate(scene.sources):
