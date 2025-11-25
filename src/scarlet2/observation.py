@@ -3,7 +3,6 @@ import jax
 import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
-from .fft import make_ps_map
 from .frame import Frame, get_affine
 from .module import Module
 from .renderer import (
@@ -212,49 +211,73 @@ class Observation(Module):
         return chi_dict
 
 
-class CorrelatedNoiseObservation(Observation):
-    """Content and definition of an observation with correleted noise"""
+class CorrelatedObservation(Observation):
+    """Content and definition of an observation with pixel correlations
 
-    fourier_noise_var: jnp.ndarray = None
+    The noise model is still assumed to be Gaussian, but with correlations between pixels.
+    The implementation computes the goodness of fit in Fourier space from the noise power spectrum to avoid
+    the expensive computation of/with an inverse banded matrix in configuration space.
+    """
+
+    power_spectrum: jnp.ndarray
     """Noise power spectrum for :py:meth:`log_likelihood`"""
 
     def __init__(
-        self, data, weights, psf=None, wcs=None, channels=None, renderer=None, noise_ps: jnp.ndarray = None
+        self,
+        data,
+        weights,
+        psf=None,
+        wcs=None,
+        channels=None,
+        renderer=None,
+        power_spectrum=None,
+        correlation_function=None,
     ):
-        self.data = data
-        if self.data.ndim == 2:
-            # add a channel dimension if it is missing
-            self.data = self.data[None, ...]
+        super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer)
 
-        self.weights = weights
-        if self.weights is not None and self.weights.ndim == 2:
-            # add a channel dimension if it is missing
-            self.weights = self.weights[None, ...]
+        assert power_spectrum is not None or correlation_function is not None, (
+            "Provide either power_spectrum or correlation_function"
+        )
 
-        if noise_ps is not None:
-            self.fourier_noise_var = make_ps_map(noise_ps, self.data.shape[-1])
+        if power_spectrum is None:
 
-        self.frame = Frame(Box(data.shape), psf, wcs, channels=channels)
-        if renderer is None:
-            renderer = NoRenderer()
-        self.renderer = renderer
+            def noise_kernel(xi):
+                channels = len(xi[0, 0])
+                maxlength = max(max(k) for k in xi)
+                kernel = jnp.zeros((channels, 2 * maxlength + 1, 2 * maxlength + 1))
+                for k in xi:
+                    dy, dx = k
+                    kernel = kernel.at[:, dy + maxlength, dx + maxlength].set(xi[k])
+                return kernel
 
-        # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
-        from .validation_utils import VALIDATION_SWITCH
+            def pad_kernel(kernel, shape):
+                pads = ((0, 0),) + tuple(
+                    ((s - l) // 2, (s - l) // 2 + 1)
+                    for s, l in zip(shape[-2:], kernel.shape[-2:], strict=False)  # noqa: E741
+                )
+                kernel_padded = jnp.pad(kernel, pads)
+                return kernel_padded
 
-        if VALIDATION_SWITCH:
-            from .validation import check_observation
+            def power_spectrum_from(xi, shape):
+                # NOTE: this conversion is not ideal because the correlation function is likely undersampled
+                # Better would be a pure correlated noise field to measure the power spectrum directly
+                kernel = noise_kernel(xi)
+                kernel_padded = pad_kernel(kernel, shape)
+                kernel_fft = jnp.fft.rfft2(kernel_padded, axes=(-2, -1))
+                ps = jnp.abs(kernel_fft)
+                return ps
 
-            validation_results = check_observation(self)
-            print_validation_results("Observation validation results", validation_results)
+            power_spectrum = power_spectrum_from(correlation_function, data.shape)
+
+        self.power_spectrum = power_spectrum
 
     def _log_likelihood(self, model, data):
         # rendered model
         model_ = self.render(model)
 
         # compute log_likelihood, without normalization factor
-        res_fft = jnp.fft.fft2(model_ - data)
-        log_like = -0.5 * jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.fourier_noise_var)
+        res_fft = jnp.fft.rfft2(model_ - data, axes=(-2, -1))
+        log_like = -0.5 * jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum)
 
         return log_like
 
