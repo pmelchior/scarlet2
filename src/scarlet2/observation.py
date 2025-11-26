@@ -4,6 +4,7 @@ import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
 from .frame import Frame, get_affine
+from .measure import correlation_function
 from .module import Module
 from .renderer import (
     ChannelRenderer,
@@ -276,9 +277,69 @@ class CorrelatedObservation(Observation):
 
     def _chisquare(self, model):
         # compute chi square in Fourier space
+        # TODO: We could avoid the FFT because the last step of a typical renderer is an inverse FFT.
+        #       The problem is that image shapes in Fourier space are usually padded, so shapes don't match.
         # normalization sqrt(n/2) added because it's missing in numpy/jax forward fft
         res_fft = jnp.fft.rfft2(self.render(model) - self.data, axes=(-2, -1)) / jnp.sqrt(self.n / 2)
         return jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum)
+
+    @classmethod
+    def from_observation(cls, obs, length=50):
+        """Create a :py:class:`CorrelatedObservation` from :py:class:`Observation`
+
+        The method will construct a new Observation instance with a modified likelihood that takes into
+        account the pixel correlation. To do so, it finds a patch of size `L` with as few sources as possible,
+        measures the pixel correlations in that patch, and compute the corresponding 2D power spectrum.
+
+        Parameters
+        ----------
+        obs: :py:class:`Observation`
+            Observation containing the data and original weight map
+        length: int
+            Linear size of the patch.
+            Computing the correlation function is expensive. as the correlations are usually short-range,
+            a small patch is usually sufficient for accurate results and easier to find from empty regions
+            in the image.
+
+        Returns
+        -------
+        :py:class:`CorrelatedObservation`
+        """
+        # compute the pixel correlations in a noisy patch (without correlations from sources)
+
+        # 1) mask pixels with bright pixels
+        img = obs.data[0]
+        mask = img > 3 * jnp.sqrt(1 / obs.weights[0])
+        # extend the mask to remove most of the outskirts of detected galaxies
+        kernel = jnp.ones((9, 9))
+        mask = jax.scipy.signal.correlate2d(mask, kernel, mode="same") > 0
+        img_ = img.at[mask].set(0)
+
+        # 2) find patch of size L with the largest number of unmasked pixels
+        shape = (length, length)
+        kernel = jnp.ones(shape)
+        # correlated with tophat = sliding sum
+        gaps = jax.scipy.signal.correlate2d(mask == 0, kernel, mode="same")
+        # trim off L//2 to avoid the center of patch is to close to image border
+        trimmed_shape = tuple(s - length for s in gaps.shape)
+        # location of lower-left pixel of patch with fewest masked pixels
+        y, x = jnp.unravel_index(
+            jnp.argmax(gaps[length // 2 : -length // 2, length // 2 : -length // 2]), trimmed_shape
+        )
+        img_ = img_[y : y + length, x : x + length]
+
+        # 3) measure correlation function in patch
+        xi = correlation_function(img_, maxlength=2)
+
+        return CorrelatedObservation(
+            obs.data,
+            weights=obs.weights,
+            psf=obs.frame.psf,
+            wcs=obs.frame.wcs,
+            channels=obs.frame.channels,
+            renderer=obs.renderer,
+            correlation_function=xi,
+        )
 
 
 def chi_square_in_box_and_border(residuals, weights, bbox, border_width):
