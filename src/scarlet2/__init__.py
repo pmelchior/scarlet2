@@ -37,7 +37,7 @@ from .morphology import (
     SersicMorphology,
     StarletMorphology,
 )
-from .observation import Observation
+from .observation import CorrelatedObservation, Observation
 from .psf import PSF, ArrayPSF, GaussianPSF
 from .scene import Scene
 from .source import Component, DustComponent, PointSource, Source
@@ -65,6 +65,7 @@ __all__ = [
     "SersicMorphology",
     "StarletMorphology",
     "Observation",
+    "CorrelatedObservation",
     "PSF",
     "ArrayPSF",
     "GaussianPSF",

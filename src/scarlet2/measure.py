@@ -619,3 +619,53 @@ def forced_photometry(scene, obs):
             spectra = spectra.at[nonzero, c].set(covar @ m[nonzero] @ (im * w))
 
     return spectra
+
+
+def correlation_function(img, maxlength=2, threshold=0):
+    """Computes the 2D correlation function of the image.
+
+    Parameters
+    ----------
+    img: :py:class:`numpy.ndarray`
+        Image array, 2D or 3D. Masked pixels must be set to 0 in `img`.
+    maxlength: int
+        Maximum length of the correlation function
+    threshold: float
+        Minimum correlation coefficient to maintain
+
+    Returns
+    -------
+    dict, with keys (dy,dx) specifying the 2D offset in image pixels
+    """
+    xi = dict()
+    n = dict()
+    # expand to image cubes for faster ellipsis
+    img_ = img[None, :, :] if img.ndim == 2 else img
+
+    for y in range(img.shape[-2]):
+        # because the pair count is symmetric (xi[i,j] = x[-i,-j]), we can count only one side
+        for y_ in range(y, min(y + maxlength + 1, img.shape[-2])):
+            for x in range(img.shape[-1]):
+                for x_ in range(x, min(x + maxlength + 1, img.shape[-1])):
+                    pos = (y_ - y, x_ - x)
+                    val = img_[..., y, x] * img_[..., y_, x_]
+                    xi[pos] = xi.get(pos, 0) + val
+                    n[pos] = n.get(pos, 0) + (val != 0)
+    # normalize
+    for k in xi:
+        xi[k] = xi[k] / jnp.maximum(n[k], 1)  # prevent division by 0
+
+    offsets = list(xi.keys())
+    for k in offsets:
+        # filter correlations
+        # Note: possibly safer to set the largest negative correlation (which should not exist) as threshold
+        xi[k] = jnp.maximum(xi[k], threshold)
+        # fill in the symmetric negative offsets
+        dy, dx = k
+        if dy > 0:
+            dy *= -1
+        if dx > 0:
+            dx *= -1
+        xi[dy, dx] = xi[k]
+
+    return xi

@@ -4,6 +4,7 @@ import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
 from .frame import Frame, get_affine
+from .measure import correlation_function
 from .module import Module
 from .renderer import (
     ChannelRenderer,
@@ -34,6 +35,8 @@ class Observation(Module):
     """Metadata to describe what view of the sky `data` amounts to"""
     renderer: (Renderer, eqx.nn.Sequential)
     """Renderer to translate from the model frame the observation frame"""
+    n: int
+    """Number of valid pixels in `data`"""
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
         # TODO: automatic conversion to jnp arrays
@@ -46,6 +49,9 @@ class Observation(Module):
         if self.weights is not None and self.weights.ndim == 2:
             # add a channel dimension if it is missing
             self.weights = self.weights[None, ...]
+
+        # number of unmasked pixels
+        self.n = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
 
         self.frame = Frame(Box(self.data.shape), psf, wcs, channels=channels)
         if renderer is None:
@@ -92,16 +98,12 @@ class Observation(Module):
         return self._log_likelihood(model, self.data)
 
     def _log_likelihood(self, model, data):
-        # rendered model
-        model_ = self.render(model)
-
         # normalization of the single-pixel likelihood:
         # 1 / [(2pi)^1/2 (sigma^2)^1/2]
         # with inverse variance weights: sigma^2 = 1/weight
         # full likelihood is sum over all (unmasked) pixels in data
-        n = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
-        log_norm = n / 2 * jnp.log(2 * jnp.pi)
-        log_like = -jnp.sum(self.weights * (model_ - data) ** 2) / 2
+        log_like = -self._chisquare(model) / 2
+        log_norm = self.n / 2 * jnp.log(2 * jnp.pi)
         return log_like - log_norm
 
     def goodness_of_fit(self, model):
@@ -123,8 +125,10 @@ class Observation(Module):
         float
         """
         # only use unmasked pixels in the data
-        n = jnp.prod(jnp.asarray(self.data.shape)) - jnp.sum(self.weights == 0)
-        return (self.weights * (self.render(model) - self.data) ** 2).sum() / n
+        return self._chisquare(model) / self.n
+
+    def _chisquare(self, model):
+        return jnp.sum(self.weights * (self.render(model) - self.data) ** 2)
 
     def match(self, frame, renderer=None):
         """Construct the mapping between `frame` (from the model) and this observation frame
@@ -209,6 +213,133 @@ class Observation(Module):
             chi_dict[i] = {"in": chi_in, "out": chi_out}
 
         return chi_dict
+
+
+class CorrelatedObservation(Observation):
+    """Content and definition of an observation with pixel correlations
+
+    The noise model is still assumed to be Gaussian, but with correlations between pixels.
+    The implementation computes the goodness of fit in Fourier space from the noise power spectrum to avoid
+    the expensive computation of/with an inverse banded matrix in configuration space.
+    """
+
+    power_spectrum: jnp.ndarray
+    """Noise power spectrum for :py:meth:`log_likelihood`"""
+
+    def __init__(
+        self,
+        data,
+        weights,
+        psf=None,
+        wcs=None,
+        channels=None,
+        renderer=None,
+        power_spectrum=None,
+        correlation_function=None,
+    ):
+        super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer)
+
+        assert power_spectrum is not None or correlation_function is not None, (
+            "Provide either power_spectrum or correlation_function"
+        )
+
+        if power_spectrum is None:
+
+            def noise_kernel(xi):
+                channels = len(xi[0, 0])
+                maxlength = max(max(k) for k in xi)
+                kernel = jnp.zeros((channels, 2 * maxlength + 1, 2 * maxlength + 1))
+                for k in xi:
+                    dy, dx = k
+                    kernel = kernel.at[:, dy + maxlength, dx + maxlength].set(xi[k])
+                return kernel
+
+            def pad_kernel(kernel, shape):
+                pads = ((0, 0),) + tuple(
+                    ((s - l) // 2, (s - l) // 2 + 1)
+                    for s, l in zip(shape[-2:], kernel.shape[-2:], strict=False)  # noqa: E741
+                )
+                kernel_padded = jnp.pad(kernel, pads)
+                return kernel_padded
+
+            def power_spectrum_from(xi, shape):
+                # NOTE: this conversion is not ideal because the correlation function is likely undersampled
+                # Better would be a pure correlated noise field to measure the power spectrum directly
+                kernel = noise_kernel(xi)
+                kernel_padded = pad_kernel(kernel, shape)
+                kernel_fft = jnp.fft.rfft2(kernel_padded, axes=(-2, -1))
+                ps = jnp.abs(kernel_fft)
+                return ps
+
+            power_spectrum = power_spectrum_from(correlation_function, data.shape)
+
+        self.power_spectrum = power_spectrum
+
+    def _chisquare(self, model):
+        # compute chi square in Fourier space
+        # TODO: We could avoid the FFT because the last step of a typical renderer is an inverse FFT.
+        #       The problem is that image shapes in Fourier space are usually padded, so shapes don't match.
+        # normalization sqrt(n/2) added because it's missing in numpy/jax forward fft
+        res_fft = jnp.fft.rfft2(self.render(model) - self.data, axes=(-2, -1)) / jnp.sqrt(self.n / 2)
+        return jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum)
+
+    @classmethod
+    def from_observation(cls, obs, length=50):
+        """Create a :py:class:`CorrelatedObservation` from :py:class:`Observation`
+
+        The method will construct a new Observation instance with a modified likelihood that takes into
+        account the pixel correlation. To do so, it finds a patch of size `L` with as few sources as possible,
+        measures the pixel correlations in that patch, and compute the corresponding 2D power spectrum.
+
+        Parameters
+        ----------
+        obs: :py:class:`Observation`
+            Observation containing the data and original weight map
+        length: int
+            Linear size of the patch.
+            Computing the correlation function is expensive. as the correlations are usually short-range,
+            a small patch is usually sufficient for accurate results and easier to find from empty regions
+            in the image.
+
+        Returns
+        -------
+        :py:class:`CorrelatedObservation`
+        """
+        # compute the pixel correlations in a noisy patch (without correlations from sources)
+
+        # 1) mask pixels with bright pixels
+        img = obs.data[0]
+        mask = img > 3 * jnp.sqrt(1 / obs.weights[0])
+        # extend the mask to remove most of the outskirts of detected galaxies
+        kernel = jnp.ones((9, 9))
+        mask = jax.scipy.signal.correlate2d(mask, kernel, mode="same") > 0
+        img_ = img.at[mask].set(0)
+
+        # 2) find patch of size L with the largest number of unmasked pixels
+        shape = (length, length)
+        kernel = jnp.ones(shape)
+        # correlated with tophat = sliding sum
+        gaps = jax.scipy.signal.correlate2d(mask == 0, kernel, mode="same")
+        # trim off L//2 to avoid the center of patch is to close to image border
+        trimmed_shape = tuple(s - length for s in gaps.shape)
+        # location of lower-left pixel of patch with fewest masked pixels
+        y, x = jnp.unravel_index(
+            jnp.argmax(gaps[length // 2 : -length // 2, length // 2 : -length // 2]), trimmed_shape
+        )
+        img_ = img_[y : y + length, x : x + length]
+
+        # 3) measure correlation function in patch
+        xi = correlation_function(img_, maxlength=2)
+
+        return CorrelatedObservation(
+            obs.data,
+            weights=obs.weights,
+            psf=obs.frame.psf,
+            wcs=obs.frame.wcs,
+            channels=obs.frame.channels,
+            renderer=obs.renderer,
+            correlation_function=xi,
+        )
 
 
 def chi_square_in_box_and_border(residuals, weights, bbox, border_width):
