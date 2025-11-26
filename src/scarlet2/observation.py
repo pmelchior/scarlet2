@@ -34,6 +34,8 @@ class Observation(Module):
     """Metadata to describe what view of the sky `data` amounts to"""
     renderer: (Renderer, eqx.nn.Sequential)
     """Renderer to translate from the model frame the observation frame"""
+    n: int
+    """Number of valid pixels in `data`"""
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
         # TODO: automatic conversion to jnp arrays
@@ -46,6 +48,9 @@ class Observation(Module):
         if self.weights is not None and self.weights.ndim == 2:
             # add a channel dimension if it is missing
             self.weights = self.weights[None, ...]
+
+        # number of unmasked pixels
+        self.n = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
 
         self.frame = Frame(Box(self.data.shape), psf, wcs, channels=channels)
         if renderer is None:
@@ -92,16 +97,12 @@ class Observation(Module):
         return self._log_likelihood(model, self.data)
 
     def _log_likelihood(self, model, data):
-        # rendered model
-        model_ = self.render(model)
-
         # normalization of the single-pixel likelihood:
         # 1 / [(2pi)^1/2 (sigma^2)^1/2]
         # with inverse variance weights: sigma^2 = 1/weight
         # full likelihood is sum over all (unmasked) pixels in data
-        n = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
-        log_norm = n / 2 * jnp.log(2 * jnp.pi)
-        log_like = -jnp.sum(self.weights * (model_ - data) ** 2) / 2
+        log_like = -self._chisquare(model) / 2
+        log_norm = self.n / 2 * jnp.log(2 * jnp.pi)
         return log_like - log_norm
 
     def goodness_of_fit(self, model):
@@ -123,8 +124,10 @@ class Observation(Module):
         float
         """
         # only use unmasked pixels in the data
-        n = jnp.prod(jnp.asarray(self.data.shape)) - jnp.sum(self.weights == 0)
-        return (self.weights * (self.render(model) - self.data) ** 2).sum() / n
+        return self._chisquare(model) / self.n
+
+    def _chisquare(self, model):
+        return jnp.sum(self.weights * (self.render(model) - self.data) ** 2)
 
     def match(self, frame, renderer=None):
         """Construct the mapping between `frame` (from the model) and this observation frame
@@ -271,15 +274,11 @@ class CorrelatedObservation(Observation):
 
         self.power_spectrum = power_spectrum
 
-    def _log_likelihood(self, model, data):
-        # rendered model
-        model_ = self.render(model)
-
-        # compute log_likelihood, without normalization factor
-        res_fft = jnp.fft.rfft2(model_ - data, axes=(-2, -1))
-        log_like = -0.5 * jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum)
-
-        return log_like
+    def _chisquare(self, model):
+        # compute chi square in Fourier space
+        # normalization sqrt(n/2) added because it's missing in numpy/jax forward fft
+        res_fft = jnp.fft.rfft2(self.render(model) - self.data, axes=(-2, -1)) / jnp.sqrt(self.n / 2)
+        return jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum)
 
 
 def chi_square_in_box_and_border(residuals, weights, bbox, border_width):
