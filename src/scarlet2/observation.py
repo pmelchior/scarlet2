@@ -2,13 +2,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from .bbox import Box, overlap_slices
+from .bbox import Box, insert_into, overlap_slices
 from .frame import Frame, get_affine
 from .measure import correlation_function
 from .module import Module
 from .renderer import (
     ChannelRenderer,
     ConvolutionRenderer,
+    LanczosResamplingRenderer,
     NoRenderer,
     Renderer,
     ResamplingRenderer,
@@ -293,7 +294,7 @@ class CorrelatedObservation(Observation):
         return jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum)
 
     @classmethod
-    def from_observation(cls, obs, length=50):
+    def from_observation(cls, obs, patch_size=50, maxlength=2, resample_to_frame=None):
         """Create a :py:class:`CorrelatedObservation` from :py:class:`Observation`
 
         The method will construct a new Observation instance with a modified likelihood that takes into
@@ -304,57 +305,105 @@ class CorrelatedObservation(Observation):
         ----------
         obs: :py:class:`Observation`
             Observation containing the data and original weight map
-        length: int
-            Linear size of the patch.
-            Computing the correlation function is expensive. as the correlations are usually short-range,
-            a small patch is usually sufficient for accurate results and easier to find from empty regions
-            in the image.
+        patch_size: int
+            Linear size of the patch for measuring the correlation function
+        maxlength: int
+            Maximum distance (in pixels) for the 2D correlation function
+        resample_to_frame: None, :py:class:`~scarlet2.Frame`
+            Frame describing the desired spatial sampling
 
         Returns
         -------
         :py:class:`CorrelatedObservation`
         """
-        # compute the pixel correlations in a noisy patch (without correlations from sources)
-        # 1) mask pixels with bright pixels or zero weights
-        img = obs.data
-        mask = obs.weights == 0
-        mask = mask.at[~mask].set(img[~mask] > 3 * jnp.sqrt(1 / obs.weights[~mask]))
-        # extend the mask to remove most of the outskirts of detected galaxies
-        kernel = jnp.ones((9, 9))
-        _correlate2d = lambda x, kernel: jax.scipy.signal.correlate2d(x, kernel, mode="same")
-        correlate3d = jax.vmap(_correlate2d, in_axes=(0, None), out_axes=0)
-        mask = correlate3d(mask, kernel) > 0
-        img_ = img.at[mask].set(0)
+        if resample_to_frame is not None:
+            # create a reverse renderer without PSF corrections or channel filtering
+            _obs_frame = Frame(obs.frame.bbox, psf=None, wcs=obs.frame.wcs, channels=obs.frame.channels)
+            _new_box = obs.frame.bbox[:-2] @ resample_to_frame.bbox.spatial
+            _model_frame = Frame(_new_box, psf=None, wcs=resample_to_frame.wcs, channels=obs.frame.channels)
+            _renderer = LanczosResamplingRenderer(_obs_frame, _model_frame, lanczos_order=9)
+            wcs = resample_to_frame.wcs
 
-        # 2) find patch of size length (at most image size) with the largest number of unmasked pixels
-        length = min(length, min(img.shape[-2:]))
-        shape = (length, length)
-        kernel = jnp.ones(shape)
-        # correlated with tophat = sliding sum
-        gaps = correlate3d(mask == 0, kernel)
+            # resample data
+            data = _renderer(obs.data)
 
-        # location of lower-left pixel of patch with fewest masked pixels
-        def best_patch(img, gaps):
-            # trim off L//2 to avoid the center of patch is to close to image border
-            trimmed_shape = tuple(s - length for s in gaps.shape[-2:])
-            y, x = jnp.unravel_index(
-                jnp.argmax(gaps[length // 2 : -length // 2, length // 2 : -length // 2]), trimmed_shape
-            )
-            return jax.lax.dynamic_slice(img, (y, x), (length, length))
+            # resample PSF: first insert PSF into middle of image with same size of obs
+            psf_image = obs.frame.psf()
+            full_psf_image = jnp.zeros(obs.data.shape)
+            full_box = Box(full_psf_image.shape)
+            shift = tuple(full_psf_image.shape[d] // 2 - psf_image.shape[d] // 2 for d in range(full_box.D))
+            psf_box = Box(psf_image.shape) + shift
+            full_psf_image = insert_into(full_psf_image, psf_image, psf_box)
+            psf = _renderer(full_psf_image)
 
-        img_ = jax.vmap(best_patch, in_axes=(0, 0), out_axes=0)(img_, gaps)
+            # resample mask plane (weights themselves are not needed)
+            mask = jnp.asarray(obs.weights == 0, dtype=jnp.float32)
+            mask = _renderer(mask) > 0  # mask everything with fractional masking
 
-        # 3) measure correlation function in patch
-        xi = correlation_function(img_, maxlength=2)
+            # measure the correlation function:
+            # resample a noise instance from the original weights
+            key = jax.random.key(hash(obs.frame))
+            # TODO: deal with masked regions, where weights = 0
+            noise_field = jax.random.normal(key, shape=obs.data.shape) / jnp.sqrt(obs.weights)
+            noise_field_ = _renderer(noise_field)
+            patch_size = min(patch_size, min(data.shape[-2:]))
+            # TODO: set maxlength to multiple of resampling factor
+            xi = correlation_function(noise_field_[..., :patch_size, :patch_size], maxlength=maxlength)
+
+            # we need a new renderer for this resampled observation
+            # TODO: change calls obs.match(model_frame), e.g. not in Frame.from_observations!
+            renderer = None
+
+        else:
+            # compute the pixel correlations in a noisy patch (without correlations from sources)
+            # 1) mask pixels with bright pixels or zero weights
+            data = obs.data
+            mask = obs.weights == 0
+            mask = mask.at[~mask].set(data[~mask] > 3 * jnp.sqrt(1 / obs.weights[~mask]))
+            # extend the mask to remove most of the outskirts of detected galaxies
+            kernel = jnp.ones((9, 9))
+            _correlate2d = lambda x, kernel: jax.scipy.signal.correlate2d(x, kernel, mode="same")
+            correlate3d = jax.vmap(_correlate2d, in_axes=(0, None), out_axes=0)
+            mask = correlate3d(mask, kernel) > 0
+            img_ = data.at[mask].set(0)
+
+            # 2) find patch of size length (at most image size) with the largest number of unmasked pixels
+            patch_size = min(patch_size, min(data.shape[-2:]))
+            shape = (patch_size, patch_size)
+            kernel = jnp.ones(shape)
+            # correlated with tophat = sliding sum
+            gaps = correlate3d(mask == 0, kernel)
+
+            # location of lower-left pixel of patch with fewest masked pixels
+            def best_patch(img, gaps):
+                # trim off L//2 to avoid the center of patch is to close to image border
+                trimmed_shape = tuple(s - patch_size for s in gaps.shape[-2:])
+                y, x = jnp.unravel_index(
+                    jnp.argmax(gaps[patch_size // 2 : -patch_size // 2, patch_size // 2 : -patch_size // 2]),
+                    trimmed_shape,
+                )
+                return jax.lax.dynamic_slice(img, (y, x), (patch_size, patch_size))
+
+            img_ = jax.vmap(best_patch, in_axes=(0, 0), out_axes=0)(img_, gaps)
+
+            # 3) measure correlation function in patch
+            xi = correlation_function(img_, maxlength=maxlength)
+
+            # define the remaining items
+            psf = obs.frame.psf
+            wcs = obs.frame.wcs
+            renderer = obs.renderer
+            mask = obs.weights == 0
 
         return CorrelatedObservation(
-            obs.data,
-            weights=obs.weights,
-            psf=obs.frame.psf,
-            wcs=obs.frame.wcs,
-            channels=obs.frame.channels,
-            renderer=obs.renderer,
+            data,
+            mask=mask,
+            psf=psf,
+            wcs=wcs,
+            renderer=renderer,
             correlation_function=xi,
+            weights=None,
+            channels=obs.frame.channels,
         )
 
 

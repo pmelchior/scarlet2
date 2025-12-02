@@ -6,7 +6,7 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 
 from .bbox import Box
-from .psf import PSF, GaussianPSF
+from .psf import PSF, ArrayPSF, GaussianPSF
 
 
 class Frame(eqx.Module):
@@ -27,6 +27,8 @@ class Frame(eqx.Module):
 
     def __init__(self, bbox, psf=None, wcs=None, channels=None):
         self.bbox = bbox
+        if isinstance(psf, jnp.ndarray):
+            psf = ArrayPSF(psf)
         self.psf = psf
         if wcs is None:
             wcs = _wcs_default(bbox.spatial.shape)
