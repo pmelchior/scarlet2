@@ -225,6 +225,8 @@ class CorrelatedObservation(Observation):
 
     power_spectrum: jnp.ndarray
     """Noise power spectrum for :py:meth:`log_likelihood`"""
+    mask: jnp.ndarray
+    """Mask for invalid pixels"""
 
     def __init__(
         self,
@@ -236,6 +238,7 @@ class CorrelatedObservation(Observation):
         renderer=None,
         power_spectrum=None,
         correlation_function=None,
+        mask=None,
     ):
         super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer)
 
@@ -275,12 +278,18 @@ class CorrelatedObservation(Observation):
 
         self.power_spectrum = power_spectrum
 
+        self.mask = mask if mask is not None else (self.weights == 0)
+
     def _chisquare(self, model):
+        # compute residuals
+        # need to mask invalid pixel; that's not quite correct because it suppresses the flutuations to below
+        # the level indicated by the powerspectrum, so will bias chi^2 low, but it won't fit garbage
+        res = ~self.mask * (self.render(model) - self.data)
         # compute chi square in Fourier space
         # TODO: We could avoid the FFT because the last step of a typical renderer is an inverse FFT.
         #       The problem is that image shapes in Fourier space are usually padded, so shapes don't match.
         # normalization sqrt(n/2) added because it's missing in numpy/jax forward fft
-        res_fft = jnp.fft.rfft2(self.render(model) - self.data, axes=(-2, -1)) / jnp.sqrt(self.n / 2)
+        res_fft = jnp.fft.rfft2(res, axes=(-2, -1)) / jnp.sqrt(self.n / 2)
         return jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum)
 
     @classmethod
@@ -306,27 +315,34 @@ class CorrelatedObservation(Observation):
         :py:class:`CorrelatedObservation`
         """
         # compute the pixel correlations in a noisy patch (without correlations from sources)
-
-        # 1) mask pixels with bright pixels
-        img = obs.data[0]
-        mask = img > 3 * jnp.sqrt(1 / obs.weights[0])
+        # 1) mask pixels with bright pixels or zero weights
+        img = obs.data
+        mask = obs.weights == 0
+        mask = mask.at[~mask].set(img[~mask] > 3 * jnp.sqrt(1 / obs.weights[~mask]))
         # extend the mask to remove most of the outskirts of detected galaxies
         kernel = jnp.ones((9, 9))
-        mask = jax.scipy.signal.correlate2d(mask, kernel, mode="same") > 0
+        _correlate2d = lambda x, kernel: jax.scipy.signal.correlate2d(x, kernel, mode="same")
+        correlate3d = jax.vmap(_correlate2d, in_axes=(0, None), out_axes=0)
+        mask = correlate3d(mask, kernel) > 0
         img_ = img.at[mask].set(0)
 
-        # 2) find patch of size L with the largest number of unmasked pixels
+        # 2) find patch of size length (at most image size) with the largest number of unmasked pixels
+        length = min(length, min(img.shape[-2:]))
         shape = (length, length)
         kernel = jnp.ones(shape)
         # correlated with tophat = sliding sum
-        gaps = jax.scipy.signal.correlate2d(mask == 0, kernel, mode="same")
-        # trim off L//2 to avoid the center of patch is to close to image border
-        trimmed_shape = tuple(s - length for s in gaps.shape)
+        gaps = correlate3d(mask == 0, kernel)
+
         # location of lower-left pixel of patch with fewest masked pixels
-        y, x = jnp.unravel_index(
-            jnp.argmax(gaps[length // 2 : -length // 2, length // 2 : -length // 2]), trimmed_shape
-        )
-        img_ = img_[y : y + length, x : x + length]
+        def best_patch(img, gaps):
+            # trim off L//2 to avoid the center of patch is to close to image border
+            trimmed_shape = tuple(s - length for s in gaps.shape[-2:])
+            y, x = jnp.unravel_index(
+                jnp.argmax(gaps[length // 2 : -length // 2, length // 2 : -length // 2]), trimmed_shape
+            )
+            return jax.lax.dynamic_slice(img, (y, x), (length, length))
+
+        img_ = jax.vmap(best_patch, in_axes=(0, 0), out_axes=0)(img_, gaps)
 
         # 3) measure correlation function in patch
         xi = correlation_function(img_, maxlength=2)
