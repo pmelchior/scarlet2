@@ -287,9 +287,12 @@ class AsinhAutomaticNorm(AsinhNorm):
             channel_map = channels_to_rgb(observation.frame.C)
 
         im3 = img_to_3channel(observation.data, channel_map=channel_map)
-        var3 = 1 / observation.weights
-        var3 = np.where(np.isfinite(var3), var3, 0)
-        var3 = img_to_3channel(1 / observation.weights, channel_map=channel_map)
+        if hasattr(observation, "power_spectrum"):
+            var3 = observation.power_spectrum[..., 0, 0]
+        else:
+            var3 = 1 / observation.weights
+            var3 = np.where(np.isfinite(var3), var3, 0)
+            var3 = img_to_3channel(var3, channel_map=channel_map)
 
         # total intensity and variance images
         i = self.get_intensity(im3)
