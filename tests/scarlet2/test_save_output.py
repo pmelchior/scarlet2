@@ -10,6 +10,7 @@ import h5py
 import jax
 import jax.numpy as jnp
 from huggingface_hub import hf_hub_download
+
 from scarlet2 import *  # noqa: F403
 from scarlet2 import init
 from scarlet2.bbox import Box
@@ -37,7 +38,8 @@ def test_save_output():
 
     frame_psf = GaussianPSF(0.7)
     model_frame = Frame(Box(data.shape), psf=frame_psf)
-    obs = Observation(data, weights, psf=ArrayPSF(jnp.asarray(psf))).match(model_frame)
+    obs = Observation(data, weights, psf=ArrayPSF(jnp.asarray(psf)))
+    obs.match(model_frame)
 
     with Scene(model_frame) as scene:
         for center in centers:

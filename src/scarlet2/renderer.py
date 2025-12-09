@@ -8,7 +8,7 @@ import jax.numpy as jnp
 
 from .bbox import Box, overlap_slices
 from .fft import _get_fast_shape, _trim, _wrap_hermitian_x, convolve, deconvolve, good_fft_size, transform
-from .frame import _minmax_int, get_affine, get_scale_angle_flip_shift
+from .frame import _minmax_int, get_relative_jacobian_shift, get_scale_angle_flip_shift
 from .interpolation import Interpolant, Lanczos, resample3d, resample_fourier
 
 
@@ -132,6 +132,7 @@ class ConvolutionRenderer(Renderer):
     """
 
     _diff_kernel_fft: jnp.array = eqx.field(repr=False)
+    _fft_shape: jnp.array = eqx.field(repr=False)
 
     def __init__(self, model_frame, obs_frame):
         """Initialize convolution renderer with difference kernel between `model_frame` and `obs_frame`
@@ -148,21 +149,21 @@ class ConvolutionRenderer(Renderer):
         psf_model = jnp.tile(psf, (obs_frame.bbox.shape[0], 1, 1)) if len(psf.shape) == 2 else psf
 
         # make sure fft uses a shape large enough to cover the convolved model
-        fft_shape = _get_fast_shape(model_frame.bbox.shape, psf_model.shape, padding=3, axes=(-2, -1))
+        self._fft_shape = _get_fast_shape(model_frame.bbox.shape, psf_model.shape, padding=3, axes=(-2, -1))
 
         # compute and store diff kernel in Fourier space
         diff_kernel_fft = deconvolve(
             obs_frame.psf(),
             psf_model,
             axes=(-2, -1),
-            fft_shape=fft_shape,
+            fft_shape=self._fft_shape,
             return_fft=True,
         )
         self._diff_kernel_fft = diff_kernel_fft
 
     def __call__(self, model, key=None):
         """What to run when ConvolutionRenderer is called"""
-        return convolve(model, self._diff_kernel_fft, axes=(-2, -1))
+        return convolve(model, self._diff_kernel_fft, axes=(-2, -1), fft_shape=self._fft_shape)
 
 
 class TrimSpatialBox(Renderer):
@@ -234,17 +235,11 @@ class ResamplingRenderer(Renderer):
         # resampling to obs frame, followed by a convolution in obs frame because the difference
         # kernel would be expressed in obs pixel and can thus easily undersample the model PSF.
 
-        # Extract rotation angle, flip, scale between WCSs
-        m_in = get_affine(model_frame.wcs)
-        m_out = get_affine(obs_frame.wcs)
-        self.jacobian = jnp.linalg.inv(m_out) @ m_in  # transformation from model pixel -> sky -> obs pixels
-        # store only for convenience and printing:
+        # store linear transformation and shift
+        self.jacobian, self.shift = get_relative_jacobian_shift(model_frame, obs_frame)
+        # store these properties for convenience and printing
+        # (ignore shift because it doesn't include CRPIX/CRVAL changes)
         self.scale, self.angle, self.handedness, _ = get_scale_angle_flip_shift(self.jacobian)
-        center_model = jnp.array(model_frame.bbox.spatial.center)
-        center_model_in_obs = obs_frame.get_pixel(model_frame.get_sky_coord(center_model))
-        center_obs = jnp.array(obs_frame.bbox.spatial.center)
-        shift = center_obs - center_model_in_obs
-        self.shift = tuple(c.item() for c in shift)  # avoid tracing
 
         # Get maximum of the fft shapes to interpolate on the highest resolved FFT image
         self.real_shape_target = obs_frame.bbox.shape
@@ -350,19 +345,29 @@ class LanczosResamplingRenderer(Renderer):
     """Renderer to resample image to different pixel grid with a Lanczos kernel."""
 
     interpolant: Interpolant
-    coords: jnp.ndarray = eqx.field(repr=False)
-    warp: jnp.ndarray = eqx.field(repr=False)
+    scale: float
+    angle: float
+    handedness: int
+    shift: tuple
+    _coords: jnp.ndarray = eqx.field(repr=False)
+    _warp: jnp.ndarray = eqx.field(repr=False)
     _diff_kernel_fft: jnp.array = eqx.field(repr=False, default=None)
     _fft_shape: int = eqx.field(repr=False, default=None)
 
     def __init__(self, model_frame, obs_frame, lanczos_order=5):
         self.interpolant = Lanczos(lanczos_order)
         model_shape = model_frame.bbox.spatial.shape
-        self.coords = jnp.stack(
+        self._coords = jnp.stack(
             jnp.meshgrid(jnp.arange(model_shape[0]), jnp.arange(model_shape[1])), -1
         ).astype(jnp.float32)  # x/y
         obs_shape = obs_frame.bbox.spatial.shape
-        self.warp = obs_frame.convert_pixel_to(model_frame).reshape(obs_shape[0], obs_shape[1], 2)
+        self._warp = obs_frame.convert_pixel_to(model_frame).reshape(obs_shape[0], obs_shape[1], 2)
+
+        # linear transformation and shift between frames
+        jacobian, self.shift = get_relative_jacobian_shift(model_frame, obs_frame)
+        # store these properties for convenience and printing
+        # (ignore shift because it doesn't include CRPIX/CRVAL changes)
+        self.scale, self.angle, self.handedness, _ = get_scale_angle_flip_shift(jacobian)
 
         if model_frame.psf is not None and model_frame.wcs is not None:
             # construct diff kernel in model_space
@@ -406,13 +411,14 @@ class LanczosResamplingRenderer(Renderer):
                 return_fft=True,
             )
 
-    def __call__(self, model, key=None):
+    def __call__(self, model, key=None, warp=None):
         """What to run when renderer is called"""
-
+        if warp is None:
+            warp = self._warp
         _resample3d = partial(
             resample3d,
-            coords=self.coords,
-            warp=self.warp,
+            coords=self._coords,
+            warp=warp,
             interpolant=self.interpolant,
         )
         if self._diff_kernel_fft is not None:
@@ -422,4 +428,4 @@ class LanczosResamplingRenderer(Renderer):
         else:
             model_ = model
 
-        return _resample3d(model_)
+        return _resample3d(model_) / self.scale**2  # conservation of surface brightness / photons

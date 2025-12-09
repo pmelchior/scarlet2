@@ -144,7 +144,7 @@ class Observation(Module):
 
         Returns
         -------
-        self
+        None
         """
         # choose the renderer
         if renderer is None:
@@ -186,7 +186,6 @@ class Observation(Module):
                 "Renderer does not map model frame to observation frame"
             )
         object.__setattr__(self, "renderer", renderer)
-        return self
 
     def eval_chi_square_in_box_and_border(self, scene, border_width=3):
         """
@@ -294,7 +293,7 @@ class CorrelatedObservation(Observation):
         return jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum)
 
     @classmethod
-    def from_observation(cls, obs, patch_size=50, maxlength=2, resample_to_frame=None):
+    def from_observation(cls, obs, patch_size=50, maxlength=2, resample_to_frame=None, lanczos_order=9):
         """Create a :py:class:`CorrelatedObservation` from :py:class:`Observation`
 
         The method will construct a new Observation instance with a modified likelihood that takes into
@@ -311,6 +310,8 @@ class CorrelatedObservation(Observation):
             Maximum distance (in pixels) for the 2D correlation function
         resample_to_frame: None, :py:class:`~scarlet2.Frame`
             Frame describing the desired spatial sampling
+        lanczos_order: int
+            Lanczos order used by the resampling operation
 
         Returns
         -------
@@ -321,7 +322,7 @@ class CorrelatedObservation(Observation):
             _obs_frame = Frame(obs.frame.bbox, psf=None, wcs=obs.frame.wcs, channels=obs.frame.channels)
             _new_box = obs.frame.bbox[:-2] @ resample_to_frame.bbox.spatial
             _model_frame = Frame(_new_box, psf=None, wcs=resample_to_frame.wcs, channels=obs.frame.channels)
-            _renderer = LanczosResamplingRenderer(_obs_frame, _model_frame, lanczos_order=9)
+            _renderer = LanczosResamplingRenderer(_obs_frame, _model_frame, lanczos_order=lanczos_order)
             wcs = resample_to_frame.wcs
 
             # resample data
@@ -338,7 +339,7 @@ class CorrelatedObservation(Observation):
 
             # resample mask plane (weights themselves are not needed)
             mask = jnp.asarray(obs.weights == 0, dtype=jnp.float32)
-            mask = _renderer(mask) > 0  # mask everything with fractional masking
+            mask = _renderer(mask) > 0.3  # edge of mask gets blurry, include fractional masking
 
             # measure the correlation function:
             # resample a noise instance from the original weights
@@ -351,7 +352,6 @@ class CorrelatedObservation(Observation):
             xi = correlation_function(noise_field_[..., :patch_size, :patch_size], maxlength=maxlength)
 
             # we need a new renderer for this resampled observation
-            # TODO: change calls obs.match(model_frame), e.g. not in Frame.from_observations!
             renderer = None
 
         else:
