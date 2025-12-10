@@ -24,15 +24,6 @@ class Renderer(eqx.Module):
         raise NotImplementedError
 
 
-class NoRenderer(Renderer):
-    """Inactive renderer that does not change the model"""
-
-    def __call__(self, model, key=None):
-        """Just return the model as is"""
-        return model
-
-
-#
 class HashableSlice(eqx.Module):
     """A slice version that is hashable (for python < 3.12)"""
 

@@ -796,6 +796,7 @@ def sources(
             panel += 1
 
         if show_rendered or show_observed:
+            observation.check_set_renderer(scene.frame)
             if add_labels:
                 center_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
             if add_boxes:
@@ -941,6 +942,7 @@ def scene(
 
     model = scene()
     if show_rendered or show_residual:
+        observation.check_set_renderer(scene.frame)
         model_rendered = observation.render(model)
     if show_model and observation is not None:
         c = ChannelRenderer(scene.frame, observation.frame)

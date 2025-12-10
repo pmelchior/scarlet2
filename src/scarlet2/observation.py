@@ -10,7 +10,6 @@ from .renderer import (
     ChannelRenderer,
     ConvolutionRenderer,
     LanczosResamplingRenderer,
-    NoRenderer,
     Renderer,
     ResamplingRenderer,
     TrimSpatialBox,
@@ -34,7 +33,7 @@ class Observation(Module):
     """Statistical weights (usually inverse variance) for :py:meth:`log_likelihood`"""
     frame: Frame
     """Metadata to describe what view of the sky `data` amounts to"""
-    renderer: (Renderer, eqx.nn.Sequential)
+    renderer: (None, Renderer, eqx.nn.Sequential)
     """Renderer to translate from the model frame the observation frame"""
     n: int
     """Number of valid pixels in `data`"""
@@ -55,8 +54,6 @@ class Observation(Module):
         self.n = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
 
         self.frame = Frame(Box(self.data.shape), psf, wcs, channels=channels)
-        if renderer is None:
-            renderer = NoRenderer()
         self.renderer = renderer
 
         # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
@@ -81,6 +78,9 @@ class Observation(Module):
         array
             Prediction of the observation given the `model`. Has the same shape as :py:attr:`data`.
         """
+        assert self.renderer is not None, (
+            "Observation requires a renderer. Call Observation.match(model_frame) first"
+        )
         return self.renderer(model)
 
     def log_likelihood(self, model):
@@ -131,6 +131,21 @@ class Observation(Module):
     def _chisquare(self, model):
         return jnp.sum(self.weights * (self.render(model) - self.data) ** 2)
 
+    def check_set_renderer(self, frame):
+        """Check existence of :py:attr:`renderer`, or set it by calling :py:meth:`match`
+
+        Parameters
+        ----------
+        frame: Frame
+            The frame to match
+
+        Returns
+        -------
+        None
+        """
+        if self.renderer is None:
+            self.match(frame)
+
     def match(self, frame, renderer=None):
         """Construct the mapping between `frame` (from the model) and this observation frame
 
@@ -174,7 +189,7 @@ class Observation(Module):
                 renderers.append(ResamplingRenderer(frame, self.frame))
 
             if len(renderers) == 0:
-                renderer = NoRenderer()
+                renderer = lambda x, key=None: x
             elif len(renderers) == 1:
                 renderer = renderers[0]
             else:
