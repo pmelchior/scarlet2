@@ -782,6 +782,9 @@ def sources(
         panel = 0
         model = src()
         if show_model:
+            if observation is not None:
+                c = ChannelRenderer(scene.frame, observation.frame)
+                model = c(model)
             # Show the unrendered model in it's bbox
             extent = src.bbox.get_extent()
             ax[k][panel].imshow(
