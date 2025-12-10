@@ -17,7 +17,7 @@ from scarlet2.bbox import Box
 from scarlet2.frame import Frame
 from scarlet2.io import model_from_h5, model_to_h5
 from scarlet2.observation import Observation
-from scarlet2.psf import ArrayPSF, GaussianPSF
+from scarlet2.psf import GaussianPSF
 from scarlet2.scene import Scene
 from scarlet2.source import Source
 from scarlet2.validation_utils import set_validation
@@ -38,8 +38,7 @@ def test_save_output():
 
     frame_psf = GaussianPSF(0.7)
     model_frame = Frame(Box(data.shape), psf=frame_psf)
-    obs = Observation(data, weights, psf=ArrayPSF(jnp.asarray(psf)))
-    obs.match(model_frame)
+    obs = Observation(data, weights, psf=psf)
 
     with Scene(model_frame) as scene:
         for center in centers:
