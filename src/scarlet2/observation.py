@@ -231,7 +231,6 @@ class CorrelatedObservation(Observation):
     def __init__(
         self,
         data,
-        weights,
         psf=None,
         wcs=None,
         channels=None,
@@ -240,8 +239,6 @@ class CorrelatedObservation(Observation):
         correlation_function=None,
         mask=None,
     ):
-        super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer)
-
         assert power_spectrum is not None or correlation_function is not None, (
             "Provide either power_spectrum or correlation_function"
         )
@@ -259,7 +256,7 @@ class CorrelatedObservation(Observation):
 
             def pad_kernel(kernel, shape):
                 pads = ((0, 0),) + tuple(
-                    ((s - l) // 2, (s - l) // 2 + 1)
+                    ((s - l) // 2, (s - l) // 2 + (1 if (s - l) % 2 == 1 else 0))
                     for s, l in zip(shape[-2:], kernel.shape[-2:], strict=False)  # noqa: E741
                 )
                 kernel_padded = jnp.pad(kernel, pads)
@@ -277,8 +274,10 @@ class CorrelatedObservation(Observation):
             power_spectrum = power_spectrum_from(correlation_function, data.shape)
 
         self.power_spectrum = power_spectrum
-
         self.mask = mask if mask is not None else (self.weights == 0)
+        # weights ignore pixel covariance: per-pixel variance only
+        weights = jnp.ones(data.shape) / self.power_spectrum[:, 0, 0][:, None, None] * ~self.mask
+        super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer)
 
     def _chisquare(self, model):
         # compute residuals
@@ -402,7 +401,6 @@ class CorrelatedObservation(Observation):
             wcs=wcs,
             renderer=renderer,
             correlation_function=xi,
-            weights=None,
             channels=obs.frame.channels,
         )
 
