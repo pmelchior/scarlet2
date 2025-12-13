@@ -468,7 +468,7 @@ def observation(
             data = observation.data
             # Mask any pixels with zero weight in all channels
             mask = np.sum(observation.weights, axis=0) == 0
-            name = "".join(observation.frame.channels)
+            name = observation.name if hasattr(observation, "name") else ""
             if show_psf:
                 psf = psf_model
                 # make PSF as bright as the brightest pixel of the observation
@@ -827,7 +827,7 @@ def sources(
             panel += 1
 
         if show_observed:
-            name = "".join(observation.frame.channels)
+            name = observation.name if hasattr(observation, "name") else ""
             # Center the observation on the source and display it
             ax[k][panel].imshow(
                 img_to_rgb(observation.data, norm=norm, channel_map=channel_map),
@@ -961,8 +961,7 @@ def scene(
             channel_map = None
         else:
             sel = slice(None)
-            name = "".join(observation.frame.channels)
-
+            name = observation.name if hasattr(observation, "name") else ""
         panel = 0
         if show_model:
             extent = scene.frame.bbox.get_extent()

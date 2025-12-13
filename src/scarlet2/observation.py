@@ -37,8 +37,10 @@ class Observation(Module):
     """Renderer to translate from the model frame the observation frame"""
     n: int
     """Number of valid pixels in `data`"""
+    name: str
+    """Name to describe the observation"""
 
-    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
+    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None, name=None):
         # TODO: automatic conversion to jnp arrays
         self.data = data
         if self.data.ndim == 2:
@@ -55,6 +57,7 @@ class Observation(Module):
 
         self.frame = Frame(Box(self.data.shape), psf, wcs, channels=channels)
         self.renderer = renderer
+        self.name = name if name is not None else ""
 
         # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
         from .validation_utils import VALIDATION_SWITCH
@@ -250,6 +253,7 @@ class CorrelatedObservation(Observation):
         wcs=None,
         channels=None,
         renderer=None,
+        name="",
         power_spectrum=None,
         correlation_function=None,
         mask=None,
@@ -292,7 +296,7 @@ class CorrelatedObservation(Observation):
         self.mask = mask if mask is not None else (self.weights == 0)
         # weights ignore pixel covariance: per-pixel variance only
         weights = jnp.ones(data.shape) / self.power_spectrum[:, 0, 0][:, None, None] * ~self.mask
-        super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer)
+        super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer, name=name)
 
     def _chisquare(self, model):
         # compute residuals
@@ -417,6 +421,7 @@ class CorrelatedObservation(Observation):
             renderer=renderer,
             correlation_function=xi,
             channels=obs.frame.channels,
+            name=obs.name,
         )
 
 
