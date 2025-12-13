@@ -162,6 +162,8 @@ class Scene(Module):
         # making sure we can iterate
         if not isinstance(observations, (list, tuple)):
             observations = (observations,)
+        for obs in observations:
+            obs.check_set_renderer(self.frame)
 
         # helper class to turn observation likelihood(s) into numpyro distribution
         class ObsDistribution(dist.Distribution):
@@ -283,6 +285,8 @@ class Scene(Module):
         # making sure we can iterate
         if not isinstance(observations, (list, tuple)):
             observations = (observations,)
+        for obs in observations:
+            obs.check_set_renderer(self.frame)
         assert isinstance(parameters, Parameters)
 
         # make a stepsize tree

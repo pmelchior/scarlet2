@@ -641,26 +641,21 @@ def correlation_function(img, maxlength=2, threshold=0):
     n = dict()
     # expand to image cubes for faster ellipsis
     img_ = img[None, :, :] if img.ndim == 2 else img
+    height, width = img_.shape[-2:]
+    for dy in range(maxlength + 1):
+        for dx in range(maxlength + 1):
+            overlap = img_[..., dy:, dx:] * img_[..., : height - dy, : width - dx]
+            xi[dy, dx] = jnp.sum(overlap, axis=(-2, -1))
+            n[dy, dx] = jnp.sum(overlap != 0, axis=(-2, -1))
 
-    for y in range(img.shape[-2]):
-        # because the pair count is symmetric (xi[i,j] = x[-i,-j]), we can count only one side
-        for y_ in range(y, min(y + maxlength + 1, img.shape[-2])):
-            for x in range(img.shape[-1]):
-                for x_ in range(x, min(x + maxlength + 1, img.shape[-1])):
-                    pos = (y_ - y, x_ - x)
-                    val = img_[..., y, x] * img_[..., y_, x_]
-                    xi[pos] = xi.get(pos, 0) + val
-                    n[pos] = n.get(pos, 0) + (val != 0)
-    # normalize
+    # normalize and filter correlations below threshold
+    # Note: possibly safer to set the largest negative correlation (which should not exist) as threshold
     for k in xi:
-        xi[k] = xi[k] / jnp.maximum(n[k], 1)  # prevent division by 0
+        xi[k] = jnp.maximum(xi[k] / jnp.maximum(n[k], 1), threshold)  # prevent division by 0
 
+    # fill in the symmetric negative offsets
     offsets = list(xi.keys())
     for k in offsets:
-        # filter correlations
-        # Note: possibly safer to set the largest negative correlation (which should not exist) as threshold
-        xi[k] = jnp.maximum(xi[k], threshold)
-        # fill in the symmetric negative offsets
         dy, dx = k
         if dy > 0:
             dy *= -1

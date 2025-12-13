@@ -6,7 +6,7 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 
 from .bbox import Box
-from .psf import PSF, GaussianPSF
+from .psf import PSF, ArrayPSF, GaussianPSF
 
 
 class Frame(eqx.Module):
@@ -27,6 +27,8 @@ class Frame(eqx.Module):
 
     def __init__(self, bbox, psf=None, wcs=None, channels=None):
         self.bbox = bbox
+        if isinstance(psf, jnp.ndarray):
+            psf = ArrayPSF(psf)
         self.psf = psf
         if wcs is None:
             wcs = _wcs_default(bbox.spatial.shape)
@@ -152,7 +154,7 @@ class Frame(eqx.Module):
         return distance
 
     @staticmethod
-    def from_observations(observations, model_psf=None, model_wcs=None, obs_id=None, coverage="union"):
+    def from_observations(observations, model_psf=None, model_wcs=None, reference_id=None, coverage="union"):
         """Generates a suitable model frame for a set of observations.
 
         This method generates a frame from a set of observations by identifying the highest resolution
@@ -169,7 +171,7 @@ class Frame(eqx.Module):
         model_wcs: :py:class:`astropy.wcs.WCS`
             WCS for the model frame. If None, uses WCS information of the
             observation with the smallest pixels.
-        obs_id: int, optional
+        reference_id: int, optional
             index of the reference observation.
             If set to None, uses the observation with the smallest pixels.
         coverage: "union" or "intersection"
@@ -203,19 +205,19 @@ class Frame(eqx.Module):
                 psf_size = get_psf_size(psf_channel) * h_temp
                 if (
                     model_psf is None
-                    and ((obs_id is None) or (c == obs_id))
+                    and ((reference_id is None) or (c == reference_id))
                     and ((small_psf_size is None) or (psf_size < small_psf_size))
                 ):
                     small_psf_size = psf_size
 
         # Find a reference observation. Either provided by obs_id or as the
         # observation with the smallest pixel
-        if obs_id is None:
+        if reference_id is None:
             p = jnp.array(pix_tab)
             obs_ref = observations[jnp.where(p == p.min())[0][0]]
         else:
             # Frame defined from obs_id
-            obs_ref = observations[obs_id]
+            obs_ref = observations[reference_id]
 
         # Reference wcs
         if model_wcs is None:
@@ -261,10 +263,6 @@ class Frame(eqx.Module):
         # frame_origin = (0,) + model_box.origin
         frame_shape = (len(channels),) + model_box.shape
         model_frame = Frame(Box(shape=frame_shape), channels=channels, psf=model_psf, wcs=model_wcs)
-
-        # Match observations to this frame
-        for obs in observations:
-            obs.match(model_frame)
 
         return model_frame
 
@@ -427,6 +425,40 @@ def get_scale_angle_flip_shift(trans):
     angle = jnp.arctan2(m_[1, 0], m_[0, 0]).item()
 
     return scale, angle, flip, shift
+
+
+def get_relative_jacobian_shift(model_frame, obs_frame):
+    """Return the linear transformation matrix and shift between two frame WCSs
+
+    Parameters
+    ----------
+    model_frame: `~scarlet2.Frame`
+        The frame that defines the origin of the transformation
+    obs_frame: `~scarlet2.Frame`
+        The frame that defines the target of the transformation
+
+    Returns
+    -------
+    jacobian: jnp.ndarray
+        2x2 Jacobian matrix
+    shift: tuple
+        2D shift of the center of the frames
+
+    """
+    # Extract rotation angle, flip, scale between WCSs
+    m_in = get_affine(model_frame.wcs)
+    m_out = get_affine(obs_frame.wcs)
+    jacobian = jnp.linalg.inv(m_out) @ m_in  # transformation from model pixel -> sky -> obs pixels
+
+    # shift can be defined by the extended 3x3 Jacobian of the affine transformation matrix,
+    # but it would ignore CRPIX/CRVAL difference between frmes
+    # so we define it from the shift of the center of the two frames
+    center_model = jnp.array(model_frame.bbox.spatial.center)
+    center_model_in_obs = obs_frame.get_pixel(model_frame.get_sky_coord(center_model))
+    center_obs = jnp.array(obs_frame.bbox.spatial.center)
+    shift = center_obs - center_model_in_obs
+    shift = tuple(c.item() for c in shift)  # avoid tracing
+    return jacobian, shift
 
 
 def get_pixel_size(wcs):

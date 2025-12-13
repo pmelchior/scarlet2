@@ -2,14 +2,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from .bbox import Box, overlap_slices
+from .bbox import Box, insert_into, overlap_slices
 from .frame import Frame, get_affine
 from .measure import correlation_function
 from .module import Module
 from .renderer import (
     ChannelRenderer,
     ConvolutionRenderer,
-    NoRenderer,
+    LanczosResamplingRenderer,
     Renderer,
     ResamplingRenderer,
     TrimSpatialBox,
@@ -33,12 +33,14 @@ class Observation(Module):
     """Statistical weights (usually inverse variance) for :py:meth:`log_likelihood`"""
     frame: Frame
     """Metadata to describe what view of the sky `data` amounts to"""
-    renderer: (Renderer, eqx.nn.Sequential)
+    renderer: (None, Renderer, eqx.nn.Sequential)
     """Renderer to translate from the model frame the observation frame"""
     n: int
     """Number of valid pixels in `data`"""
+    name: str
+    """Name to describe the observation"""
 
-    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
+    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None, name=None):
         # TODO: automatic conversion to jnp arrays
         self.data = data
         if self.data.ndim == 2:
@@ -54,9 +56,8 @@ class Observation(Module):
         self.n = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
 
         self.frame = Frame(Box(self.data.shape), psf, wcs, channels=channels)
-        if renderer is None:
-            renderer = NoRenderer()
         self.renderer = renderer
+        self.name = name if name is not None else ""
 
         # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
         from .validation_utils import VALIDATION_SWITCH
@@ -80,6 +81,9 @@ class Observation(Module):
         array
             Prediction of the observation given the `model`. Has the same shape as :py:attr:`data`.
         """
+        assert self.renderer is not None, (
+            "Observation requires a renderer. Call Observation.match(model_frame) first"
+        )
         return self.renderer(model)
 
     def log_likelihood(self, model):
@@ -130,6 +134,21 @@ class Observation(Module):
     def _chisquare(self, model):
         return jnp.sum(self.weights * (self.render(model) - self.data) ** 2)
 
+    def check_set_renderer(self, frame):
+        """Check existence of :py:attr:`renderer`, or set it by calling :py:meth:`match`
+
+        Parameters
+        ----------
+        frame: Frame
+            The frame to match
+
+        Returns
+        -------
+        None
+        """
+        if self.renderer is None:
+            self.match(frame)
+
     def match(self, frame, renderer=None):
         """Construct the mapping between `frame` (from the model) and this observation frame
 
@@ -143,7 +162,7 @@ class Observation(Module):
 
         Returns
         -------
-        self
+        None
         """
         # choose the renderer
         if renderer is None:
@@ -173,7 +192,7 @@ class Observation(Module):
                 renderers.append(ResamplingRenderer(frame, self.frame))
 
             if len(renderers) == 0:
-                renderer = NoRenderer()
+                renderer = lambda x, key=None: x
             elif len(renderers) == 1:
                 renderer = renderers[0]
             else:
@@ -185,7 +204,6 @@ class Observation(Module):
                 "Renderer does not map model frame to observation frame"
             )
         object.__setattr__(self, "renderer", renderer)
-        return self
 
     def eval_chi_square_in_box_and_border(self, scene, border_width=3):
         """
@@ -225,20 +243,21 @@ class CorrelatedObservation(Observation):
 
     power_spectrum: jnp.ndarray
     """Noise power spectrum for :py:meth:`log_likelihood`"""
+    mask: jnp.ndarray
+    """Mask for invalid pixels"""
 
     def __init__(
         self,
         data,
-        weights,
         psf=None,
         wcs=None,
         channels=None,
         renderer=None,
+        name="",
         power_spectrum=None,
         correlation_function=None,
+        mask=None,
     ):
-        super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer)
-
         assert power_spectrum is not None or correlation_function is not None, (
             "Provide either power_spectrum or correlation_function"
         )
@@ -256,7 +275,7 @@ class CorrelatedObservation(Observation):
 
             def pad_kernel(kernel, shape):
                 pads = ((0, 0),) + tuple(
-                    ((s - l) // 2, (s - l) // 2 + 1)
+                    ((s - l) // 2, (s - l) // 2 + (1 if (s - l) % 2 == 1 else 0))
                     for s, l in zip(shape[-2:], kernel.shape[-2:], strict=False)  # noqa: E741
                 )
                 kernel_padded = jnp.pad(kernel, pads)
@@ -274,17 +293,25 @@ class CorrelatedObservation(Observation):
             power_spectrum = power_spectrum_from(correlation_function, data.shape)
 
         self.power_spectrum = power_spectrum
+        self.mask = mask if mask is not None else (self.weights == 0)
+        # weights ignore pixel covariance: per-pixel variance only
+        weights = jnp.ones(data.shape) / self.power_spectrum[:, 0, 0][:, None, None] * ~self.mask
+        super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer, name=name)
 
     def _chisquare(self, model):
+        # compute residuals
+        # need to mask invalid pixel; that's not quite correct because it suppresses the flutuations to below
+        # the level indicated by the powerspectrum, so will bias chi^2 low, but it won't fit garbage
+        res = ~self.mask * (self.render(model) - self.data)
         # compute chi square in Fourier space
         # TODO: We could avoid the FFT because the last step of a typical renderer is an inverse FFT.
         #       The problem is that image shapes in Fourier space are usually padded, so shapes don't match.
         # normalization sqrt(n/2) added because it's missing in numpy/jax forward fft
-        res_fft = jnp.fft.rfft2(self.render(model) - self.data, axes=(-2, -1)) / jnp.sqrt(self.n / 2)
+        res_fft = jnp.fft.rfft2(res, axes=(-2, -1)) / jnp.sqrt(self.n / 2)
         return jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum)
 
     @classmethod
-    def from_observation(cls, obs, length=50):
+    def from_observation(cls, obs, patch_size=50, maxlength=2, resample_to_frame=None, lanczos_order=9):
         """Create a :py:class:`CorrelatedObservation` from :py:class:`Observation`
 
         The method will construct a new Observation instance with a modified likelihood that takes into
@@ -295,50 +322,106 @@ class CorrelatedObservation(Observation):
         ----------
         obs: :py:class:`Observation`
             Observation containing the data and original weight map
-        length: int
-            Linear size of the patch.
-            Computing the correlation function is expensive. as the correlations are usually short-range,
-            a small patch is usually sufficient for accurate results and easier to find from empty regions
-            in the image.
+        patch_size: int
+            Linear size of the patch for measuring the correlation function
+        maxlength: int
+            Maximum distance (in pixels) for the 2D correlation function
+        resample_to_frame: None, :py:class:`~scarlet2.Frame`
+            Frame describing the desired spatial sampling
+        lanczos_order: int
+            Lanczos order used by the resampling operation
 
         Returns
         -------
         :py:class:`CorrelatedObservation`
         """
-        # compute the pixel correlations in a noisy patch (without correlations from sources)
+        if resample_to_frame is not None:
+            # create a reverse renderer without PSF corrections or channel filtering
+            _obs_frame = Frame(obs.frame.bbox, psf=None, wcs=obs.frame.wcs, channels=obs.frame.channels)
+            _new_box = obs.frame.bbox[:-2] @ resample_to_frame.bbox.spatial
+            _model_frame = Frame(_new_box, psf=None, wcs=resample_to_frame.wcs, channels=obs.frame.channels)
+            _renderer = LanczosResamplingRenderer(_obs_frame, _model_frame, lanczos_order=lanczos_order)
+            wcs = resample_to_frame.wcs
 
-        # 1) mask pixels with bright pixels
-        img = obs.data[0]
-        mask = img > 3 * jnp.sqrt(1 / obs.weights[0])
-        # extend the mask to remove most of the outskirts of detected galaxies
-        kernel = jnp.ones((9, 9))
-        mask = jax.scipy.signal.correlate2d(mask, kernel, mode="same") > 0
-        img_ = img.at[mask].set(0)
+            # resample data
+            data = _renderer(obs.data)
 
-        # 2) find patch of size L with the largest number of unmasked pixels
-        shape = (length, length)
-        kernel = jnp.ones(shape)
-        # correlated with tophat = sliding sum
-        gaps = jax.scipy.signal.correlate2d(mask == 0, kernel, mode="same")
-        # trim off L//2 to avoid the center of patch is to close to image border
-        trimmed_shape = tuple(s - length for s in gaps.shape)
-        # location of lower-left pixel of patch with fewest masked pixels
-        y, x = jnp.unravel_index(
-            jnp.argmax(gaps[length // 2 : -length // 2, length // 2 : -length // 2]), trimmed_shape
-        )
-        img_ = img_[y : y + length, x : x + length]
+            # resample PSF: first insert PSF into middle of image with same size of obs
+            psf_image = obs.frame.psf()
+            full_psf_image = jnp.zeros(obs.data.shape)
+            full_box = Box(full_psf_image.shape)
+            shift = tuple(full_psf_image.shape[d] // 2 - psf_image.shape[d] // 2 for d in range(full_box.D))
+            psf_box = Box(psf_image.shape) + shift
+            full_psf_image = insert_into(full_psf_image, psf_image, psf_box)
+            psf = _renderer(full_psf_image)
 
-        # 3) measure correlation function in patch
-        xi = correlation_function(img_, maxlength=2)
+            # resample mask plane (weights themselves are not needed)
+            mask = jnp.asarray(obs.weights == 0, dtype=jnp.float32)
+            mask = _renderer(mask) > 0.3  # edge of mask gets blurry, include fractional masking
+
+            # measure the correlation function:
+            # resample a noise instance from the original weights
+            key = jax.random.key(hash(obs.frame))
+            # TODO: deal with masked regions, where weights = 0
+            noise_field = jax.random.normal(key, shape=obs.data.shape) / jnp.sqrt(obs.weights)
+            noise_field_ = _renderer(noise_field)
+            patch_size = min(patch_size, min(data.shape[-2:]))
+            # TODO: set maxlength to multiple of resampling factor
+            xi = correlation_function(noise_field_[..., :patch_size, :patch_size], maxlength=maxlength)
+
+            # we need a new renderer for this resampled observation
+            renderer = None
+
+        else:
+            # compute the pixel correlations in a noisy patch (without correlations from sources)
+            # 1) mask pixels with bright pixels or zero weights
+            data = obs.data
+            mask = obs.weights == 0
+            mask = mask.at[~mask].set(data[~mask] > 3 * jnp.sqrt(1 / obs.weights[~mask]))
+            # extend the mask to remove most of the outskirts of detected galaxies
+            kernel = jnp.ones((9, 9))
+            _correlate2d = lambda x, kernel: jax.scipy.signal.correlate2d(x, kernel, mode="same")
+            correlate3d = jax.vmap(_correlate2d, in_axes=(0, None), out_axes=0)
+            mask = correlate3d(mask, kernel) > 0
+            img_ = data.at[mask].set(0)
+
+            # 2) find patch of size length (at most image size) with the largest number of unmasked pixels
+            patch_size = min(patch_size, min(data.shape[-2:]))
+            shape = (patch_size, patch_size)
+            kernel = jnp.ones(shape)
+            # correlated with tophat = sliding sum
+            gaps = correlate3d(mask == 0, kernel)
+
+            # location of lower-left pixel of patch with fewest masked pixels
+            def best_patch(img, gaps):
+                # trim off L//2 to avoid the center of patch is to close to image border
+                trimmed_shape = tuple(s - patch_size for s in gaps.shape[-2:])
+                y, x = jnp.unravel_index(
+                    jnp.argmax(gaps[patch_size // 2 : -patch_size // 2, patch_size // 2 : -patch_size // 2]),
+                    trimmed_shape,
+                )
+                return jax.lax.dynamic_slice(img, (y, x), (patch_size, patch_size))
+
+            img_ = jax.vmap(best_patch, in_axes=(0, 0), out_axes=0)(img_, gaps)
+
+            # 3) measure correlation function in patch
+            xi = correlation_function(img_, maxlength=maxlength)
+
+            # define the remaining items
+            psf = obs.frame.psf
+            wcs = obs.frame.wcs
+            renderer = obs.renderer
+            mask = obs.weights == 0
 
         return CorrelatedObservation(
-            obs.data,
-            weights=obs.weights,
-            psf=obs.frame.psf,
-            wcs=obs.frame.wcs,
-            channels=obs.frame.channels,
-            renderer=obs.renderer,
+            data,
+            mask=mask,
+            psf=psf,
+            wcs=wcs,
+            renderer=renderer,
             correlation_function=xi,
+            channels=obs.frame.channels,
+            name=obs.name,
         )
 
 
