@@ -5,6 +5,7 @@
 # ruff: noqa: D106
 
 """Neural network priors"""
+
 from functools import partial
 
 try:
@@ -36,9 +37,9 @@ def pad_fwd(x, model_shape):
     pad: tuple
         padding amount in every dimension
     """
-    assert all(
-        model_shape[d] >= x.shape[d] for d in range(x.ndim)
-    ), "Model size must be larger than data size"
+    assert all(model_shape[d] >= x.shape[d] for d in range(x.ndim)), (
+        "Model size must be larger than data size"
+    )
     if model_shape == x.shape:
         pad = 0
         return x, pad

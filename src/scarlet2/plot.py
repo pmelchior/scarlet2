@@ -289,7 +289,7 @@ class AsinhAutomaticNorm(AsinhNorm):
         im3 = img_to_3channel(observation.data, channel_map=channel_map)
         var3 = 1 / observation.weights
         var3 = np.where(np.isfinite(var3), var3, 0)
-        var3 = img_to_3channel(1 / observation.weights, channel_map=channel_map)
+        var3 = img_to_3channel(var3, channel_map=channel_map)
 
         # total intensity and variance images
         i = self.get_intensity(im3)
@@ -468,7 +468,7 @@ def observation(
             data = observation.data
             # Mask any pixels with zero weight in all channels
             mask = np.sum(observation.weights, axis=0) == 0
-            name = "".join(observation.frame.channels)
+            name = observation.name if hasattr(observation, "name") else ""
             if show_psf:
                 psf = psf_model
                 # make PSF as bright as the brightest pixel of the observation
@@ -782,6 +782,9 @@ def sources(
         panel = 0
         model = src()
         if show_model:
+            if observation is not None:
+                c = ChannelRenderer(scene.frame, observation.frame)
+                model = c(model)
             # Show the unrendered model in it's bbox
             extent = src.bbox.get_extent()
             ax[k][panel].imshow(
@@ -796,6 +799,7 @@ def sources(
             panel += 1
 
         if show_rendered or show_observed:
+            observation.check_set_renderer(scene.frame)
             if add_labels:
                 center_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
             if add_boxes:
@@ -823,7 +827,7 @@ def sources(
             panel += 1
 
         if show_observed:
-            name = "".join(observation.frame.channels)
+            name = observation.name if hasattr(observation, "name") else ""
             # Center the observation on the source and display it
             ax[k][panel].imshow(
                 img_to_rgb(observation.data, norm=norm, channel_map=channel_map),
@@ -941,6 +945,7 @@ def scene(
 
     model = scene()
     if show_rendered or show_residual:
+        observation.check_set_renderer(scene.frame)
         model_rendered = observation.render(model)
     if show_model and observation is not None:
         c = ChannelRenderer(scene.frame, observation.frame)
@@ -956,8 +961,7 @@ def scene(
             channel_map = None
         else:
             sel = slice(None)
-            name = "".join(observation.frame.channels)
-
+            name = observation.name if hasattr(observation, "name") else ""
         panel = 0
         if show_model:
             extent = scene.frame.bbox.get_extent()
