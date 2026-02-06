@@ -11,7 +11,6 @@ from astropy.coordinates import SkyCoord
 from . import Parameterization
 from .validation_utils import (
     ValidationError,
-    ValidationInfo,
     ValidationMethodCollector,
     ValidationResult,
     print_validation_results,
@@ -93,7 +92,7 @@ class Module(eqx.Module):
 class Parameter:
     """Class representing a single optimizable parameter"""
 
-    def __init__(self, node, name=None, constraint=None, prior=None, stepsize=0):
+    def __init__(self, node, name=None, constraint=None, prior=None, stepsize=None):
         """Definition of optimizable parameter
 
         Parameters
@@ -131,6 +130,14 @@ class Parameter:
             raise AttributeError(f"Cannot set prior and constraint on the same parameter {self.name}!")
 
         self.constraint = constraint
+        if self.constraint is not None:
+            try:
+                from numpyro.distributions.transforms import biject_to
+            except ImportError as err:
+                raise ImportError("scarlet2.Parameter requires numpyro.") from err
+            # transformation to unconstrained parameters
+            self.constraint_transform = biject_to(self.constraint)
+
         self.prior = prior
         self.stepsize = stepsize
 
@@ -143,26 +150,6 @@ class Parameter:
             msg += "Use 'with Parameters(scene) as p: Parameter(...)'"
             logging.warn(msg)
             pass
-
-    def apply_constraint(self):
-        """Transform the value of the parameter to the unconstrained region"""
-
-        # TODO: What is this thing doing???
-        # It doesn't modify in place and it does not return
-        if self.constraint is not None:
-            try:
-                from numpyro.distributions.transforms import biject_to
-            except ImportError as err:
-                raise ImportError("scarlet2.Parameter requires numpyro.") from err
-            # transformation to unconstrained parameters
-            self.constraint_transform = biject_to(self.constraint)
-
-            # check if parameter is valid under transform
-            unconstrained = self.constraint_transform.inv(self.node)
-            if not jnp.isfinite(unconstrained).all():
-                raise ValueError(
-                    f"Parameter {self.name} has infeasible values for constraint {self.constraint}!"
-                )
 
     def __repr__(self):
         # equinox-like formatting
@@ -267,7 +254,6 @@ class Parameters:
         for i, leaf in enumerate(self._base_leaves):
             if leaf is parameter.node:
                 parameter = self.to_pixels(parameter)
-                parameter.apply_constraint()
                 self._params.append(parameter)
                 self._leave_idx.append(i)
                 found = True
@@ -442,14 +428,7 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
         constraint_is_none = param.constraint is None
         if not constraint_is_none:
             is_feasible = param.constraint.check(param.node)
-        if constraint_is_none or (not constraint_is_none and is_feasible.all()):
-            validation_results.append(
-                ValidationInfo(
-                    f"Parameter {param.name} value is feasible.",
-                    check=self.__class__.__name__,
-                )
-            )
-        else:
+        if param.constraint is not None and not is_feasible.all():
             validation_results.append(
                 ValidationError(
                     f"Parameter {param.name} value is infeasible.",
@@ -479,13 +458,6 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
         param = self.parameter
         prior_is_none = param.prior is None
         stepsize_is_none = param.stepsize is None
-        if (prior_is_none and not stepsize_is_none) or (not prior_is_none and stepsize_is_none):
-            validation_results.append(
-                ValidationInfo(
-                    f"Parameter {param.name} has prior xor stepsize.",
-                    check=self.__class__.__name__,
-                )
-            )
         if prior_is_none and stepsize_is_none:
             validation_results.append(
                 ValidationError(
