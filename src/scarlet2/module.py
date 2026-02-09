@@ -1,5 +1,3 @@
-import logging
-
 import astropy.units as u
 import equinox as eqx
 import jax
@@ -28,9 +26,22 @@ class Module(eqx.Module):
         """Evaluate the model"""
         raise NotImplementedError
 
-    def make_parameters(self):
-        """Construct :py:class:`Parameters` for this module"""
-        return Parameters(self)
+    def set_parameters(self, parameters):
+        """Define parameters for this module
+
+        Parameters
+        ----------
+        parameters: :py:class:`Parameters`
+            Optimization parameters
+
+        Returns
+        -------
+        self
+        """
+        # Monkey patching parameters onto base model:
+        # allows to move the parameters with the model without eqx replicating them during fit/sample
+        object.__setattr__(self, "parameters", parameters)
+        return self
 
     def get(self, parameters):
         """Get parameter arrays from this module
@@ -126,9 +137,6 @@ class Parameter:
             self.name = name
         self.node = node
 
-        if prior is not None and constraint is not None:
-            raise AttributeError(f"Cannot set prior and constraint on the same parameter {self.name}!")
-
         self.constraint = constraint
         if self.constraint is not None:
             try:
@@ -144,12 +152,10 @@ class Parameter:
         # add this source to the active scene
         try:
             Parameterization.parameters.__iadd__(self)
-        except AttributeError:
-            # to be backwards compatible: only emit a warning, don't raise
+        except AttributeError as err:
             msg = "A Parameter instance should only be created within the context of Parameters\n"
             msg += "Use 'with Parameters(scene) as p: Parameter(...)'"
-            logging.warn(msg)
-            pass
+            raise RuntimeError(msg) from err
 
     def __repr__(self):
         # equinox-like formatting
@@ -174,8 +180,8 @@ class Parameters:
 
         Attributes
         ----------
-        base: :py:class:`~scarlet2.Module`
-            Module the parameters refer to
+        base: :py:class:`~scarlet2.Module` or tuple of modules
+            Module(s) the parameters refer to
 
         Examples
         --------
@@ -199,10 +205,12 @@ class Parameters:
         --------
         :py:class:`~scarlet2.Parameter`, :py:class:`~scarlet2.Scene`, :py:func:`~scarlet2.relative_step`
         """
+        assert isinstance(base, Module)
         self.base = base
         self._base_leaves = jtu.tree_leaves(base)
         self._params = list()
         self._leave_idx = list()
+        self.base.set_parameters(self)
 
     def __enter__(self):
         # context manager to register sources
@@ -456,9 +464,7 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
         """
         validation_results: list[ValidationResult] = []
         param = self.parameter
-        prior_is_none = param.prior is None
-        stepsize_is_none = param.stepsize is None
-        if prior_is_none and stepsize_is_none:
+        if param.prior is None and param.stepsize is None:
             validation_results.append(
                 ValidationError(
                     f"Parameter {param.name} does not have prior or stepsize set.",
@@ -467,6 +473,18 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
                         "name": param.name,
                         "prior": param.prior,
                         "stepsize": param.stepsize,
+                    },
+                )
+            )
+        if param.prior is not None and param.constraint is not None:
+            validation_results.append(
+                ValidationError(
+                    f"Parameter {param.name} has both prior or constraint set. Choose one.",
+                    check=self.__class__.__name__,
+                    context={
+                        "name": param.name,
+                        "prior": param.prior,
+                        "constraint": param.constraint,
                     },
                 )
             )

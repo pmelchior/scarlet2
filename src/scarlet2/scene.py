@@ -114,9 +114,7 @@ class Scene(Module):
             validation_results = check_scene(self)
             print_validation_results("Source validation results", validation_results)
 
-    def sample(
-        self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs
-    ):
+    def sample(self, observations, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs):
         """Sample `parameters` of every source in the scene to get posteriors given `observations`.
 
         This method runs the HMC NUTS sampler from `numpyro` to get parameter
@@ -127,9 +125,6 @@ class Scene(Module):
         ----------
         observations: :py:class:`~scarlet2.Observation` or list
             The observations to fit the models to.
-        parameters: :py:class:`~scarlet2.Parameters`
-            Parameters to sample. This method will ignore all parameters that are not in this list.
-            Every parameter in the list needs to have the attribute `prior` set.
         seed: int, optional
             RNG seed for the sampler
         num_warmup: int, optional
@@ -188,6 +183,7 @@ class Scene(Module):
                 return self.obs._log_likelihood(self.model, value)
 
         # find all non-fixed parameters and their priors
+        parameters = self.parameters
         priors = {p.name: p.prior for p in parameters}
         has_none = any(prior is None for prior in priors.values())
         if has_none:
@@ -228,7 +224,6 @@ class Scene(Module):
     def fit(
         self,
         observations,
-        parameters,
         schedule=None,
         max_iter=100,
         e_rel=1e-4,
@@ -245,8 +240,6 @@ class Scene(Module):
         ----------
         observations: :py:class:`~scarlet2.Observation` or list
             The observations to fit the model to.
-        parameters: :py:class:`~scarlet2.Parameters`
-            Parameters to optimize. This method will ignore all parameters that are not in this list.
         schedule: callable, optional
             A function that maps optimizer step count to value. See :py:class:`optax.Schedule` for details.
         max_iter: int, optional
@@ -280,6 +273,7 @@ class Scene(Module):
         except ImportError as err:
             raise ImportError("scarlet2.Scene.fit() requires optax and numpyro.") from err
 
+        parameters = self.parameters
         # making sure we can iterate
         if not isinstance(observations, (list, tuple)):
             observations = (observations,)

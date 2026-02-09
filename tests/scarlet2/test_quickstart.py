@@ -48,15 +48,13 @@ with Scene(model_frame) as scene:
 
         Source(center, spectrum, morph)
 
-scene_ = None
-
 
 def test_fit():
     global scene_
     spec_step = partial(relative_step, factor=0.05)
 
     # fitting
-    with Parameters(scene) as parameters:
+    with Parameters(scene):
         for i in range(len(scene.sources)):
             Parameter(
                 scene.sources[i].spectrum,
@@ -69,23 +67,19 @@ def test_fit():
             )
 
     maxiter = 10
-    scene_ = scene.fit(obs, parameters, max_iter=maxiter, progress_bar=False)
+    scene_ = scene.fit(obs, max_iter=maxiter, progress_bar=False)
+    return scene_
 
 
-def test_sample():
-    # using pre-optimized scene for better warm-up
-    global scene_
-    # old style of parameter declaration, check backward compatibility
-    parameters = scene_.make_parameters()
-    p = scene_.sources[0].spectrum
-    prior = dist.Normal(p, scale=1)
-    parameters += Parameter(p, name="spectrum:0", prior=prior)
+def test_sample(scene):
+    with Parameters(scene):
+        p = scene.sources[0].spectrum
+        prior = dist.Normal(p, scale=1)
+        Parameter(p, name="spectrum:0", prior=prior)
 
-    _ = scene_.sample(
-        obs, parameters, num_samples=10, dense_mass=True, init_strategy=init_to_sample, progress_bar=False
-    )
+    scene.sample(obs, num_samples=10, dense_mass=True, init_strategy=init_to_sample, progress_bar=False)
 
 
 if __name__ == "__main__":
-    test_fit()
-    test_sample()
+    scene_ = test_fit()
+    test_sample(scene_)
