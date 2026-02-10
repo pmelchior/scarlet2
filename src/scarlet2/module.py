@@ -43,29 +43,26 @@ class Module(eqx.Module):
         object.__setattr__(self, "parameters", parameters)
         return self
 
-    def get(self, parameters):
+    def get_parameters(self, ptree):
         """Get parameter arrays from this module
-
-        Parameters
-        ----------
-        parameters: :py:class:`Parameters`
-            List of parameters to search
 
         Returns
         -------
-        list
+        tuple
             requested data arrays for `parameters`
         """
-        assert isinstance(parameters, Parameters)
-        return parameters.extract_from(self)
+        if not hasattr(self, "parameters"):
+            return tuple()
 
-    def replace(self, parameters, values):
+        get_node = lambda node, p: node if isinstance(p, Parameter) else None
+        leaves = jtu.tree_leaves(jtu.tree_map(get_node, self, ptree))
+        return tuple(l for l in leaves if l is not None)
+
+    def replace_parameters(self, values):
         """Replace parameter arrays by another value
 
         Parameters
         ----------
-        parameters: :py:class:`Parameters`
-            List of parameters to search
         values: list
             List of values to replace the current parameter arrays with
             Needs to be in the same shape and order as the current parameter values
@@ -75,10 +72,10 @@ class Module(eqx.Module):
         :py:class:`Module`
             Modified module. All other module components are unchanged.
         """
-        where = lambda model: model.get(parameters)  # noqa: E731
+        where = lambda model: model.get_parameters()  # noqa: E731
         return eqx.tree_at(where, self, replace=values)
 
-    def get_filter_spec(self, parameters):
+    def get_filter_spec(self):
         """Get equinox filter_spec for all fields named in parameters
 
         Parameters
@@ -91,12 +88,13 @@ class Module(eqx.Module):
         list
             requested data arrays for `parameters`
         """
-        filtered = jax.tree_util.tree_map(lambda _: False, self)
-        where = lambda model: model.get(parameters)  # noqa: E731
-        values = (True,) * len(parameters)
-        filtered = eqx.tree_at(where, filtered, replace=values)
-        if all(jax.tree_util.tree_leaves(filtered)):
+        if not hasattr(self, "parameters"):
             return None
+
+        filtered = jax.tree_util.tree_map(lambda _: False, self)
+        where = lambda model: model.get_parameters()  # noqa: E731
+        values = (True,) * len(self.parameters)
+        filtered = eqx.tree_at(where, filtered, replace=values)
         return filtered
 
 
@@ -135,8 +133,6 @@ class Parameter:
             self.name = varname.argname("node", vars_only=False)
         else:
             self.name = name
-        self.node = node
-
         self.constraint = constraint
         if self.constraint is not None:
             try:
@@ -148,14 +144,68 @@ class Parameter:
 
         self.prior = prior
         self.stepsize = stepsize
+        self.node = node
 
         # add this source to the active scene
         try:
+            base = Parameterization.parameters.base
+            # go to pixel frame even if specified in sky coords
+            if hasattr(base, "frame"):
+                self.to_pixels(base.frame)
             Parameterization.parameters.__iadd__(self)
         except AttributeError as err:
             msg = "A Parameter instance should only be created within the context of Parameters\n"
             msg += "Use 'with Parameters(scene) as p: Parameter(...)'"
             raise RuntimeError(msg) from err
+
+    def to_pixels(self, frame):
+        """Convert parameter to pixel coordinates of the model frame
+
+        scarlet2 models are optimized in pixel coordinates (defined by the model
+        frame of :py:class:`~scarlet2.Scene`. Therefore parameters (or their priors,
+        stepsize, etc) that are defined in :py:mod:`astropy.units` or
+        :py:class:`astropy.SkyCoord` need to be transformed to pixel coordinates.
+
+        See details in issue :issue:`51`.
+
+        Parameters
+        ----------
+        frame: :py:class:`~scarlet2.Frame`
+            Frame to define sky coordinates
+        """
+        used_sky_coords_prior = False
+
+        for fieldname in ["node", "constraint", "prior", "stepsize"]:
+            field = getattr(self, fieldname)
+            if isinstance(field, u.Quantity):
+                setattr(self, fieldname, frame.u_to_pixel(field))
+            if isinstance(field, SkyCoord):
+                setattr(self, fieldname, frame.get_pixel(field))
+            for name in dir(field):
+                try:
+                    attrib = getattr(field, name)
+                    if isinstance(attrib, u.Quantity):
+                        setattr(field, name, frame.u_to_pixel(attrib))
+                    if isinstance(attrib, SkyCoord):
+                        setattr(field, name, frame.get_pixel(attrib))
+                        used_sky_coords_prior = fieldname == "prior"
+                except Exception:
+                    # jax throws exceptions for deprecated attributes, so we ignore exceptions silently
+                    pass
+
+            if used_sky_coords_prior:
+                try:
+                    import numpyro.distributions as dist
+                except ImportError as err:
+                    raise ImportError("scarlet2.Parameter requires numpyro.") from err
+
+                # converting SkyCoord to Array in numpyro distributions requires
+                # to update batch and event shape
+                batch_shape = max([getattr(field, name).shape for name in field.reparametrized_params])
+                field._batch_shape = batch_shape
+                setattr(self, fieldname, dist.Independent(field, 1))
+
+            used_sky_coords_prior = False
 
     def __repr__(self):
         # equinox-like formatting
@@ -189,13 +239,13 @@ class Parameters:
         >>>     Source(center1, spectrum1, morph1)
         >>>     Source(center2, spectrum2, morph2)
         >>>
-        >>> with Parameters(scene) as parameters:
+        >>> with Parameters(scene):
         >>>     Parameter(scene.sources[0].spectrum.data,
         >>>               name=f"spectrum:0",
         >>>               constraint=constraints.positive,
         >>>               stepsize=relative_step)
         >>> maxiter = 200
-        >>> scene_ = scene.fit(observation, parameters, max_iter=maxiter)
+        >>> scene_ = scene.fit(observation, max_iter=maxiter)
 
         This defines a scene with two sources, initialized with their respective
         `center`, `spectrum`, and `morphology` parameters. It then fits `observation`
@@ -210,7 +260,22 @@ class Parameters:
         self._base_leaves = jtu.tree_leaves(base)
         self._params = list()
         self._leave_idx = list()
+        # monkey patching parameters onto base
         self.base.set_parameters(self)
+
+    def as_tree(self):
+        pnodes = tuple(p.node for p in self._params)
+        entry_in = lambda entry, _list: any(_ is entry for _ in _list)
+        first_in = lambda entry, _list: list(_ is entry for _ in _list).index(True)
+
+        def node_transform(node):
+            if entry_in(node, pnodes):
+                i = first_in(node, pnodes)
+                return self._params[i]
+            else:
+                return None
+
+        return jtu.tree_map(node_transform, self.base)
 
     def __enter__(self):
         # context manager to register sources
@@ -261,7 +326,6 @@ class Parameters:
         found = False
         for i, leaf in enumerate(self._base_leaves):
             if leaf is parameter.node:
-                parameter = self.to_pixels(parameter)
                 self._params.append(parameter)
                 self._leave_idx.append(i)
                 found = True
@@ -305,78 +369,6 @@ class Parameters:
     def __len__(self):
         """Length of the collection"""
         return len(self._params)
-
-    def extract_from(self, root):
-        """Extract all parameter arrays from `root`
-
-        Parameters
-        ----------
-        root: :py:class:`~scarlet2.Module`
-            The module to extract parameters from. Can be different from `base`,
-            but must have the same Pytree structure
-
-        Returns
-        -------
-        tuple
-            Tuple of parameter arrays in the order listed by this `Parameters` collection.
-
-        """
-        # create function that ingests root and returns all nodes
-        assert jtu.tree_structure(root) == jtu.tree_structure(self.base)
-        root_leaves = jtu.tree_leaves(root)
-        return tuple(root_leaves[idx] for idx in self._leave_idx)
-
-    def to_pixels(self, parameter):
-        """Convert parameter to pixel coordinates of the model frame
-
-        scarlet2 models are optimized in pixel coordinates (defined by the model
-        frame of :py:class:`~scarlet2.Scene`. Therefore parameters (or their priors,
-        stepsize, etc) that are defined in :py:mod:`astropy.units` or
-        :py:class:`astropy.SkyCoord` need to be transformed to pixel coordinates.
-
-        See details in issue :issue:`51`.
-
-        Parameters
-        ----------
-        parameter: :py:class:`~scarlet2.Parameter`
-            Parameter to transform from sky to pixel coordinates.
-        """
-        frame = self.base.frame
-        used_sky_coords_prior = False
-
-        for fieldname in ["node", "constraint", "prior", "stepsize"]:
-            field = getattr(parameter, fieldname)
-            if isinstance(field, u.Quantity):
-                setattr(parameter, fieldname, frame.u_to_pixel(field))
-            if isinstance(field, SkyCoord):
-                setattr(parameter, fieldname, frame.get_pixel(field))
-            for name in dir(field):
-                try:
-                    attrib = getattr(field, name)
-                    if isinstance(attrib, u.Quantity):
-                        setattr(field, name, frame.u_to_pixel(attrib))
-                    if isinstance(attrib, SkyCoord):
-                        setattr(field, name, frame.get_pixel(attrib))
-                        used_sky_coords_prior = fieldname == "prior"
-                except Exception:
-                    # jax throws exceptions for deprecated attributes, so we ignore exceptions silently
-                    pass
-
-            if used_sky_coords_prior:
-                try:
-                    import numpyro.distributions as dist
-                except ImportError as err:
-                    raise ImportError("scarlet2.Parameter requires numpyro.") from err
-
-                # converting SkyCoord to Array in numpyro distributions requires
-                # to update batch and event shape
-                batch_shape = max([getattr(field, name).shape for name in field.reparametrized_params])
-                field._batch_shape = batch_shape
-                setattr(parameter, fieldname, dist.Independent(field, 1))
-
-            used_sky_coords_prior = False
-
-        return parameter
 
 
 def relative_step(x, *args, factor=0.01, minimum=1e-6):

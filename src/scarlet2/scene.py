@@ -1,14 +1,14 @@
-import logging
 from collections import defaultdict
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.tree_util as jtu
 
 from . import Scenery
 from .bbox import overlap_slices
 from .frame import Frame
-from .module import Module, Parameters
+from .module import Module, Parameter
 from .validation_utils import (
     ValidationError,
     ValidationInfo,
@@ -146,6 +146,11 @@ class Scene(Module):
         """
         # uses numpyro NUTS on all non-fixed parameters
         # requires that those have priors set
+
+        # no optimizable parameters: return self
+        if not hasattr(self, "parameters"):
+            return self
+
         try:
             import numpyro
             import numpyro.distributions as dist
@@ -183,8 +188,8 @@ class Scene(Module):
                 return self.obs._log_likelihood(self.model, value)
 
         # find all non-fixed parameters and their priors
-        parameters = self.parameters
-        priors = {p.name: p.prior for p in parameters}
+        ptree = self.parameters.as_tree()
+        priors = {p.name: p.prior for p in self.parameters}
         has_none = any(prior is None for prior in priors.values())
         if has_none:
             from pprint import pformat
@@ -194,9 +199,12 @@ class Scene(Module):
 
         # define the pyro model, where every parameter becomes a sample,
         # and the observations sample from their likelihood given the rendered model
+        sample_node = lambda node, p: numpyro.sample(p.name, p.prior) if isinstance(p, Parameter) else node
+
         def pyro_model(model):
-            samples = tuple(numpyro.sample(p.name, p.prior) for p in parameters)
-            model_ = model.replace(parameters, samples)
+            # samples = tuple(numpyro.sample(p.name, p.prior) for p in self.parameters)
+            # model_ = model.replace_parameters(samples)
+            model_ = jtu.tree_map(sample_node, model, ptree)
             pred = model_()  # create prediction once for all observations
             # dealing with multiple observations
             for i, obs_ in enumerate(observations):
@@ -212,7 +220,7 @@ class Scene(Module):
 
             from numpyro.infer.initialization import init_to_value
 
-            values = {p.name: p.node for p in parameters}
+            values = {p.name: p.node for p in self.parameters}
             init_strategy = partial(init_to_value, values=values)
 
         nuts_kernel = NUTS(pyro_model, init_strategy=init_strategy, **kwargs)
@@ -266,6 +274,10 @@ class Scene(Module):
         Scene
             The scene model with updated parameters
         """
+        # no optimizable parameters: return self
+        if not hasattr(self, "parameters"):
+            return self
+
         try:
             import optax
             import optax._src.base as base
@@ -273,16 +285,16 @@ class Scene(Module):
         except ImportError as err:
             raise ImportError("scarlet2.Scene.fit() requires optax and numpyro.") from err
 
-        parameters = self.parameters
         # making sure we can iterate
         if not isinstance(observations, (list, tuple)):
             observations = (observations,)
-        assert isinstance(parameters, Parameters)
 
         # make a stepsize tree
-        where = lambda model: model.get(parameters)
-        replace = tuple(p.stepsize for p in parameters)
-        steps = eqx.tree_at(where, self, replace=replace)
+        ptree = self.parameters.as_tree()
+        steps = jtu.tree_map(lambda node: node.stepsize if isinstance(node, Parameter) else None, ptree)
+        # where = lambda model: model.get_parameters()
+        # replace = tuple(p.stepsize for p in self.parameters)
+        # steps = eqx.tree_at(where, self, replace=replace)
 
         def scale_by_stepsize() -> base.GradientTransformation:
             # adapted from optax.scale_by_param_block_norm()
@@ -313,17 +325,19 @@ class Scene(Module):
         )
 
         # transform to unconstrained parameters
-        scene = _constraint_replace(self, parameters, inv=True)
+        scene = _constraint_replace(self, ptree, inv=True)
 
         # get optimizer initialized with the optimization parameters
-        filter_spec = self.get_filter_spec(parameters)
-        opt_state = optim.init(scene) if filter_spec is None else optim.init(eqx.filter(scene, filter_spec))
+        filter_spec = jtu.tree_map(
+            lambda node: True if isinstance(node, Parameter) else False, ptree, is_leaf=lambda x: x is None
+        )
+        opt_state = optim.init(eqx.filter(scene, filter_spec))
 
         with trange(max_iter, disable=not progress_bar) as t:
             for step in t:  # noqa: B007
                 # optimizer step
                 scene, loss, opt_state, convergence = _make_step(
-                    scene, observations, parameters, optim, opt_state, filter_spec=filter_spec
+                    scene, observations, optim, opt_state, ptree, filter_spec=filter_spec
                 )
 
                 # compute max change across all non-fixed parameters for convergence test
@@ -331,7 +345,7 @@ class Scene(Module):
 
                 # report current iteration results to callback
                 if callback is not None:
-                    scene_ = _constraint_replace(scene, parameters)
+                    scene_ = _constraint_replace(scene, ptree)
                     callback(scene_, convergence, loss)
 
                 # Log the loss and max_change in the tqdm progress bar
@@ -341,7 +355,7 @@ class Scene(Module):
                 if max_change < e_rel:
                     break
 
-        returned_scene = _constraint_replace(scene, parameters)  # transform back to constrained variables
+        returned_scene = _constraint_replace(scene, ptree)  # transform back to constrained variables
 
         # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
         from .validation_utils import VALIDATION_SWITCH
@@ -356,51 +370,64 @@ class Scene(Module):
 
         return returned_scene
 
-    def set_spectra_to_match(self, observations, parameters):
-        """Set spectra to match given observations."""
-        msg = "set_spectra_to_match() is unnecessary and therefore deprecated.\n"
-        msg += "This method call does not have any effect."
-        logging.warning(msg)
 
-
-def _constraint_replace(self, parameters, inv=False):
+def _constraint_replace(self, params_tree, inv=False):
     # replace any parameter with constraint into unconstrained ones by calling its constraint bijector
     # return transformed pytree
-    where_in = lambda model: model.get(parameters)
-    param_values = where_in(self)
-    if not inv:
-        replace = tuple(
-            p.constraint_transform(v) if p.constraint is not None else v
-            for p, v in zip(parameters, param_values, strict=False)
-        )
-    else:
-        replace = tuple(
-            p.constraint_transform.inv(v) if p.constraint is not None else v
-            for p, v in zip(parameters, param_values, strict=False)
-        )
+    def node_transform(node, param):
+        if param is not None:
+            if param.constraint is not None:
+                func = param.constraint_transform if inv is False else param.constraint_transform.inv
+                return func(node)
+            else:
+                return node
+        else:
+            return node
 
-    return eqx.tree_at(where_in, self, replace=replace)
+    return jtu.tree_map(node_transform, self, params_tree)
+
+
+# def _constraint_replace(self, inv=False):
+#     # replace any parameter with constraint into unconstrained ones by calling its constraint bijector
+#     # return transformed pytree
+#     where_in = lambda model: model.get_parameters()
+#     param_values = where_in(self)
+#     if not inv:
+#         replace = tuple(
+#             p.constraint_transform(v) if p.constraint is not None else v
+#             for p, v in zip(self.parameters, param_values, strict=False)
+#         )
+#     else:
+#         replace = tuple(
+#             p.constraint_transform.inv(v) if p.constraint is not None else v
+#             for p, v in zip(self.parameters, param_values, strict=False)
+#         )
+#
+#     return eqx.tree_at(where_in, self, replace=replace)
 
 
 # update step for optax optimizer
 @eqx.filter_jit
-def _make_step(model, observations, parameters, optim, opt_state, filter_spec=None):
+def _make_step(model, observations, optim, opt_state, ptree, filter_spec=None):
     from .nn import ScorePrior, pad_fwd
 
-    def loss_fn(model):
-        if any(param.constraint is not None for param in parameters):
-            # parameters now obey constraints
-            # transformation happens in the grad path, so gradients are wrt to unconstrained variables
-            # likelihood and prior grads transparently apply the Jacobians of these transformations
-            model = _constraint_replace(model, parameters)
+    def get_parameters(ptree):
+        get_p = lambda node: node if isinstance(node, Parameter) else None
+        leaves = jtu.tree_leaves(jtu.tree_map(get_p, ptree))
+        return tuple(l for l in leaves if l is not None)
 
+    def loss_fn(model):
+        # parameters now obey constraints
+        # transformation happens in the grad path, so gradients are wrt to unconstrained variables
+        # likelihood and prior grads transparently apply the Jacobians of these transformations
+        model = _constraint_replace(model, ptree)
         pred = model()
         log_like = sum(obs.log_likelihood(pred) for obs in observations)
 
-        param_values = model.get(parameters)
-
+        # add log prior for all parameters which define priors
         log_prior = 0
-
+        param_values = model.get_parameters(ptree)
+        parameters = get_parameters(ptree)
         # Gather parameters with the same ScorePrior for parallel evaluation
         grouped = defaultdict(list)
         for param, value in zip(parameters, param_values, strict=False):
