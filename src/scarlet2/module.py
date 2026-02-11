@@ -1,6 +1,5 @@
 import astropy.units as u
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import varname
@@ -13,6 +12,11 @@ from .validation_utils import (
     ValidationResult,
     print_validation_results,
 )
+
+
+def _tree_select(func, pytree, *rest):
+    leaves = jtu.tree_leaves(jtu.tree_map(func, pytree, *rest, is_leaf=lambda x: x is None))
+    return tuple(_ for _ in leaves if _ is not None)
 
 
 class Module(eqx.Module):
@@ -43,59 +47,94 @@ class Module(eqx.Module):
         object.__setattr__(self, "parameters", parameters)
         return self
 
-    def get_parameters(self, ptree):
+    def get(self, p):
         """Get parameter arrays from this module
+
+        Parameters
+        ----------
+        p: (:py:class:`Parameters`, :py:class:`Parameter`, str)
+            optimization parameters to extract
 
         Returns
         -------
         tuple
             requested data arrays for `parameters`
         """
+        # this method is uesd during optimization where the module is a copy without parameter attribute
+        # hence is must be passed as argument
+        if isinstance(p, Parameters):
+            get_node = lambda node, pnode: node if isinstance(pnode, Parameter) else None
+            return _tree_select(get_node, self, p.tree)
+
+        # lookup by name or individual parameter is used for checking/validation
+        # as they don't know what module/parameters they belong to, it only works for modules with .parameters
         if not hasattr(self, "parameters"):
-            return tuple()
+            raise AttributeError("Module.get requires parameters attribute to be set for this module.")
+        parameters = self.parameters
 
-        get_node = lambda node, p: node if isinstance(p, Parameter) else None
-        leaves = jtu.tree_leaves(jtu.tree_map(get_node, self, ptree))
-        return tuple(l for l in leaves if l is not None)
+        if isinstance(p, Parameter):
+            get_node = lambda node, pnode: node if pnode is p else None
+        elif isinstance(p, str):
+            get_node = lambda node, pnode: node if (pnode is not None and pnode.name == p) else None
+        plist = _tree_select(get_node, self, parameters.tree)
+        if len(plist) == 0:
+            raise IndexError(f"Name {p} not found in parameters")
+        return plist[0]
 
-    def replace_parameters(self, values):
-        """Replace parameter arrays by another value
 
-        Parameters
-        ----------
-        values: list
-            List of values to replace the current parameter arrays with
-            Needs to be in the same shape and order as the current parameter values
+def _to_pixels(frame, field):
+    """Convert parameter to pixel coordinates of the model frame
 
-        Returns
-        -------
-        :py:class:`Module`
-            Modified module. All other module components are unchanged.
-        """
-        where = lambda model: model.get_parameters()  # noqa: E731
-        return eqx.tree_at(where, self, replace=values)
+    scarlet2 models are optimized in pixel coordinates (defined by the model
+    frame of :py:class:`~scarlet2.Scene`. Therefore parameters (or their priors,
+    stepsize, etc) that are defined in :py:mod:`astropy.units` or
+    :py:class:`astropy.SkyCoord` need to be transformed to pixel coordinates.
 
-    def get_filter_spec(self):
-        """Get equinox filter_spec for all fields named in parameters
+    See details in issue :issue:`51`.
 
-        Parameters
-        ----------
-        parameters: :py:class:`Parameters`
-            List of parameters to search
+    Parameters
+    ----------
+    frame: :py:class:`~scarlet2.Frame`
+        Frame to define sky coordinates
+    field: any
+        Attribute of parameter to be converted to pixel coordinates
 
-        Returns
-        -------
-        list
-            requested data arrays for `parameters`
-        """
-        if not hasattr(self, "parameters"):
-            return None
+    Returns
+    -------
+    field: any
+        Attribute converted to pixel coordinates
+    """
+    # field or stepsize
+    if isinstance(field, u.Quantity):
+        return frame.u_to_pixel(field)
+    elif isinstance(field, SkyCoord):
+        return frame.get_pixel(field)
+    else:
+        # numpyro dist or constraint
+        for name in dir(field):
+            try:
+                attrib = getattr(field, name)
+                if isinstance(attrib, u.Quantity):
+                    setattr(field, name, frame.u_to_pixel(attrib))
+                if isinstance(attrib, SkyCoord):
+                    setattr(field, name, frame.get_pixel(attrib))
+            except Exception:
+                # jax throws exceptions for deprecated attributes, so we ignore exceptions silently
+                pass
 
-        filtered = jax.tree_util.tree_map(lambda _: False, self)
-        where = lambda model: model.get_parameters()  # noqa: E731
-        values = (True,) * len(self.parameters)
-        filtered = eqx.tree_at(where, filtered, replace=values)
-        return filtered
+        try:
+            import numpyro.distributions as dist
+        except ImportError as err:
+            raise ImportError("scarlet2.Parameter requires numpyro.") from err
+
+        if isinstance(field, dist.Distribution):
+            # converting SkyCoord to Array in numpyro distributions requires
+            # to update batch and event shape
+            batch_shape = max([getattr(field, name).shape for name in field.reparametrized_params])
+            field._batch_shape = batch_shape
+            return dist.Independent(field, 1)
+
+    return field
 
 
 class Parameter:
@@ -133,84 +172,48 @@ class Parameter:
             self.name = varname.argname("node", vars_only=False)
         else:
             self.name = name
-        self.constraint = constraint
-        if self.constraint is not None:
-            try:
-                from numpyro.distributions.transforms import biject_to
-            except ImportError as err:
-                raise ImportError("scarlet2.Parameter requires numpyro.") from err
-            # transformation to unconstrained parameters
-            self.constraint_transform = biject_to(self.constraint)
-
-        self.prior = prior
-        self.stepsize = stepsize
-        self.node = node
 
         # add this source to the active scene
         try:
             base = Parameterization.parameters.base
+            parameters = Parameterization.parameters
+
             # go to pixel frame even if specified in sky coords
             if hasattr(base, "frame"):
-                self.to_pixels(base.frame)
-            Parameterization.parameters.__iadd__(self)
-        except AttributeError as err:
-            msg = "A Parameter instance should only be created within the context of Parameters\n"
-            msg += "Use 'with Parameters(scene) as p: Parameter(...)'"
-            raise RuntimeError(msg) from err
+                node_ = _to_pixels(base.frame, node)
+                # node needs to be updated in base!
+                replace_node = lambda n: node_ if n is node else n
+                base = jtu.tree_map(replace_node, base)
+                base.set_parameters(parameters)
 
-    def to_pixels(self, frame):
-        """Convert parameter to pixel coordinates of the model frame
+                constraint = _to_pixels(base.frame, constraint) if constraint is not None else None
+                prior = _to_pixels(base.frame, prior) if prior is not None else None
+                stepsize = _to_pixels(base.frame, stepsize) if stepsize is not None else None
 
-        scarlet2 models are optimized in pixel coordinates (defined by the model
-        frame of :py:class:`~scarlet2.Scene`. Therefore parameters (or their priors,
-        stepsize, etc) that are defined in :py:mod:`astropy.units` or
-        :py:class:`astropy.SkyCoord` need to be transformed to pixel coordinates.
+            self.constraint = constraint
+            self.prior = prior
+            self.stepsize = stepsize
 
-        See details in issue :issue:`51`.
-
-        Parameters
-        ----------
-        frame: :py:class:`~scarlet2.Frame`
-            Frame to define sky coordinates
-        """
-        used_sky_coords_prior = False
-
-        for fieldname in ["node", "constraint", "prior", "stepsize"]:
-            field = getattr(self, fieldname)
-            if isinstance(field, u.Quantity):
-                setattr(self, fieldname, frame.u_to_pixel(field))
-            if isinstance(field, SkyCoord):
-                setattr(self, fieldname, frame.get_pixel(field))
-            for name in dir(field):
+            # define constraint bijector functions
+            if self.constraint is not None:
                 try:
-                    attrib = getattr(field, name)
-                    if isinstance(attrib, u.Quantity):
-                        setattr(field, name, frame.u_to_pixel(attrib))
-                    if isinstance(attrib, SkyCoord):
-                        setattr(field, name, frame.get_pixel(attrib))
-                        used_sky_coords_prior = fieldname == "prior"
-                except Exception:
-                    # jax throws exceptions for deprecated attributes, so we ignore exceptions silently
-                    pass
-
-            if used_sky_coords_prior:
-                try:
-                    import numpyro.distributions as dist
+                    from numpyro.distributions.transforms import biject_to
                 except ImportError as err:
                     raise ImportError("scarlet2.Parameter requires numpyro.") from err
+                self.constraint_transform = biject_to(self.constraint)
 
-                # converting SkyCoord to Array in numpyro distributions requires
-                # to update batch and event shape
-                batch_shape = max([getattr(field, name).shape for name in field.reparametrized_params])
-                field._batch_shape = batch_shape
-                setattr(self, fieldname, dist.Independent(field, 1))
+            # add parameter to parameter tree and update parameters.tree
+            parameters.__iadd__(node, self)
 
-            used_sky_coords_prior = False
+        except AttributeError as err:
+            msg = "A Parameter instance should only be created within the context of Parameters\n"
+            msg += "Use 'with Parameters(scene): Parameter(...)'"
+            raise RuntimeError(msg) from err
 
     def __repr__(self):
         # equinox-like formatting
         chunks = []
-        for name in ["name", "node", "constraint", "prior", "stepsize"]:
+        for name in ["name", "constraint", "prior", "stepsize"]:
             field = getattr(self, name)
             field = eqx.tree_pformat(field)
             chunks.append(f"  {name}={field}")
@@ -225,8 +228,8 @@ class Parameters:
     def __init__(self, base):
         """Collection of optimizable parameters
 
-        This class acts like a standard python list of :py:class:`~scarlet2.Parameter` instances.
-        It supports `len()`, item access, item addition, etc.
+        This class creates a Pytree with the same shape as `base` and with :py:class:`~scarlet2.Parameter`
+        instances and the nodes corresponding to the optimized parameters in `base`.
 
         Attributes
         ----------
@@ -247,7 +250,7 @@ class Parameters:
         >>> maxiter = 200
         >>> scene_ = scene.fit(observation, max_iter=maxiter)
 
-        This defines a scene with two sources, initialized with their respective
+        This example defines a scene with two sources, initialized with their respective
         `center`, `spectrum`, and `morphology` parameters. It then fits `observation`
         by adjusting only the spectrum array of the first source for 200 steps.
 
@@ -257,25 +260,46 @@ class Parameters:
         """
         assert isinstance(base, Module)
         self.base = base
-        self._base_leaves = jtu.tree_leaves(base)
-        self._params = list()
-        self._leave_idx = list()
+        self.tree = jtu.tree_map(lambda node: None, base)  # same treedef as base, but all leaves are None
         # monkey patching parameters onto base
         self.base.set_parameters(self)
 
-    def as_tree(self):
-        pnodes = tuple(p.node for p in self._params)
-        entry_in = lambda entry, _list: any(_ is entry for _ in _list)
-        first_in = lambda entry, _list: list(_ is entry for _ in _list).index(True)
+    def as_list(self):
+        """Return parameter definition as list
 
-        def node_transform(node):
-            if entry_in(node, pnodes):
-                i = first_in(node, pnodes)
-                return self._params[i]
-            else:
-                return None
+        This method uses the same order as :py:func:`~scarlet2.Module.get`.
 
-        return jtu.tree_map(node_transform, self.base)
+        Returns
+        -------
+        tuple
+            optimization parameters in order
+        """
+        get_p = lambda node: node if isinstance(node, Parameter) else None
+        return _tree_select(get_p, self.tree)
+
+    def _select(self, fieldname):
+        get_field = lambda node: getattr(node, fieldname) if isinstance(node, Parameter) else None
+        return _tree_select(get_field, self.tree)
+
+    @property
+    def names(self):
+        """Return list of parameter names"""
+        return self._select("name")
+
+    @property
+    def priors(self):
+        """Return list of parameter priors"""
+        return self._select("prior")
+
+    @property
+    def stepsizes(self):
+        """Return list of parameter stepsizes"""
+        return self._select("stepsize")
+
+    @property
+    def constraints(self):
+        """Return list of parameter constraints"""
+        return self._select("constraint")
 
     def __enter__(self):
         # context manager to register sources
@@ -300,9 +324,9 @@ class Parameters:
         # equinox-like formatting
         mess = f"{self.__class__.__name__}(\n"
         mess += f"  base={self.base.__class__.__name__},\n"
-        mess += "  parameters=[\n"
+        mess += "  list=[\n"
         chunks = []
-        for p in self._params:
+        for p in self.as_list():
             mess_ = p.__repr__()
             chunk = ""
             for line in mess_.splitlines(keepends=True):
@@ -314,25 +338,19 @@ class Parameters:
         mess += ")"
         return mess
 
-    def __iadd__(self, parameter):
+    def __iadd__(self, node, parameter):
         """Add parameter to collection
 
         Parameters
         ----------
+        node: jnp.ndarray
+            Parameter array in the base model
         parameter: :py:class:`~scarlet2.Parameter`
-            Parameter to be added
+            Parameter specification to be added
         """
-        assert isinstance(parameter, Parameter)
-        found = False
-        for i, leaf in enumerate(self._base_leaves):
-            if leaf is parameter.node:
-                self._params.append(parameter)
-                self._leave_idx.append(i)
-                found = True
-                break
-        if not found:
-            mess = f"Parameter '{parameter.name}' not in {self.base.__class__.__name__}!"
-            raise RuntimeError(mess)
+        select_node = lambda pnode, n: parameter if n is node else pnode
+        new_ptree = jtu.tree_map(select_node, self.tree, self.base, is_leaf=lambda x: x is None)
+        object.__setattr__(self, "tree", new_ptree)
         return self
 
     def __isub__(self, name):
@@ -344,11 +362,9 @@ class Parameters:
             Name of the parameter to be removed. Silently ignores if named parameter
             is not in the collection.
         """
-        for i, param in enumerate(self._params):
-            if param.name == name:
-                del self._params[i]
-                del self._leave_idx[i]
-                break
+        select_node = lambda pnode: None if (pnode is not None and pnode.name == name) else pnode
+        new_ptree = jtu.tree_map(select_node, self.tree, is_leaf=lambda x: x is None)
+        object.__setattr__(self, "tree", new_ptree)
         return self
 
     def __getitem__(self, i):
@@ -356,19 +372,41 @@ class Parameters:
 
         Parameters
         ----------
-        i: (int,slice)
-            Index or slice to access the collection.
+        i: (int,slice,str)
+            Index, slice, or name to access the parameter collection.
 
         Returns
         -------
         :py:class:`~scarlet2.Parameter`
             If `i` is a slice, returns a subset of the collection.
         """
-        return self._params[i]
+        if isinstance(i, str):
+            select_node = lambda pnode: pnode if (pnode is not None and pnode.name == i) else None
+            leaves = jtu.tree_leaves(jtu.tree_map(select_node, self.tree, is_leaf=lambda x: x is None))
+            leaves = tuple(_ for _ in leaves if _ is not None)
+            if len(leaves) == 0:
+                raise IndexError(f"Name {i} not found in parameters")
+            return leaves[0]
+        return self.as_list()[i]
 
     def __len__(self):
         """Length of the collection"""
-        return len(self._params)
+        return len(self.as_list())
+
+    def set_base(self, base):
+        """Set base model
+
+        Parameters
+        ----------
+        base: :py:class:`~scarlet2.Module`
+            Base model
+
+        Returns
+        -------
+        self
+        """
+        object.__setattr__(self, "base", base)
+        return self
 
 
 def relative_step(x, *args, factor=0.01, minimum=1e-6):
@@ -404,15 +442,19 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
     :py:func:`~scarlet2.validation.check_scene`.
     """
 
-    def __init__(self, parameter: Parameter):
+    def __init__(self, parameter: Parameter, parameters: Parameters) -> None:
         """Initialize the SceneValidator.
 
         Parameters
         ----------
         parameter : Parameter
             The parameter to validate.
+        parameters : Parameters
+            The parameters collection for `parameter`.
+
         """
         self.parameter = parameter
+        self.parameters = parameters
 
     def check_constrained_parameter_is_feasible(self) -> list[ValidationResult]:
         """Check that a constrained parameter has a feasible value.
@@ -425,9 +467,10 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
         """
         validation_results: list[ValidationResult] = []
         param = self.parameter
+        node = self.parameters.base.get(param)
         constraint_is_none = param.constraint is None
         if not constraint_is_none:
-            is_feasible = param.constraint.check(param.node)
+            is_feasible = param.constraint.check(node)
         if param.constraint is not None and not is_feasible.all():
             validation_results.append(
                 ValidationError(

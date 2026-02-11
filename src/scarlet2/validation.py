@@ -129,12 +129,12 @@ def check_parameters(parameters) -> list[ValidationResult]:
 
     validation_results = []
     for p in parameters:
-        validation_results.extend(check_parameter(p))
+        validation_results.extend(check_parameter(p, parameters))
 
     return validation_results
 
 
-def check_parameter(parameter) -> list[ValidationResult]:
+def check_parameter(parameter, parameters) -> list[ValidationResult]:
     """Check the parameter against the various validation rules.
 
     Parameters
@@ -142,10 +142,13 @@ def check_parameter(parameter) -> list[ValidationResult]:
     parameter : Parameter
         The parameter  to check
 
+    parameters : Parameters
+        The full list parameters
+
     Returns
     -------
     list[ValidationResult]
         A list of validation results from the validation checks of the parameters.
     """
 
-    return _check(validation_class=ParameterValidator, **{"parameter": parameter})
+    return _check(validation_class=ParameterValidator, **{"parameters": parameters, "parameter": parameter})
