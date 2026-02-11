@@ -11,7 +11,7 @@ from huggingface_hub import hf_hub_download
 from numpyro.distributions import constraints
 from numpyro.infer.initialization import init_to_sample
 
-from scarlet2 import init
+from scarlet2 import fit, init, sample
 from scarlet2.frame import Frame
 from scarlet2.module import Parameter, Parameters, relative_step
 from scarlet2.observation import Observation
@@ -67,7 +67,7 @@ def test_fit():
             )
 
     maxiter = 10
-    scene_ = scene.fit(obs, max_iter=maxiter, progress_bar=False)
+    scene_ = fit(scene, obs, max_iter=maxiter, progress_bar=False)
     return scene_
 
 
@@ -77,7 +77,7 @@ def test_sample(scene):
         prior = dist.Normal(p, scale=1)
         Parameter(p, name="spectrum:0", prior=prior)
 
-    scene.sample(obs, num_samples=10, dense_mass=True, init_strategy=init_to_sample, progress_bar=False)
+    sample(scene, obs, num_samples=10, dense_mass=True, init_strategy=init_to_sample, progress_bar=False)
 
 
 if __name__ == "__main__":
