@@ -1,15 +1,15 @@
 import astropy.units as u
 import astropy.wcs
-import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from astropy.coordinates import SkyCoord
 
 from .bbox import Box
+from .module import Module
 from .psf import PSF, GaussianPSF
 
 
-class Frame(eqx.Module):
+class Frame(Module):
     """Definition of a view of the sky
 
     This class combines all elements to determine how a piece of the sky will appear.

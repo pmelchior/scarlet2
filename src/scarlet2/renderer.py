@@ -10,9 +10,10 @@ from .bbox import Box, overlap_slices
 from .fft import _get_fast_shape, _trim, _wrap_hermitian_x, convolve, deconvolve, good_fft_size, transform
 from .frame import _minmax_int, get_affine, get_scale_angle_flip_shift
 from .interpolation import Interpolant, Lanczos, resample3d, resample_fourier
+from .module import Module
 
 
-class Renderer(eqx.Module):
+class Renderer(Module):
     """Renderer base class
 
     Renderers are (potentially parameterized) transformations between the model
@@ -33,7 +34,7 @@ class NoRenderer(Renderer):
 
 
 #
-class HashableSlice(eqx.Module):
+class HashableSlice(Module):
     """A slice version that is hashable (for python < 3.12)"""
 
     start: int
