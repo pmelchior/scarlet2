@@ -5,9 +5,7 @@ from . import Scenery
 from .bbox import overlap_slices
 from .frame import Frame
 from .module import Module
-from .validation_utils import (
-    print_validation_results,
-)
+from .validation_utils import print_validation_results
 
 
 class Scene(Module):

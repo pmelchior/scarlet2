@@ -68,6 +68,8 @@ def sample(scene, observations, seed=0, num_warmup=100, num_samples=200, progres
     # making sure we can iterate
     if not isinstance(observations, (list, tuple)):
         observations = (observations,)
+    for obs in observations:
+        obs.check_set_renderer(scene.frame)
 
     # helper class to turn observation likelihood(s) into numpyro distribution
     class ObsDistribution(dist.Distribution):
@@ -197,6 +199,8 @@ def fit(
     # making sure we can iterate
     if not isinstance(observations, (list, tuple)):
         observations = (observations,)
+    for obs in observations:
+        obs.check_set_renderer(scene.frame)
 
     # make schedule with the parameter stepsizes
     steps = jtu.tree_map(
