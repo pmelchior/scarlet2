@@ -35,8 +35,6 @@ class Observation(Module):
     """Metadata to describe what view of the sky `data` amounts to"""
     renderer: (Renderer, eqx.nn.Sequential)
     """Renderer to translate from the model frame the observation frame"""
-    n: int
-    """Number of valid pixels in `data`"""
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None):
         # TODO: automatic conversion to jnp arrays
@@ -49,9 +47,6 @@ class Observation(Module):
         if self.weights is not None and self.weights.ndim == 2:
             # add a channel dimension if it is missing
             self.weights = self.weights[None, ...]
-
-        # number of unmasked pixels
-        self.n = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
 
         self.frame = Frame(Box(self.data.shape), psf, wcs, channels=channels)
         if renderer is None:
@@ -66,6 +61,11 @@ class Observation(Module):
 
             validation_results = check_observation(self)
             print_validation_results("Observation validation results", validation_results)
+
+    @property
+    def n(self):
+        """Number of unmasked pixels in the observation"""
+        return jnp.prod(jnp.asarray(self.data.shape)) - jnp.sum(self.weights == 0)
 
     def render(self, model):
         """Render `model` in the frame of this observation

@@ -133,6 +133,8 @@ class ConvolutionRenderer(Renderer):
     """
 
     _diff_kernel_fft: jnp.array = eqx.field(repr=False)
+    _kcoords_out: jnp.array = eqx.field(repr=False)
+    shift: jnp.array
 
     def __init__(self, model_frame, obs_frame):
         """Initialize convolution renderer with difference kernel between `model_frame` and `obs_frame`
@@ -161,9 +163,25 @@ class ConvolutionRenderer(Renderer):
         )
         self._diff_kernel_fft = diff_kernel_fft
 
+        # for shift operations
+        self.shift = jnp.array([0.0, -3.0])  # jnp.zeros(2)
+        self._kcoords_out = jnp.stack(
+            jnp.meshgrid(
+                jnp.fft.rfftfreq(fft_shape[-1]),  # meshgrid uses x,y convention
+                jnp.fft.fftfreq(fft_shape[-2]),
+            )[::-1],  # so we flip it back
+            -1,
+        )
+
     def __call__(self, model, key=None):
         """What to run when ConvolutionRenderer is called"""
-        return convolve(model, self._diff_kernel_fft, axes=(-2, -1))
+        # apply shift to diff kernel
+        return convolve(model, self._diff_kernel_fft * self._phase_factor[..., :, :], axes=(-2, -1))
+
+    @property
+    def _phase_factor(self):
+        # apply shift to frequencies in Fourier space
+        return jnp.exp(-1j * 2 * jnp.pi * (self._kcoords_out @ self.shift))
 
 
 class TrimSpatialBox(Renderer):
@@ -202,7 +220,7 @@ class ResamplingRenderer(Renderer):
     scale: float
     angle: float
     handedness: int
-    shift: tuple
+    shift: jnp.array
     has_psf_in: bool
     has_psf_out: bool
     fft_shape_target: int = eqx.field(repr=False)
@@ -244,8 +262,8 @@ class ResamplingRenderer(Renderer):
         center_model = jnp.array(model_frame.bbox.spatial.center)
         center_model_in_obs = obs_frame.get_pixel(model_frame.get_sky_coord(center_model))
         center_obs = jnp.array(obs_frame.bbox.spatial.center)
-        shift = center_obs - center_model_in_obs
-        self.shift = tuple(c.item() for c in shift)  # avoid tracing
+        self.shift = center_obs - center_model_in_obs
+        # self.shift = tuple(c.item() for c in shift)  # avoid tracing
 
         # Get maximum of the fft shapes to interpolate on the highest resolved FFT image
         self.real_shape_target = obs_frame.bbox.shape

@@ -338,7 +338,7 @@ def resample_fourier(
     shape_in,
     shape_out,
     jacobian=None,
-    shift=(0, 0),
+    shift=None,
     interpolant=Quintic(),  # noqa: B008
 ):
     """Resampling operation
@@ -400,7 +400,10 @@ def resample_fourier(
     xint_val = interpolant.uval(kcoords_out[..., 0]) * interpolant.uval(kcoords_out[..., 1])
 
     # apply shift
-    shift_ = shift[::-1]  # x,y needed here
-    pfac = jnp.exp(-1j * 2 * jnp.pi * (kcoords_out[..., 0] * shift_[0] + kcoords_out[..., 1] * shift_[1]))
+    if shift is not None:
+        shift_ = shift[::-1]  # x,y needed here
+        pfac = jnp.exp(-1j * 2 * jnp.pi * (kcoords_out @ shift_))[..., :, :]
+    else:
+        pfac = 1
 
     return k_resampled * jnp.expand_dims(xint_val, 0) * pfac
