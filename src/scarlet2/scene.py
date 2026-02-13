@@ -102,3 +102,95 @@ class Scene(Module):
 
             validation_results = check_scene(self)
             print_validation_results("Source validation results", validation_results)
+
+    def fit(
+        self,
+        observations,
+        parameters,
+        schedule=None,
+        max_iter=100,
+        e_rel=1e-4,
+        progress_bar=True,
+        callback=None,
+        **kwargs,
+    ):
+        """Fit model `parameters` of every source in the scene to match `observations`.
+
+        Parameters
+        ----------
+        observations: :py:class:`~scarlet2.Observation` or list
+            The observations to fit the model to.
+        parameters: :py:class:`~scarlet2.Parameters`
+            Parameters to optimize. This method will ignore all parameters that are not in this list.
+        schedule: callable, optional
+            A function that maps optimizer step count to value. See :py:class:`optax.Schedule` for details.
+        max_iter: int, optional
+            Maximum number of optimizer iterations
+        e_rel: float, optional
+            Upper limit for the relative change in the norm of any parameter to
+            terminate the optimization early.
+        progress_bar: bool, optional
+            Whether to show a progress bar
+        callback: callable, optional
+            Function to be called on the current state of the optimized scene.
+            Signature `callback(scene, convergence, loss) -> None`, where
+            `convergence` is a tree of the same structure as `scene`, and `loss`
+            is the current value of the log_posterior.
+        **kwargs: dict, optional
+            Additional keyword arguments passed to the `optax.scale_by_adam` optimizer.
+
+        Returns
+        -------
+        Scene
+            The scene model with updated parameters
+
+        See Also
+        --------
+        :py:func:`~scarlet2.fit`
+        """
+        from .infer import fit
+
+        # probably redundant, but better safe than sorry:
+        self.set_parameters(parameters)
+        return fit(self, observations, schedule, max_iter, e_rel, progress_bar, callback, **kwargs)
+
+    def sample(
+        self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs
+    ):
+        """Sample `parameters` of every source in the scene to get posteriors given `observations`.
+
+        This method runs the HMC NUTS sampler from `numpyro` to get parameter
+        posteriors. It uses the likelihood of `observations` as well as the `prior`
+        attribute set for every :py:class:`~scarlet2.Parameter` in `parameters`.
+
+        Parameters
+        ----------
+        observations: :py:class:`~scarlet2.Observation` or list
+            The observations to fit the models to.
+        parameters: :py:class:`~scarlet2.Parameters`
+            Parameters to sample. This method will ignore all parameters that are not in this list.
+            Every parameter in the list needs to have the attribute `prior` set.
+        seed: int, optional
+            RNG seed for the sampler
+        num_warmup: int, optional
+            Number of samples during HMC warm-up
+        num_samples: int, optional
+            Number of samples to create from tuned HMC
+        progress_bar: bool, optional
+            Whether to show a progress bar
+        **kwargs: dict, optional
+            Additional keyword arguments passed to the `numpyro.infer.NUTS` sampler.
+
+        Returns
+        -------
+        numpyro.infer.mcmc.MCMC
+
+        See Also
+        --------
+        :py:func:`~scarlet2.sample`
+        """
+        from .infer import sample
+
+        # probably redundant, but better safe than sorry:
+        self.set_parameters(parameters)
+        return sample(self, observations, seed, num_warmup, num_samples, progress_bar, **kwargs)
