@@ -48,7 +48,7 @@ class Module(eqx.Module):
         return self
 
     def get(self, p):
-        """Get parameter arrays from this module
+        """Get parameter(s) `p` from this module
 
         Parameters
         ----------
@@ -60,7 +60,7 @@ class Module(eqx.Module):
         tuple
             requested data arrays for `parameters`
         """
-        # this method is uesd during optimization where the module is a copy without parameter attribute
+        # this method is used during optimization/sampling where the module is a copy without .parameters
         # hence is must be passed as argument
         if isinstance(p, Parameters):
             get_node = lambda node, pnode: node if isinstance(pnode, Parameter) else None
@@ -80,6 +80,35 @@ class Module(eqx.Module):
         if len(plist) == 0:
             raise IndexError(f"Name {p} not found in parameters")
         return plist[0]
+
+    def replace(self, p, v):
+        """Replace parameter(s) `p` from this module with `v`
+
+        Parameters
+        ----------
+        p: (:py:class:`Parameters`, :py:class:`Parameter`, str)
+            optimization parameters to replace
+        v: (jnp.array, list[jnp.array])
+            values to replace parameters with
+        """
+        # this method is used during optimization/sampling where the module is a copy without .parameters
+        # hence is must be passed as argument
+        if isinstance(p, Parameters):
+            # we con't do jtu.tree_map here because v is a list not a tree
+            where = lambda model: model.get(p)  # noqa: E731
+            return eqx.tree_at(where, self, replace=v)
+
+        # lookup by name or individual parameter is used for checking/validation
+        # as they don't know what module/parameters they belong to, it only works for modules with .parameters
+        if not hasattr(self, "parameters"):
+            raise AttributeError("Module.get requires parameters attribute to be set for this module.")
+        parameters = self.parameters
+
+        if isinstance(p, Parameter):
+            replace_node = lambda node, pnode: v if pnode is p else node
+        elif isinstance(p, str):
+            replace_node = lambda node, pnode: v if (pnode is not None and pnode.name == p) else node
+        return jtu.tree_map(replace_node, self, parameters.tree)
 
 
 def _to_pixels(frame, field):
@@ -122,17 +151,15 @@ def _to_pixels(frame, field):
                 # jax throws exceptions for deprecated attributes, so we ignore exceptions silently
                 pass
 
-        try:
-            import numpyro.distributions as dist
-        except ImportError as err:
-            raise ImportError("scarlet2.Parameter requires numpyro.") from err
-
-        if isinstance(field, dist.Distribution):
-            # converting SkyCoord to Array in numpyro distributions requires
-            # to update batch and event shape
-            batch_shape = max([getattr(field, name).shape for name in field.reparametrized_params])
-            field._batch_shape = batch_shape
-            return dist.Independent(field, 1)
+        # TODO: is this needed for distributions that use SkyCoord arguments?
+        # Doesn't play nice with ScorePrior
+        #
+        # if isinstance(field, dist.Distribution):
+        #     # converting SkyCoord to Array in numpyro distributions requires
+        #     # to update batch and event shape
+        #     batch_shape = max([getattr(field, name).shape for name in field.reparametrized_params])
+        #     field._batch_shape = batch_shape
+        #     return dist.Independent(field, 1)
 
     return field
 
@@ -187,7 +214,7 @@ class Parameter:
                 base.set_parameters(parameters)
 
                 constraint = _to_pixels(base.frame, constraint) if constraint is not None else None
-                prior = _to_pixels(base.frame, prior) if prior is not None else None
+                # prior = _to_pixels(base.frame, prior) if prior is not None else None
                 stepsize = _to_pixels(base.frame, stepsize) if stepsize is not None else None
 
             self.constraint = constraint
@@ -278,8 +305,8 @@ class Parameters:
         return _tree_select(get_p, self.tree)
 
     def _select(self, fieldname):
-        get_field = lambda node: getattr(node, fieldname) if isinstance(node, Parameter) else None
-        return _tree_select(get_field, self.tree)
+        # preserves the order of parameters, in particular the same as Module.get
+        return tuple(getattr(p, fieldname) for p in self.as_list())
 
     @property
     def names(self):

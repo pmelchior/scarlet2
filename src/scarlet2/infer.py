@@ -109,8 +109,6 @@ def sample(scene, observations, seed=0, num_warmup=100, num_samples=200, progres
     sample_node = lambda node, p: numpyro.sample(p.name, p.prior) if isinstance(p, Parameter) else node
 
     def pyro_model(model):
-        # samples = tuple(numpyro.sample(p.name, p.prior) for p in self.parameters)
-        # model_ = model.replace_parameters(samples)
         model_ = jtu.tree_map(sample_node, model, scene.parameters.tree)
         pred = model_()  # create prediction once for all observations
         # dealing with multiple observations
@@ -127,7 +125,9 @@ def sample(scene, observations, seed=0, num_warmup=100, num_samples=200, progres
 
         from numpyro.infer.initialization import init_to_value
 
-        values = {p.name: p.node for p in scene.parameters}
+        values = scene.get(scene.parameters)
+        params = scene.parameters.as_list()
+        values = {p.name: value for p, value in zip(params, values, strict=False)}
         init_strategy = partial(init_to_value, values=values)
 
     nuts_kernel = NUTS(pyro_model, init_strategy=init_strategy, **kwargs)
