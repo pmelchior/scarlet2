@@ -44,6 +44,9 @@ class Module(eqx.Module):
         """
         # Monkey patching parameters onto base model:
         # allows to move the parameters with the model without eqx replicating them during fit/sample
+        # TODO
+        # parameters_ = copy.deepcopy(parameters)
+        # parameters_.base = self
         object.__setattr__(self, "parameters", parameters)
         return self
 

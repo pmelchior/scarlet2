@@ -67,8 +67,8 @@ def test_fit():
             )
 
     maxiter = 10
-    scene_ = fit(scene, obs, max_iter=maxiter, progress_bar=False)
-    return scene_
+    model_ = fit(scene, obs, max_iter=maxiter, progress_bar=False)
+    return model_.scene
 
 
 def test_sample(scene):

@@ -152,7 +152,20 @@ class Scene(Module):
 
         # probably redundant, but better safe than sorry:
         self.set_parameters(parameters)
-        return fit(self, observations, schedule, max_iter, e_rel, progress_bar, callback, **kwargs)
+
+        # making sure we can iterate
+        if not isinstance(observations, (list, tuple)):
+            observations = (observations,)
+        # don't use this function with observation parameters
+        if any(hasattr(obj, "parameters") for obj in observations):
+            msg = "For Scene.fit(), observations must not have parameters. Use scarlet2.fit() instead."
+            raise RuntimeError(msg)
+
+        model_ = fit(self, observations, schedule, max_iter, e_rel, progress_bar, callback, **kwargs)
+        # backward compatibility: only return optimized scene
+        scene_ = model_.scene
+        scene_.set_parameters(parameters)
+        return scene_
 
     def sample(
         self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs
