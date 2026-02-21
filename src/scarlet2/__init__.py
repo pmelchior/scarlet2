@@ -26,6 +26,9 @@ class Parameterization:
     """Parameters of the currently opened context"""
 
 
+parameter_registry = dict()
+
+
 from . import init, measure, plot
 from .bbox import Box
 from .frame import Frame

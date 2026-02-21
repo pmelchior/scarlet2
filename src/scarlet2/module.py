@@ -1,3 +1,5 @@
+import re
+
 import astropy.units as u
 import equinox as eqx
 import jax.numpy as jnp
@@ -5,18 +7,12 @@ import jax.tree_util as jtu
 import varname
 from astropy.coordinates import SkyCoord
 
-from . import Parameterization
+from . import Parameterization, parameter_registry
 from .validation_utils import (
     ValidationError,
     ValidationMethodCollector,
     ValidationResult,
-    print_validation_results,
 )
-
-
-def _tree_select(func, pytree, *rest):
-    leaves = jtu.tree_leaves(jtu.tree_map(func, pytree, *rest, is_leaf=lambda x: x is None))
-    return tuple(_ for _ in leaves if _ is not None)
 
 
 class Module(eqx.Module):
@@ -26,92 +22,68 @@ class Module(eqx.Module):
     and adds extra functionality to deal with optimizable parameters.
     """
 
+    registry_key: str = eqx.field(init=False, default="", repr=False)
+
     def __call__(self):
         """Evaluate the model"""
         raise NotImplementedError
 
-    def set_parameters(self, parameters):
-        """Define parameters for this module
-
-        Parameters
-        ----------
-        parameters: :py:class:`Parameters`
-            Optimization parameters
+    @property
+    def parameters(self):
+        """Parameters defined for this module
 
         Returns
         -------
-        self
+        dict
+            name: (node, param) mapping for all parameters
         """
-        # Monkey patching parameters onto base model:
-        # allows to move the parameters with the model without eqx replicating them during fit/sample
-        # TODO
-        # parameters_ = copy.deepcopy(parameters)
-        # parameters_.base = self
-        object.__setattr__(self, "parameters", parameters)
-        return self
+        return parameter_registry.get(self.registry_key, dict())
 
-    def get(self, p):
-        """Get parameter(s) `p` from this module
-
-        Parameters
-        ----------
-        p: (:py:class:`Parameters`, :py:class:`Parameter`, str)
-            optimization parameters to extract
+    def get_parameters(self):
+        """Get parameter(s) from this module
 
         Returns
         -------
-        tuple
-            requested data arrays for `parameters`
+        dict
+            requested data arrays for `parameters`, ordered by their `name`
         """
-        # this method is used during optimization/sampling where the module is a copy without .parameters
-        # hence is must be passed as argument
-        if isinstance(p, Parameters):
-            get_node = lambda node, pnode: node if isinstance(pnode, Parameter) else None
-            return _tree_select(get_node, self, p.tree)
+        return {name: node for name, (node, param) in self.parameters.items()}
 
-        # lookup by name or individual parameter is used for checking/validation
-        # as they don't know what module/parameters they belong to, it only works for modules with .parameters
-        if not hasattr(self, "parameters"):
-            raise AttributeError("Module.get requires parameters attribute to be set for this module.")
-        parameters = self.parameters
-
-        if isinstance(p, Parameter):
-            get_node = lambda node, pnode: node if pnode is p else None
-        elif isinstance(p, str):
-            get_node = lambda node, pnode: node if (pnode is not None and pnode.name == p) else None
-        plist = _tree_select(get_node, self, parameters.tree)
-        if len(plist) == 0:
-            raise IndexError(f"Name {p} not found in parameters")
-        return plist[0]
-
-    def replace(self, p, v):
-        """Replace parameter(s) `p` from this module with `v`
+    def replace(self, values):
+        """Replace parameter(s) from this module with `values`
 
         Parameters
         ----------
-        p: (:py:class:`Parameters`, :py:class:`Parameter`, str)
-            optimization parameters to replace
-        v: (jnp.array, list[jnp.array])
-            values to replace parameters with
+        values: dict[str,jnp.array]
+            values to replace parameters with, identified by their `name`
+
+        Returns
+        -------
+        Module:
+            new module with parameter(s) replaced by `values`
         """
-        # this method is used during optimization/sampling where the module is a copy without .parameters
-        # hence is must be passed as argument
-        if isinstance(p, Parameters):
-            # we con't do jtu.tree_map here because v is a list not a tree
-            where = lambda model: model.get(p)  # noqa: E731
-            return eqx.tree_at(where, self, replace=v)
+        params = self.parameters  # dict (name: node, param)
+        leaves = jtu.tree_leaves(self)
+        found_leaves = []
+        found_names = []
 
-        # lookup by name or individual parameter is used for checking/validation
-        # as they don't know what module/parameters they belong to, it only works for modules with .parameters
-        if not hasattr(self, "parameters"):
-            raise AttributeError("Module.get requires parameters attribute to be set for this module.")
-        parameters = self.parameters
+        # .get_parameters produces values as dict, but infer.fit requires a values dataclass
+        values_ = values if isinstance(values, dict) else values.__dict__
 
-        if isinstance(p, Parameter):
-            replace_node = lambda node, pnode: v if pnode is p else node
-        elif isinstance(p, str):
-            replace_node = lambda node, pnode: v if (pnode is not None and pnode.name == p) else node
-        return jtu.tree_map(replace_node, self, parameters.tree)
+        for name in values_:
+            node, param = params[name]
+            for i, leaf in enumerate(leaves):
+                if leaf is node:
+                    found_leaves.append(i)
+                    found_names.append(name)
+                    break
+
+        where = lambda model: tuple(jtu.tree_leaves(model)[i] for i in found_leaves)
+        if isinstance(values, dict):
+            values_ = tuple(values[name] for name in found_names)
+        else:
+            values_ = tuple(getattr(values, name) for name in found_names)
+        return eqx.tree_at(where, self, replace=values_)
 
 
 def _to_pixels(frame, field):
@@ -167,6 +139,16 @@ def _to_pixels(frame, field):
     return field
 
 
+def sanitize_attr_name(name: str) -> str:
+    """Replace disallowed characters for Python class attributes with '_'."""
+    # Replace any character that isn't alphanumeric or underscore
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+    # Prefix with '_' if starts with a digit
+    if sanitized and sanitized[0].isdigit():
+        sanitized = "_" + sanitized
+    return sanitized
+
+
 class Parameter:
     """Class representing a single optimizable parameter"""
 
@@ -199,26 +181,24 @@ class Parameter:
         :py:class:`~scarlet2.Parameters`,
         """
         if name is None:
-            self.name = varname.argname("node", vars_only=False)
-        else:
-            self.name = name
+            name = varname.argname("node", vars_only=False)
+        name = sanitize_attr_name(name)
 
         # add this source to the active scene
         try:
-            base = Parameterization.parameters.base
             parameters = Parameterization.parameters
 
-            # go to pixel frame even if specified in sky coords
-            if hasattr(base, "frame"):
-                node_ = _to_pixels(base.frame, node)
-                # node needs to be updated in base!
-                replace_node = lambda n: node_ if n is node else n
-                base = jtu.tree_map(replace_node, base)
-                base.set_parameters(parameters)
-
-                constraint = _to_pixels(base.frame, constraint) if constraint is not None else None
-                # prior = _to_pixels(base.frame, prior) if prior is not None else None
-                stepsize = _to_pixels(base.frame, stepsize) if stepsize is not None else None
+            # TODO: go to pixel frame even if specified in sky coords
+            # if hasattr(base, "frame"):
+            #     node_ = _to_pixels(base.frame, node)
+            #     # node needs to be updated in base!
+            #     replace_node = lambda n: node_ if n is node else n
+            #     base = jtu.tree_map(replace_node, base)
+            #     base.set_parameters(parameters)
+            #
+            #     constraint = _to_pixels(base.frame, constraint) if constraint is not None else None
+            #     # prior = _to_pixels(base.frame, prior) if prior is not None else None
+            #     stepsize = _to_pixels(base.frame, stepsize) if stepsize is not None else None
 
             self.constraint = constraint
             self.prior = prior
@@ -233,7 +213,7 @@ class Parameter:
                 self.constraint_transform = biject_to(self.constraint)
 
             # add parameter to parameter tree and update parameters.tree
-            parameters.__iadd__(node, self)
+            parameters.__iadd__(name, node, self)
 
         except AttributeError as err:
             msg = "A Parameter instance should only be created within the context of Parameters\n"
@@ -243,7 +223,7 @@ class Parameter:
     def __repr__(self):
         # equinox-like formatting
         chunks = []
-        for name in ["name", "constraint", "prior", "stepsize"]:
+        for name in ["constraint", "prior", "stepsize"]:
             field = getattr(self, name)
             field = eqx.tree_pformat(field)
             chunks.append(f"  {name}={field}")
@@ -252,7 +232,7 @@ class Parameter:
         return mess
 
 
-class Parameters:
+class Parameters(dict):
     """Collection class that contains parameters"""
 
     def __init__(self, base):
@@ -288,48 +268,7 @@ class Parameters:
         --------
         :py:class:`~scarlet2.Parameter`, :py:class:`~scarlet2.Scene`, :py:func:`~scarlet2.relative_step`
         """
-        assert isinstance(base, Module)
         self.base = base
-        self.tree = jtu.tree_map(lambda node: None, base)  # same treedef as base, but all leaves are None
-        # monkey patching parameters onto base
-        self.base.set_parameters(self)
-
-    def as_list(self):
-        """Return parameter definition as list
-
-        This method uses the same order as :py:func:`~scarlet2.Module.get`.
-
-        Returns
-        -------
-        tuple
-            optimization parameters in order
-        """
-        get_p = lambda node: node if isinstance(node, Parameter) else None
-        return _tree_select(get_p, self.tree)
-
-    def _select(self, fieldname):
-        # preserves the order of parameters, in particular the same as Module.get
-        return tuple(getattr(p, fieldname) for p in self.as_list())
-
-    @property
-    def names(self):
-        """Return list of parameter names"""
-        return self._select("name")
-
-    @property
-    def priors(self):
-        """Return list of parameter priors"""
-        return self._select("prior")
-
-    @property
-    def stepsizes(self):
-        """Return list of parameter stepsizes"""
-        return self._select("stepsize")
-
-    @property
-    def constraints(self):
-        """Return list of parameter constraints"""
-        return self._select("constraint")
 
     def __enter__(self):
         # context manager to register sources
@@ -340,47 +279,50 @@ class Parameters:
 
     def __exit__(self, exc_type, exc_value, traceback):
         Parameterization.parameters = None
+        # save with base as key, and the remaining dict as value
+        key = hex(id(self.base))
+        if key not in parameter_registry:
+            parameter_registry[key] = super().copy()
+        else:
+            parameter_registry[key].update(super().copy())
+
+        # monkey patch key into base for base.parameter lookup
+        object.__setattr__(self.base, "registry_key", key)
 
         # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
-        from .validation_utils import VALIDATION_SWITCH
 
-        if VALIDATION_SWITCH:
-            from .validation import check_parameters
-
-            validation_results = check_parameters(self)
-            print_validation_results("Parameters validation results", validation_results)
+        # TODO: reenable
+        # if VALIDATION_SWITCH:
+        #     from .validation import check_parameters
+        #
+        #     validation_results = check_parameters(self)
+        #     print_validation_results("Parameters validation results", validation_results)
 
     def __repr__(self):
         # equinox-like formatting
         mess = f"{self.__class__.__name__}(\n"
-        mess += f"  base={self.base.__class__.__name__},\n"
-        mess += "  list=[\n"
-        chunks = []
-        for p in self.as_list():
-            mess_ = p.__repr__()
-            chunk = ""
+        for name, (_node, param) in self.items():
+            mess += f"  {name}:"
+            mess_ = param.__repr__()
             for line in mess_.splitlines(keepends=True):
-                chunk += "    " + line
-            chunks.append(chunk)
-
-        mess += ",\n".join(chunks)
-        mess += "\n  ]\n"
-        mess += ")"
+                mess += "  " + line
+            mess += ",\n"
+        mess += ")\n"
         return mess
 
-    def __iadd__(self, node, parameter):
+    def __iadd__(self, name, node, parameter):
         """Add parameter to collection
 
         Parameters
         ----------
+        name: str
+            Parameter name
         node: jnp.ndarray
             Parameter array in the base model
         parameter: :py:class:`~scarlet2.Parameter`
             Parameter specification to be added
         """
-        select_node = lambda pnode, n: parameter if n is node else pnode
-        new_ptree = jtu.tree_map(select_node, self.tree, self.base, is_leaf=lambda x: x is None)
-        object.__setattr__(self, "tree", new_ptree)
+        self[name] = (node, parameter)
         return self
 
     def __isub__(self, name):
@@ -389,53 +331,9 @@ class Parameters:
         Parameters
         ----------
         name: str
-            Name of the parameter to be removed. Silently ignores if named parameter
-            is not in the collection.
+            Parameter name in the base model
         """
-        select_node = lambda pnode: None if (pnode is not None and pnode.name == name) else pnode
-        new_ptree = jtu.tree_map(select_node, self.tree, is_leaf=lambda x: x is None)
-        object.__setattr__(self, "tree", new_ptree)
-        return self
-
-    def __getitem__(self, i):
-        """Access item in collection
-
-        Parameters
-        ----------
-        i: (int,slice,str)
-            Index, slice, or name to access the parameter collection.
-
-        Returns
-        -------
-        :py:class:`~scarlet2.Parameter`
-            If `i` is a slice, returns a subset of the collection.
-        """
-        if isinstance(i, str):
-            select_node = lambda pnode: pnode if (pnode is not None and pnode.name == i) else None
-            leaves = jtu.tree_leaves(jtu.tree_map(select_node, self.tree, is_leaf=lambda x: x is None))
-            leaves = tuple(_ for _ in leaves if _ is not None)
-            if len(leaves) == 0:
-                raise IndexError(f"Name {i} not found in parameters")
-            return leaves[0]
-        return self.as_list()[i]
-
-    def __len__(self):
-        """Length of the collection"""
-        return len(self.as_list())
-
-    def set_base(self, base):
-        """Set base model
-
-        Parameters
-        ----------
-        base: :py:class:`~scarlet2.Module`
-            Base model
-
-        Returns
-        -------
-        self
-        """
-        object.__setattr__(self, "base", base)
+        self._params.pop(name, None)
         return self
 
 
@@ -472,7 +370,7 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
     :py:func:`~scarlet2.validation.check_scene`.
     """
 
-    def __init__(self, parameter: Parameter, parameters: Parameters) -> None:
+    def __init__(self, parameter: Parameter) -> None:
         """Initialize the SceneValidator.
 
         Parameters
@@ -484,7 +382,6 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
 
         """
         self.parameter = parameter
-        self.parameters = parameters
 
     def check_constrained_parameter_is_feasible(self) -> list[ValidationResult]:
         """Check that a constrained parameter has a feasible value.
@@ -496,8 +393,7 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
             or `ValidationError`.
         """
         validation_results: list[ValidationResult] = []
-        param = self.parameter
-        node = self.parameters.base.get(param)
+        node, param = self.parameter
         constraint_is_none = param.constraint is None
         if not constraint_is_none:
             is_feasible = param.constraint.check(node)
@@ -528,7 +424,7 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
             or `ValidationError`.
         """
         validation_results: list[ValidationResult] = []
-        param = self.parameter
+        node, param = self.parameter
         if param.prior is None and param.stepsize is None:
             validation_results.append(
                 ValidationError(

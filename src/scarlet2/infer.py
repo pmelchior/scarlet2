@@ -1,12 +1,11 @@
-import copy
-from collections import defaultdict
+import operator
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
-from .module import Module, Parameter, Parameters
+from .module import Parameter
 from .scene import Scene
 from .validation_utils import (
     ValidationError,
@@ -16,25 +15,6 @@ from .validation_utils import (
     ValidationWarning,
     print_validation_results,
 )
-
-
-# helper class to optimize scene and observation parameters
-class _Model(Module):
-    scene: Scene
-    observations: list
-
-    def __init__(self, scene, observations):
-        self.scene = scene
-        self.observations = observations
-
-        # define empty parameters
-        Parameters(self)
-        # add scene and observation parameters if present
-        if hasattr(scene, "parameters"):
-            object.__setattr__(self.parameters.tree, "scene", scene.parameters.tree)
-        for i, obs in enumerate(observations):
-            if hasattr(obs, "parameters"):
-                self.parameters.tree.observations[i] = obs.parameters.tree
 
 
 def sample(scene, observations, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs):
@@ -156,9 +136,21 @@ def sample(scene, observations, seed=0, num_warmup=100, num_samples=200, progres
     return mcmc
 
 
+def _dict_to_eqx_module(name: str, data: dict):
+    # Build field annotations dynamically
+    annotations = {k: type(v) for k, v in data.items()}
+
+    # Create a class that inherits from eqx.Module
+    cls = type(name, (eqx.Module,), {"__annotations__": annotations})
+
+    # Instantiate with the dict values
+    return cls(**data)
+
+
 def fit(
     scene,
     observations,
+    *args,
     schedule=None,
     max_iter=100,
     e_rel=1e-4,
@@ -177,6 +169,8 @@ def fit(
         The model of the scene.
     observations: :py:class:`~scarlet2.Observation` or list
         The observations to fit the model to.
+    *args: list, optional
+        Additional arguments passed. Only used for backwards (v0.3) compatibility.
     schedule: callable, optional
         A function that maps optimizer step count to value. See :py:class:`optax.Schedule` for details.
     max_iter: int, optional
@@ -213,21 +207,24 @@ def fit(
     # making sure we can iterate
     if not isinstance(observations, (list, tuple)):
         observations = (observations,)
+    obs_params = {}
     for obs in observations:
         obs.check_set_renderer(scene.frame)
+        obs_params.update(obs.parameters)
 
     # scene and observations can have parameters: combine them into one model
-    model = _Model(scene, observations)
-    parameters = model.parameters
+    parameters = scene.parameters | obs_params
     if len(parameters) == 0:
-        return model
+        return scene
 
-    # make schedule with the parameter stepsizes
-    steps = jtu.tree_map(
-        lambda node: node.stepsize if isinstance(node, Parameter) else None,
-        parameters.tree,
-        is_leaf=lambda x: x is None,
-    )
+    # construct eqx.Module containing all parameter arrays
+    values = {name: node for name, (node, params) in parameters.items()}
+    values = _dict_to_eqx_module("ParamModel", values)
+    # same tree structure but for param specs so that we can use them below
+    treedef = jtu.tree_structure(values)
+    params = tuple(param for name, (node, param) in parameters.items())
+    params = jtu.build_tree(treedef, params)
+    steps = jtu.tree_map(lambda param: param.stepsize, params)
 
     def scale_by_stepsize() -> base.GradientTransformation:
         # adapted from optax.scale_by_param_block_norm()
@@ -257,29 +254,25 @@ def fit(
         scale_by_stepsize(),
     )
 
-    # transform to unconstrained parameters (undo monkey patch: no .parameters)
-    model = _constraint_replace(model, parameters, inv=True)
-
-    # get optimizer initialized with the optimization parameters
-    filter_spec = jtu.tree_map(
-        lambda node: isinstance(node, Parameter),
-        parameters.tree,
-        is_leaf=lambda x: x is None,
-    )
-    opt_state = optim.init(eqx.filter(model, filter_spec))
+    # transform to unconstrained parameters
+    values = _constraint_replace(values, params, inv=True)
+    opt_state = optim.init(values)
 
     with trange(max_iter, disable=not progress_bar) as t:
         for step in t:  # noqa: B007
             # optimizer step
-            model, loss, opt_state, convergence = _make_step(model, parameters, filter_spec, optim, opt_state)
+            values, loss, opt_state, convergence = _make_step(
+                values, params, scene, observations, optim, opt_state
+            )
 
             # compute max change across all non-fixed parameters for convergence test
             max_change = jax.tree_util.tree_reduce(lambda a, b: max(a, b), convergence)
 
             # report current iteration results to callback
             if callback is not None:
-                model_ = _constraint_replace(model, parameters.tree)
-                callback(model_, convergence, loss)
+                values_ = _constraint_replace(values, params)
+                scene_ = scene.replace(values_)
+                callback(scene_, convergence, loss)
 
             # Log the loss and max_change in the tqdm progress bar
             t.set_postfix(loss=f"{loss:08.2f}", max_change=f"{max_change:1.6f}")
@@ -288,11 +281,9 @@ def fit(
             if max_change < e_rel:
                 break
 
-    # transform back to constrained variables and attach parameters
-    model = _constraint_replace(model, parameters)
-    new_params = copy.deepcopy(parameters)
-    new_params.set_base(scene)
-    model.set_parameters(new_params)
+    # transform back to constrained variables and replace in scene
+    values = _constraint_replace(values, params)
+    scene_ = scene.replace(values)
 
     # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
     from .validation_utils import VALIDATION_SWITCH
@@ -300,86 +291,76 @@ def fit(
     if VALIDATION_SWITCH:
         from .validation import check_fit
 
-        for obs in model.observations:
+        for obs in observations:
             print(f"Running validation checks on the fit of the scene for observation {obs.name}.")
-            validation_results = check_fit(model.scene, obs)
+            validation_results = check_fit(scene_, obs)
             print_validation_results("Fit validation results", validation_results)
 
-    return model
+    return scene_
 
 
-def _constraint_replace(model, parameters, inv=False):
+def _constraint_replace(values, params, inv=False):
     # replace any parameter with constraint into unconstrained ones by calling its constraint bijector
-    # return transformed pytree
-    def node_transform(node, param):
-        if param is not None:
-            if param.constraint is not None:
-                func = param.constraint_transform if inv is False else param.constraint_transform.inv
-                return func(node)
-            else:
-                return node
+    def transform(value, param):
+        if param.constraint is not None:
+            func = param.constraint_transform if inv is False else param.constraint_transform.inv
+            return func(value)
         else:
-            return node
+            return value
 
-    return jtu.tree_map(node_transform, model, parameters.tree)
+    return jtu.tree_map(transform, values, params)
 
 
 # update step for optax optimizer
 @eqx.filter_jit
-def _make_step(model, parameters, filter_spec, optim, opt_state):
-    from .nn import ScorePrior, pad_fwd
-
-    def loss_fn(model):
+def _make_step(values, params, scene, observations, optim, opt_state):
+    def loss_fn(values):
         # parameters now obey constraints
         # transformation happens in the grad path, so gradients are wrt to unconstrained variables
         # likelihood and prior grads transparently apply the Jacobians of these transformations
-        model = _constraint_replace(model, parameters)
-        scene = model.scene()
-        log_like = sum(obs.log_likelihood(scene) for obs in model.observations)
+        values_ = _constraint_replace(values, params)
+        scene_ = scene.replace(values_)()
+        log_like = sum(obs.log_likelihood(scene_) for obs in observations)
 
         # add log prior for all parameters which define priors
-        log_prior = 0
-        param_values = model.get(parameters)
-        priors = parameters.priors
+        log_prior = jtu.tree_reduce(
+            operator.add,
+            jtu.tree_map(
+                lambda value, param: param.prior.log_prob(value) if param.prior is not None else 0,
+                values,
+                params,
+            ),
+        )
 
-        # Gather parameters with the same ScorePrior for parallel evaluation
-        grouped = defaultdict(list)
-        for prior, value in zip(priors, param_values, strict=False):
-            if isinstance(prior, ScorePrior):
-                grouped[prior].append(pad_fwd(value, prior._model.shape)[0])
-            elif prior is not None:
-                log_prior += prior.log_prob(value)
-
-        if len(grouped) > 0:
-            log_prior += sum(
-                sum(
-                    jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0))
-                    for prior, arr_list in grouped.items()
-                )
-            )
+        # TODO: Gather parameters with the same ScorePrior for parallel evaluation
+        # from .nn import ScorePrior, pad_fwd
+        # grouped = defaultdict(list)
+        # for prior, value in zip(priors, values, strict=False):
+        #     if isinstance(prior, ScorePrior):
+        #         grouped[prior].append(pad_fwd(value, prior._model.shape)[0])
+        #     elif prior is not None:
+        #         log_prior += prior.log_prob(value)
+        #
+        # if len(grouped) > 0:
+        #     log_prior += sum(
+        #         sum(
+        #             jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0))
+        #             for prior, arr_list in grouped.items()
+        #         )
+        #     )
 
         return -(log_like + log_prior)
 
-    if filter_spec is None:
-        loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
-    else:
-
-        @eqx.filter_value_and_grad
-        def filtered_loss_fn(diff_model, static_model):
-            model = eqx.combine(diff_model, static_model)
-            return loss_fn(model)
-
-        diff_model, static_model = eqx.partition(model, filter_spec)
-        loss, grads = filtered_loss_fn(diff_model, static_model)
-
-    updates, opt_state = optim.update(grads, opt_state, model)
-    model_ = eqx.apply_updates(model, updates)
+    loss, grads = eqx.filter_value_and_grad(loss_fn)(values)
+    jax.debug.print("grads {x}", x=grads.spectrum_0)
+    updates, opt_state = optim.update(grads, opt_state, values)
+    values_ = eqx.apply_updates(values, updates)
 
     # for convergence criterion: compute norms of parameters and updates
     norm = lambda x, dx: 0 if dx is None else jnp.linalg.norm(dx) / jnp.linalg.norm(x)
-    convergence = jax.tree_util.tree_map(lambda x, dx: norm(x, dx), *(model, updates))
+    convergence = jtu.tree_map(lambda x, dx: norm(x, dx), values, updates)
 
-    return model_, loss, opt_state, convergence
+    return values_, loss, opt_state, convergence
 
 
 class FitValidator(metaclass=ValidationMethodCollector):

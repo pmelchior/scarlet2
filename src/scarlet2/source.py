@@ -2,7 +2,6 @@ import operator
 
 import jax
 import jax.numpy as jnp
-import jax.tree_util as jtu
 from astropy.coordinates import SkyCoord
 
 from . import Scenery
@@ -144,10 +143,6 @@ class Source(Component):
         # add this source to the active scene
         try:
             Scenery.scene.sources.append(self)
-            # if scene has .parameters, we need to add an empty tree for the new source
-            if hasattr(Scenery.scene, "parameters"):
-                empty_tree = jtu.tree_map(lambda node: None, self)
-                Scenery.scene.parameters.tree.sources.append(empty_tree)
 
         except AttributeError:
             print("Source can only be created within the context of a Scene")
