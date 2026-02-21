@@ -85,6 +85,9 @@ class Scene(Module):
         return model
 
     def __enter__(self):
+        # this scene might have parameters defined, we need to reset its registry key
+        object.__setattr__(self, "registry_key", "")
+
         # context manager to register sources
         # purpose is to provide scene.frame to source inits that will need some of its information
         # also allows us to append the sources automatically to the scene

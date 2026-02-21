@@ -286,6 +286,7 @@ def fit(
 
     # transform back to constrained variables and replace in scene
     values = _constraint_replace(values, params)
+    # scene_ is a copy, but its registry_key still points to scene.parameters, can thus be reused
     scene_ = scene.set(values)
 
     # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value

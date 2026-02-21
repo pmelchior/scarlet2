@@ -23,8 +23,7 @@ def setup_validation():
 
 def test_fit(scene, good_obs):
     max_iter = 10
-    scene_ = fit(scene, good_obs, max_iter=max_iter, progress_bar=False)
-    return scene_
+    fit(scene, good_obs, max_iter=max_iter, progress_bar=False)
 
 
 def test_sample(scene, good_obs):

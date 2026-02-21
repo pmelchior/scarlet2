@@ -332,7 +332,8 @@ class Parameters(dict):
             Parameter specification to be added
         """
         # find index of node in leaves of base
-        # TODO: what do we do when somebody is modifying base (like adding a source to scene)?
+        # Note: this lookup would be broken if someone modifies base after the parameters are define
+        # The context manager of Scene therefore resets the registry_key of base for an empty parameter list
         leaves = jtu.tree_leaves(self.base)
         idx = None
         for i, leaf in enumerate(leaves):
