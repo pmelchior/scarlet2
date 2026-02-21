@@ -22,7 +22,7 @@ class Module(eqx.Module):
     and adds extra functionality to deal with optimizable parameters.
     """
 
-    registry_key: str = eqx.field(init=False, default="", repr=False)
+    registry_key: str = eqx.field(init=False, default="")
 
     def __call__(self):
         """Evaluate the model"""
@@ -39,18 +39,31 @@ class Module(eqx.Module):
         """
         return parameter_registry.get(self.registry_key, dict())
 
-    def get_parameters(self):
+    def get(self, name=None):
         """Get parameter(s) from this module
+
+        Parameters
+        ----------
+        name: str, optional
+            Name of parameter. If not set, returns all parameters.
 
         Returns
         -------
         dict
-            requested data arrays for `parameters`, ordered by their `name`
+            requested data arrays for `parameters`
         """
-        return {name: node for name, (node, param) in self.parameters.items()}
+        leaves = jtu.tree_leaves(self)
+        if name is None:
+            return {name: leaves[idx] for name, (idx, param) in self.parameters.items()}
+        else:
+            if name in self.parameters:
+                idx, param = self.parameters[name]
+                return {name: leaves[idx]}
+            else:
+                return {}
 
-    def replace(self, values):
-        """Replace parameter(s) from this module with `values`
+    def set(self, values):
+        """Set parameter(s) from this module with `values`
 
         Parameters
         ----------
@@ -62,28 +75,25 @@ class Module(eqx.Module):
         Module:
             new module with parameter(s) replaced by `values`
         """
-        params = self.parameters  # dict (name: node, param)
-        leaves = jtu.tree_leaves(self)
-        found_leaves = []
-        found_names = []
-
         # .get_parameters produces values as dict, but infer.fit requires a values dataclass
         values_ = values if isinstance(values, dict) else values.__dict__
 
-        for name in values_:
-            node, param = params[name]
-            for i, leaf in enumerate(leaves):
-                if leaf is node:
-                    found_leaves.append(i)
-                    found_names.append(name)
-                    break
+        # get idx for all names values that are also in params
+        params = self.parameters  # name: (idx, param)
 
-        where = lambda model: tuple(jtu.tree_leaves(model)[i] for i in found_leaves)
-        if isinstance(values, dict):
-            values_ = tuple(values[name] for name in found_names)
-        else:
-            values_ = tuple(getattr(values, name) for name in found_names)
-        return eqx.tree_at(where, self, replace=values_)
+        def get_pair(name):
+            idx = params[name][0]
+            value = values[name] if isinstance(values, dict) else getattr(values, name)
+            return idx, value
+
+        found_leaves = dict([get_pair(name) for name in values_ if name in params])
+
+        def get_leaves(model):
+            leaves = jtu.tree_leaves(model)
+            return tuple(leaves[i] for i in found_leaves)
+
+        where = lambda model: get_leaves(model)
+        return eqx.tree_at(where, self, replace=found_leaves.values())
 
 
 def _to_pixels(frame, field):
@@ -274,20 +284,25 @@ class Parameters(dict):
         # context manager to register sources
         # purpose is to provide scene.frame to source inits that will need some of its information
         # also allows us to append the sources automatically to the scene
+
+        # monkey patch key into base for base.parameter lookup
+        key = hex(id(self.base))
+        object.__setattr__(self.base, "registry_key", key)
+
+        # put this instance on global context
         Parameterization.parameters = self
+
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        Parameterization.parameters = None
         # save with base as key, and the remaining dict as value
-        key = hex(id(self.base))
+        key = self.base.registry_key
         if key not in parameter_registry:
             parameter_registry[key] = super().copy()
         else:
             parameter_registry[key].update(super().copy())
 
-        # monkey patch key into base for base.parameter lookup
-        object.__setattr__(self.base, "registry_key", key)
+        Parameterization.parameters = None
 
         # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
 
@@ -322,7 +337,18 @@ class Parameters(dict):
         parameter: :py:class:`~scarlet2.Parameter`
             Parameter specification to be added
         """
-        self[name] = (node, parameter)
+        # find index of node in leaves of base
+        # TODO: what do we do when somebody is modifying base (like adding a source to scene)?
+        leaves = jtu.tree_leaves(self.base)
+        idx = None
+        for i, leaf in enumerate(leaves):
+            if leaf is node:
+                idx = i
+                break
+        if idx is None:
+            raise RuntimeError(f"Parameter {node} not found in {self.base}")
+
+        self[name] = (idx, parameter)
         return self
 
     def __isub__(self, name):

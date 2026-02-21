@@ -216,9 +216,11 @@ def fit(
     parameters = scene.parameters | obs_params
     if len(parameters) == 0:
         return scene
+    values = scene.get()
+    for obs in observations:
+        values |= obs.get()
 
     # construct eqx.Module containing all parameter arrays
-    values = {name: node for name, (node, params) in parameters.items()}
     values = _dict_to_eqx_module("ParamModel", values)
     # same tree structure but for param specs so that we can use them below
     treedef = jtu.tree_structure(values)
@@ -271,7 +273,7 @@ def fit(
             # report current iteration results to callback
             if callback is not None:
                 values_ = _constraint_replace(values, params)
-                scene_ = scene.replace(values_)
+                scene_ = scene.set(values_)
                 callback(scene_, convergence, loss)
 
             # Log the loss and max_change in the tqdm progress bar
@@ -283,7 +285,7 @@ def fit(
 
     # transform back to constrained variables and replace in scene
     values = _constraint_replace(values, params)
-    scene_ = scene.replace(values)
+    scene_ = scene.set(values)
 
     # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
     from .validation_utils import VALIDATION_SWITCH
@@ -319,7 +321,7 @@ def _make_step(values, params, scene, observations, optim, opt_state):
         # transformation happens in the grad path, so gradients are wrt to unconstrained variables
         # likelihood and prior grads transparently apply the Jacobians of these transformations
         values_ = _constraint_replace(values, params)
-        scene_ = scene.replace(values_)()
+        scene_ = scene.set(values_)()
         log_like = sum(obs.log_likelihood(scene_) for obs in observations)
 
         # add log prior for all parameters which define priors
@@ -352,7 +354,6 @@ def _make_step(values, params, scene, observations, optim, opt_state):
         return -(log_like + log_prior)
 
     loss, grads = eqx.filter_value_and_grad(loss_fn)(values)
-    jax.debug.print("grads {x}", x=grads.spectrum_0)
     updates, opt_state = optim.update(grads, opt_state, values)
     values_ = eqx.apply_updates(values, updates)
 

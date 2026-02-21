@@ -106,7 +106,7 @@ class Scene(Module):
     def fit(
         self,
         observations,
-        parameters,
+        *args,
         schedule=None,
         max_iter=100,
         e_rel=1e-4,
@@ -120,8 +120,8 @@ class Scene(Module):
         ----------
         observations: :py:class:`~scarlet2.Observation` or list
             The observations to fit the model to.
-        parameters: :py:class:`~scarlet2.Parameters`
-            Parameters to optimize. This method will ignore all parameters that are not in this list.
+        *args: list, optional
+            Additional arguments passed. Only used for backwards (v0.3) compatibility.
         schedule: callable, optional
             A function that maps optimizer step count to value. See :py:class:`optax.Schedule` for details.
         max_iter: int, optional
@@ -159,7 +159,16 @@ class Scene(Module):
             raise RuntimeError(msg)
 
         # TODO: check return, what to do with parameters
-        scene_ = fit(self, observations, schedule, max_iter, e_rel, progress_bar, callback, **kwargs)
+        scene_ = fit(
+            self,
+            observations,
+            schedule=schedule,
+            max_iter=max_iter,
+            e_rel=e_rel,
+            progress_bar=progress_bar,
+            callback=callback,
+            **kwargs,
+        )
         return scene_
 
     def sample(
