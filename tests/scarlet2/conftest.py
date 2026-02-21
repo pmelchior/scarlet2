@@ -116,6 +116,9 @@ def scene(good_obs, data_file):
                 constraint=constraints.positive,
                 stepsize=spec_step,
             )
+    # context can be reopened
+    with scene.parameters:
+        for i in range(len(scene.sources)):
             if i == 0:
                 Parameter(scene.sources[i].center, name=f"center:{i}", stepsize=0.1)
             else:

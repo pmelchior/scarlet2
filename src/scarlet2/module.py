@@ -279,29 +279,23 @@ class Parameters(dict):
         :py:class:`~scarlet2.Parameter`, :py:class:`~scarlet2.Scene`, :py:func:`~scarlet2.relative_step`
         """
         self.base = base
-
-    def __enter__(self):
-        # context manager to register sources
-        # purpose is to provide scene.frame to source inits that will need some of its information
-        # also allows us to append the sources automatically to the scene
-
-        # monkey patch key into base for base.parameter lookup
+        # monkey patch key into base for parameter lookup
         key = hex(id(self.base))
         object.__setattr__(self.base, "registry_key", key)
 
-        # put this instance on global context
-        Parameterization.parameters = self
+        # if key is already in registry: delete to get the new Parameters
+        if key in parameter_registry:
+            del parameter_registry[key]
 
+    def __enter__(self):
+        # context manager to register Parameter instances
+        Parameterization.parameters = self
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         # save with base as key, and the remaining dict as value
         key = self.base.registry_key
-        if key not in parameter_registry:
-            parameter_registry[key] = super().copy()
-        else:
-            parameter_registry[key].update(super().copy())
-
+        parameter_registry[key] = self
         Parameterization.parameters = None
 
         # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
