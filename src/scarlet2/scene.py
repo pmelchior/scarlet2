@@ -148,7 +148,6 @@ class Scene(Module):
         --------
         :py:func:`~scarlet2.fit`
         """
-        from .infer import fit
 
         # making sure we can iterate
         if not isinstance(observations, (list, tuple)):
@@ -158,7 +157,8 @@ class Scene(Module):
             msg = "For Scene.fit(), observations must not have parameters. Use scarlet2.fit() instead."
             raise RuntimeError(msg)
 
-        # TODO: check return, what to do with parameters
+        from .infer import fit
+
         scene_ = fit(
             self,
             observations,
@@ -172,7 +172,7 @@ class Scene(Module):
         return scene_
 
     def sample(
-        self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs
+        self, observations, *args, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs
     ):
         """Sample `parameters` of every source in the scene to get posteriors given `observations`.
 
@@ -184,9 +184,8 @@ class Scene(Module):
         ----------
         observations: :py:class:`~scarlet2.Observation` or list
             The observations to fit the models to.
-        parameters: :py:class:`~scarlet2.Parameters`
-            Parameters to sample. This method will ignore all parameters that are not in this list.
-            Every parameter in the list needs to have the attribute `prior` set.
+        *args: list, optional
+            Additional arguments passed. Only used for backwards (v0.3) compatibility.
         seed: int, optional
             RNG seed for the sampler
         num_warmup: int, optional
@@ -208,6 +207,12 @@ class Scene(Module):
         """
         from .infer import sample
 
-        # probably redundant, but better safe than sorry:
-        self.set_parameters(parameters)
-        return sample(self, observations, seed, num_warmup, num_samples, progress_bar, **kwargs)
+        return sample(
+            self,
+            observations,
+            seed=seed,
+            num_warmup=num_warmup,
+            num_samples=num_samples,
+            progress_bar=progress_bar,
+            **kwargs,
+        )

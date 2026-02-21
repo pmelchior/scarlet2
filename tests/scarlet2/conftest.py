@@ -105,16 +105,10 @@ def scene(good_obs, data_file):
 
                 Source(center, spectrum, morph)
 
-    return scene
-
-
-@pytest.fixture()
-def parameters(scene, good_obs):
-    """Create parameters for the scene."""
+    # Create parameters for the scene
     spec_step = partial(relative_step, factor=0.05)
     morph_step = partial(relative_step, factor=1e-3)
-
-    with Parameters(scene) as parameters:
+    with Parameters(scene):
         for i in range(len(scene.sources)):
             Parameter(
                 scene.sources[i].spectrum,
@@ -131,5 +125,4 @@ def parameters(scene, good_obs):
                     constraint=constraints.unit_interval,
                     stepsize=morph_step,
                 )
-
-    return parameters
+    return scene

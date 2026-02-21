@@ -22,7 +22,7 @@ class Module(eqx.Module):
     and adds extra functionality to deal with optimizable parameters.
     """
 
-    registry_key: str = eqx.field(init=False, default="")
+    registry_key: str = eqx.field(init=False, default="", repr=False)
 
     def __call__(self):
         """Evaluate the model"""

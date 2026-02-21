@@ -1,11 +1,15 @@
 import operator
+from pprint import pformat
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
+import numpyro
+import numpyro.distributions as dist
+import numpyro.distributions.constraints as constraints
+from numpyro.infer import MCMC, NUTS
 
-from .module import Parameter
 from .scene import Scene
 from .validation_utils import (
     ValidationError,
@@ -17,7 +21,43 @@ from .validation_utils import (
 )
 
 
-def sample(scene, observations, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs):
+# helper class to turn observation likelihood(s) into numpyro distribution
+class _ObsDistribution(dist.Distribution):
+    support = constraints.real_vector
+
+    def __init__(self, obs, model, validate_args=None):
+        self.obs = obs
+        self.model = model
+        event_shape = jnp.shape(model)
+        super().__init__(
+            event_shape=event_shape,
+            validate_args=validate_args,
+        )
+
+    def sample(self, key, sample_shape=()):
+        raise NotImplementedError
+
+    def mean(self):
+        return self.obs.render(self.model)
+
+    @dist.util.validate_sample
+    def log_prob(self, value):
+        # numpyro needs sampling distribution of data (=value), not likelihood function of parameters
+        return self.obs._log_likelihood(self.model, value)
+
+
+def _dict_to_eqx_module(name: str, data: dict):
+    # Build field annotations dynamically
+    annotations = {k: type(v) for k, v in data.items()}
+
+    # Create a class that inherits from eqx.Module
+    cls = type(name, (eqx.Module,), {"__annotations__": annotations})
+
+    # Instantiate with the dict values
+    return cls(**data)
+
+
+def sample(scene, observations, *args, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs):
     """Sample `parameters` of every source in `scene` to get posteriors given `observations`.
 
     This method runs the HMC NUTS sampler from `numpyro` to get parameter
@@ -30,6 +70,8 @@ def sample(scene, observations, seed=0, num_warmup=100, num_samples=200, progres
         The model of the scene.
     observations: :py:class:`~scarlet2.Observation` or list
         The observations to fit the models to.
+    *args: list, optional
+        Additional arguments passed. Only used for backwards (v0.3) compatibility.
     seed: int, optional
         RNG seed for the sampler
     num_warmup: int, optional
@@ -49,102 +91,59 @@ def sample(scene, observations, seed=0, num_warmup=100, num_samples=200, progres
     -------
     numpyro.infer.mcmc.MCMC
     """
-    # uses numpyro NUTS on all non-fixed parameters
-    # requires that those have priors set
-
-    # no optimizable parameters: return self
-    if not hasattr(scene, "parameters"):
-        return scene
-
-    try:
-        import numpyro
-        import numpyro.distributions as dist
-        import numpyro.distributions.constraints as constraints
-        from numpyro.infer import MCMC, NUTS
-    except ImportError as err:
-        raise ImportError("scarlet2.Scene.sample() requires numpyro.") from err
-
     # making sure we can iterate
     if not isinstance(observations, (list, tuple)):
         observations = (observations,)
+    obs_params = {}
     for obs in observations:
         obs.check_set_renderer(scene.frame)
+        obs_params.update(obs.parameters)
 
-    # helper class to turn observation likelihood(s) into numpyro distribution
-    class ObsDistribution(dist.Distribution):
-        support = constraints.real_vector
-
-        def __init__(self, obs, model, validate_args=None):
-            self.obs = obs
-            self.model = model
-            event_shape = jnp.shape(model)
-            super().__init__(
-                event_shape=event_shape,
-                validate_args=validate_args,
-            )
-
-        def sample(self, key, sample_shape=()):
-            raise NotImplementedError
-
-        def mean(self):
-            return self.obs.render(self.model)
-
-        @dist.util.validate_sample
-        def log_prob(self, value):
-            # numpyro needs sampling distribution of data (=value), not likelihood function of parameters
-            return self.obs._log_likelihood(self.model, value)
+    # scene and observations can have parameters: combine them into one model
+    parameters = scene.parameters | obs_params
+    if len(parameters) == 0:
+        msg = "Scene and Observation(s) must have at least one parameter. Found none."
+        raise AttributeError(msg)
 
     # find all non-fixed parameters and their priors
-    priors = {p.name: p.prior for p in scene.parameters}
+    priors = {name: p.prior for name, (idx, p) in parameters.items()}
     has_none = any(prior is None for prior in priors.values())
     if has_none:
-        from pprint import pformat
-
         msg = f"All parameters need to have priors set. Got:\n{pformat(priors)}"
         raise AttributeError(msg)
 
-    # define the pyro model, where every parameter becomes a sample,
+    values = scene.get()
+    for obs in observations:
+        values |= obs.get()
+    init_values = values.copy()
+
+    # construct eqx.Module containing all parameter arrays as attributes
+    values = _dict_to_eqx_module("ParamModel", values)
+
+    # define the pyro model, where every parameter value becomes a sample,
     # and the observations sample from their likelihood given the rendered model
-    sample_node = lambda node, p: numpyro.sample(p.name, p.prior) if isinstance(p, Parameter) else node
-
-    def pyro_model(model):
-        model_ = jtu.tree_map(sample_node, model, scene.parameters.tree)
-        pred = model_()  # create prediction once for all observations
-        # dealing with multiple observations
+    def pyro_model(values):
+        samples = {name: numpyro.sample(name, param.prior) for name, (node, param) in parameters.items()}
+        scene_ = scene.set(samples)
+        pred = scene_()  # create scene once for all observations
+        # evaluate likelihood of multiple observations
         for i, obs_ in enumerate(observations):
-            numpyro.sample(f"obs.{i}", ObsDistribution(obs_, pred), obs=obs_.data)
+            numpyro.sample(f"obs.{i}", _ObsDistribution(obs_, pred), obs=obs_.data)
 
-    from numpyro.infer import MCMC, NUTS
-
-    # use init from current value of model
-    try:
-        init_strategy = kwargs.pop("init_strategy")
-    except KeyError:
+    # if not told otherwise: use init from current value of model
+    init_strategy = kwargs.pop("init_strategy", None)
+    if init_strategy is None:
         from functools import partial
 
         from numpyro.infer.initialization import init_to_value
 
-        values = scene.get(scene.parameters)
-        params = scene.parameters.as_list()
-        values = {p.name: value for p, value in zip(params, values, strict=False)}
-        init_strategy = partial(init_to_value, values=values)
+        init_strategy = partial(init_to_value, values=init_values)
 
     nuts_kernel = NUTS(pyro_model, init_strategy=init_strategy, **kwargs)
     mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, progress_bar=progress_bar)
     rng_key = jax.random.PRNGKey(seed)
-    mcmc.run(rng_key, scene)
+    mcmc.run(rng_key, values)
     return mcmc
-
-
-def _dict_to_eqx_module(name: str, data: dict):
-    # Build field annotations dynamically
-    annotations = {k: type(v) for k, v in data.items()}
-
-    # Create a class that inherits from eqx.Module
-    cls = type(name, (eqx.Module,), {"__annotations__": annotations})
-
-    # Instantiate with the dict values
-    return cls(**data)
 
 
 def fit(
@@ -215,12 +214,14 @@ def fit(
     # scene and observations can have parameters: combine them into one model
     parameters = scene.parameters | obs_params
     if len(parameters) == 0:
-        return scene
+        msg = "Scene and Observation(s) must have at least one parameter. Found none."
+        raise AttributeError(msg)
+
     values = scene.get()
     for obs in observations:
         values |= obs.get()
 
-    # construct eqx.Module containing all parameter arrays
+    # construct eqx.Module containing all parameter arrays as attributes
     values = _dict_to_eqx_module("ParamModel", values)
     # same tree structure but for param specs so that we can use them below
     treedef = jtu.tree_structure(values)

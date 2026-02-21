@@ -29,8 +29,7 @@ def setup_validation():
 def test_check_goodness_of_fit(scene, good_obs, mocked_chi_value, expected):
     """Mocked goodness_of_fit return to produces the expected ValidationResult type"""
 
-    model_ = fit(scene, good_obs, max_iter=1, e_rel=1e-4, progress_bar=True)
-    scene_ = model_.scene
+    scene_ = fit(scene, good_obs, max_iter=1, e_rel=1e-4, progress_bar=False)
     checker = FitValidator(scene_, good_obs)
 
     with patch.object(type(good_obs), "goodness_of_fit", return_value=mocked_chi_value) as _:
@@ -50,8 +49,7 @@ def test_check_goodness_of_fit(scene, good_obs, mocked_chi_value, expected):
 def test_check_chi_squared_in_box_and_border(scene, good_obs, mocked_chi_value, expected):
     """Mocked chi-squared evaluation in box and border."""
 
-    model_ = fit(scene, good_obs, max_iter=1, e_rel=1e-4, progress_bar=True)
-    scene_ = model_.scene
+    scene_ = fit(scene, good_obs, max_iter=1, e_rel=1e-4, progress_bar=False)
     checker = FitValidator(scene_, good_obs)
     mock_return = {0: {"in": mocked_chi_value, "out": mocked_chi_value}}
 

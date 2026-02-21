@@ -50,7 +50,6 @@ with Scene(model_frame) as scene:
 
 
 def test_fit():
-    global scene_
     spec_step = partial(relative_step, factor=0.05)
 
     # fitting
@@ -58,27 +57,27 @@ def test_fit():
         for i in range(len(scene.sources)):
             Parameter(
                 scene.sources[i].spectrum,
-                name=f"spectrum:{i}",
+                name=f"spectrum_{i}",
                 constraint=constraints.positive,
                 stepsize=spec_step,
             )
             Parameter(
-                scene.sources[i].morphology, name=f"morph:{i}", constraint=constraints.positive, stepsize=0.1
+                scene.sources[i].morphology, name=f"morph_{i}", constraint=constraints.positive, stepsize=0.1
             )
-
-    maxiter = 10
-    model_ = fit(scene, obs, max_iter=maxiter, progress_bar=False)
-    return model_.scene
+    max_iter = 10
+    scene_ = fit(scene, obs, max_iter=max_iter, progress_bar=False)
+    return scene_
 
 
 def test_sample(scene):
     # use old API version to call sample()
-    with Parameters(scene) as parameters:
+    with Parameters(scene):
         p = scene.sources[0].spectrum
-        prior = dist.Normal(p, scale=1)
+        prior = dist.Normal(p, scale=1).to_event(1)
         Parameter(p, name="spectrum:0", prior=prior)
+    init_strategy = init_to_sample
     scene.sample(
-        obs, parameters, num_samples=10, dense_mass=True, init_strategy=init_to_sample, progress_bar=False
+        obs, num_samples=10, num_warmup=10, dense_mass=True, init_strategy=init_strategy, progress_bar=False
     )
 
 
