@@ -128,7 +128,7 @@ def sample(scene, observations, *args, seed=0, num_warmup=100, num_samples=200, 
         pred = scene_()  # create scene once for all observations
         # evaluate likelihood of multiple observations
         for i, obs_ in enumerate(observations):
-            numpyro.sample(f"obs.{i}", _ObsDistribution(obs_, pred), obs=obs_.data)
+            numpyro.sample(f"obs.{i}", _ObsDistribution(obs_.set(values), pred), obs=obs_.data)
 
     # if not told otherwise: use init from current value of model
     init_strategy = kwargs.pop("init_strategy", None)
