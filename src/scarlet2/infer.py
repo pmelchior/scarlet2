@@ -193,8 +193,8 @@ def fit(
 
     Returns
     -------
-    Scene
-        The scene model with updated parameters
+    Scene, list(Observation)
+        The scene and observation(s) with updated parameters
     """
     try:
         import optax
@@ -288,6 +288,7 @@ def fit(
     values = _constraint_replace(values, params)
     # scene_ is a copy, but its registry_key still points to scene.parameters, can thus be reused
     scene_ = scene.set(values)
+    obs_ = tuple(obs.set(values) for obs in observations)
 
     # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
     from .validation_utils import VALIDATION_SWITCH
@@ -300,7 +301,7 @@ def fit(
             validation_results = check_fit(scene_, obs)
             print_validation_results("Fit validation results", validation_results)
 
-    return scene_
+    return scene_, obs_
 
 
 def _constraint_replace(values, params, inv=False):
@@ -324,7 +325,7 @@ def _make_step(values, params, scene, observations, optim, opt_state):
         # likelihood and prior grads transparently apply the Jacobians of these transformations
         values_ = _constraint_replace(values, params)
         scene_ = scene.set(values_)()
-        log_like = sum(obs.log_likelihood(scene_) for obs in observations)
+        log_like = sum(obs.set(values_).log_likelihood(scene_) for obs in observations)
 
         # add log prior for all parameters which define priors
         log_prior = jtu.tree_reduce(

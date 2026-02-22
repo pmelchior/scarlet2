@@ -427,14 +427,14 @@ def get_scale_angle_flip_shift(trans):
     return scale, angle, flip, shift
 
 
-def get_relative_jacobian_shift(model_frame, obs_frame):
+def get_relative_jacobian_shift(frame_in, frame_out):
     """Return the linear transformation matrix and shift between two frame WCSs
 
     Parameters
     ----------
-    model_frame: `~scarlet2.Frame`
+    frame_in: `~scarlet2.Frame`
         The frame that defines the origin of the transformation
-    obs_frame: `~scarlet2.Frame`
+    frame_out: `~scarlet2.Frame`
         The frame that defines the target of the transformation
 
     Returns
@@ -446,16 +446,16 @@ def get_relative_jacobian_shift(model_frame, obs_frame):
 
     """
     # Extract rotation angle, flip, scale between WCSs
-    m_in = get_affine(model_frame.wcs)
-    m_out = get_affine(obs_frame.wcs)
+    m_in = get_affine(frame_in.wcs)
+    m_out = get_affine(frame_out.wcs)
     jacobian = jnp.linalg.inv(m_out) @ m_in  # transformation from model pixel -> sky -> obs pixels
 
     # shift can be defined by the extended 3x3 Jacobian of the affine transformation matrix,
     # but it would ignore CRPIX/CRVAL difference between frmes
     # so we define it from the shift of the center of the two frames
-    center_model = jnp.array(model_frame.bbox.spatial.center)
-    center_model_in_obs = obs_frame.get_pixel(model_frame.get_sky_coord(center_model))
-    center_obs = jnp.array(obs_frame.bbox.spatial.center)
+    center_model = jnp.array(frame_in.bbox.spatial.center)
+    center_model_in_obs = frame_out.get_pixel(frame_in.get_sky_coord(center_model))
+    center_obs = jnp.array(frame_out.bbox.spatial.center)
     shift = center_obs - center_model_in_obs
     shift = tuple(c.item() for c in shift)  # avoid tracing
     return jacobian, shift

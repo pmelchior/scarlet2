@@ -58,9 +58,9 @@ class Module(eqx.Module):
         else:
             if name in self.parameters:
                 idx, param = self.parameters[name]
-                return {name: leaves[idx]}
+                return leaves[idx]
             else:
-                return {}
+                return None
 
     def set(self, values):
         """Set parameter(s) from this module with `values`
@@ -80,6 +80,8 @@ class Module(eqx.Module):
 
         # get idx for all names values that are also in params
         params = self.parameters  # name: (idx, param)
+        if len(params) == 0:
+            return self
 
         def get_pair(name):
             idx = params[name][0]

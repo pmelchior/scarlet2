@@ -162,7 +162,7 @@ class Scene(Module):
 
         from .infer import fit
 
-        scene_ = fit(
+        scene_, _ = fit(
             self,
             observations,
             schedule=schedule,

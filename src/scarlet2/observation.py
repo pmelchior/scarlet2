@@ -82,9 +82,10 @@ class Observation(Module):
             Prediction of the observation given the `model`. Has the same shape as :py:attr:`data`.
         """
         assert self.renderer is not None, (
-            "Observation requires a renderer. Call Observation.match(model_frame) first"
+            "Observation.render() requires a renderer. Call Observation.match(model_frame) first"
         )
-        return self.renderer(model)
+        model_ = model() if isinstance(model, eqx.Module) else model
+        return self.renderer(model_)
 
     def log_likelihood(self, model):
         """The logarithm the likelihood of :py:attr:`data` given `model`
