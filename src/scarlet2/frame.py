@@ -20,7 +20,7 @@ class Frame(Module):
     """Bounding box of the frame"""
     psf: PSF = None
     """PSF of the frame"""
-    wcs: astropy.wcs.WCS = None
+    wcs: astropy.wcs.WCS
     """WCS information of the frame"""
     channels: list
     """Identifiers for the spectral elements"""
@@ -130,9 +130,9 @@ class Frame(Module):
         float
             size in pixels
         """
-        if self.wcs is not None:
-            pixel_size = get_pixel_size(self.wcs)
-            return distance / pixel_size
+        if isinstance(distance, u.Quantity):
+            pixel_size = get_pixel_size(self.wcs, use_unit=True)
+            return (distance / pixel_size).to(1, equivalencies=u.dimensionless_angles()).value
         else:
             return distance
 
@@ -149,7 +149,7 @@ class Frame(Module):
         distance: :py:class:`astropy.units.Quantity`
         """
 
-        pixel_size = get_pixel_size(self.wcs)
+        pixel_size = get_pixel_size(self.wcs, use_unit=True)
         distance = size * pixel_size
         return distance
 
@@ -380,17 +380,19 @@ def _wcs_default(shape):
     return wcs
 
 
-def get_scale_angle_flip_shift(trans):
+def get_scale_angle_flip_shift(trans, use_unit=False):
     """Return, scale, angle, flip, translation from the WCS transformation matrix
 
     Parameters
     ----------
     trans: (`astropy.wcs.WCS`, array)
         WCS or WCS transformation matrix
+    use_unit: `bool`
+        Whether to use astropy units for `scale`
 
     Returns
     -------
-    scale: `float`
+    scale: `float` or `astropy.units.Quantity`
     angle: `float`, in radian
     flip: -1 or 1
     shift: `numpy.ndarray`
@@ -416,6 +418,8 @@ def get_scale_angle_flip_shift(trans):
     # if not, use scale = jnp.linalg.svd(M, compute_uv=False)
     # but be careful with rotations as anisotropic stretch and rotation do not commute
     scale = jnp.sqrt(jnp.abs(det)).item(0)
+    if use_unit:
+        scale = scale * u.deg
 
     # if rotation is improper: need to apply y-flip to M to get pure rotation matrix (and unique angle)
     improper = det < 0
@@ -461,7 +465,7 @@ def get_relative_jacobian_shift(frame_in, frame_out):
     return jacobian, shift
 
 
-def get_pixel_size(wcs):
+def get_pixel_size(wcs, use_unit=False):
     """Extracts the pixel size from a wcs, and returns it in deg/pixel
 
     Parameters
@@ -473,11 +477,11 @@ def get_pixel_size(wcs):
     -------
     pixel_size: `float`
     """
-    scale, _, _, _ = get_scale_angle_flip_shift(wcs)
+    scale, _, _, _ = get_scale_angle_flip_shift(wcs, use_unit=use_unit)
     return scale
 
 
-def get_scale(wcs, separate=False):
+def get_scale(wcs, separate=False, use_unit=False):
     """Get WCS axis scales in deg/pixel
 
     Parameters
@@ -495,9 +499,12 @@ def get_scale(wcs, separate=False):
         M = get_affine(wcs)  # noqa: N806
         c1 = (M[0, :] ** 2).sum() ** 0.5
         c2 = (M[1, :] ** 2).sum() ** 0.5
-        return jnp.array([c1, c2])
+        scale = jnp.array([c1, c2])
+        if use_unit:
+            scale = scale * u.deg
+        return scale
     else:
-        scale, _ = get_scale_angle_flip_shift(wcs)
+        scale, _ = get_scale_angle_flip_shift(wcs, use_unit=use_unit)
         return scale
 
 

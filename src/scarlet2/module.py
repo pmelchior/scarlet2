@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import varname
 from astropy.coordinates import SkyCoord
+from numpyro.distributions.transforms import biject_to
 
 from . import Parameterization, parameter_registry
 from .validation_utils import (
@@ -99,7 +100,7 @@ class Module(eqx.Module):
 
 
 def _to_pixels(frame, field):
-    """Convert parameter to pixel coordinates of the model frame
+    """Convert `field` to pixel coordinates of `frame`
 
     scarlet2 models are optimized in pixel coordinates (defined by the model
     frame of :py:class:`~scarlet2.Scene`. Therefore parameters (or their priors,
@@ -113,12 +114,12 @@ def _to_pixels(frame, field):
     frame: :py:class:`~scarlet2.Frame`
         Frame to define sky coordinates
     field: any
-        Attribute of parameter to be converted to pixel coordinates
+        Array or attribute to be converted to pixel coordinates
 
     Returns
     -------
     field: any
-        Attribute converted to pixel coordinates
+        Array or attribute converted to pixel coordinates
     """
     # field or stepsize
     if isinstance(field, u.Quantity):
@@ -126,7 +127,7 @@ def _to_pixels(frame, field):
     elif isinstance(field, SkyCoord):
         return frame.get_pixel(field)
     else:
-        # numpyro dist or constraint
+        # Module, numpyro dist or constraint
         for name in dir(field):
             try:
                 attrib = getattr(field, name)
@@ -151,7 +152,7 @@ def _to_pixels(frame, field):
     return field
 
 
-def sanitize_attr_name(name: str) -> str:
+def _sanitize_attr_name(name: str) -> str:
     """Replace disallowed characters for Python class attributes with '_'."""
     # Replace any character that isn't alphanumeric or underscore
     sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
@@ -192,45 +193,34 @@ class Parameter:
         --------
         :py:class:`~scarlet2.Parameters`,
         """
-        if name is None:
-            name = varname.argname("node", vars_only=False)
-        name = sanitize_attr_name(name)
-
-        # add this source to the active scene
+        # get the active parameter dict
         try:
             parameters = Parameterization.parameters
-
-            # TODO: go to pixel frame even if specified in sky coords
-            # if hasattr(base, "frame"):
-            #     node_ = _to_pixels(base.frame, node)
-            #     # node needs to be updated in base!
-            #     replace_node = lambda n: node_ if n is node else n
-            #     base = jtu.tree_map(replace_node, base)
-            #     base.set_parameters(parameters)
-            #
-            #     constraint = _to_pixels(base.frame, constraint) if constraint is not None else None
-            #     # prior = _to_pixels(base.frame, prior) if prior is not None else None
-            #     stepsize = _to_pixels(base.frame, stepsize) if stepsize is not None else None
-
-            self.constraint = constraint
-            self.prior = prior
-            self.stepsize = stepsize
-
-            # define constraint bijector functions
-            if self.constraint is not None:
-                try:
-                    from numpyro.distributions.transforms import biject_to
-                except ImportError as err:
-                    raise ImportError("scarlet2.Parameter requires numpyro.") from err
-                self.constraint_transform = biject_to(self.constraint)
-
-            # add parameter to parameter tree and update parameters.tree
-            parameters.__iadd__(name, node, self)
-
+            base = parameters.base
         except AttributeError as err:
             msg = "A Parameter instance should only be created within the context of Parameters\n"
             msg += "Use 'with Parameters(scene): Parameter(...)'"
             raise RuntimeError(msg) from err
+
+        if name is None:
+            name = varname.argname("node", vars_only=False)
+        name = _sanitize_attr_name(name)
+
+        # go to pixel frame if parameter attributes are specified in sky coords: for scene and observation
+        if hasattr(base, "frame"):
+            constraint = _to_pixels(base.frame, constraint) if constraint is not None else None
+            prior = _to_pixels(base.frame, prior) if prior is not None else None
+            stepsize = _to_pixels(base.frame, stepsize) if stepsize is not None else None
+        self.constraint = constraint
+        self.prior = prior
+        self.stepsize = stepsize
+
+        # define constraint bijector functions
+        if self.constraint is not None:
+            self.constraint_transform = biject_to(self.constraint)
+
+        # add this source to the active scene
+        parameters.__iadd__(name, node, self)
 
     def __repr__(self):
         # equinox-like formatting

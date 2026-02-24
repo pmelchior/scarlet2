@@ -328,6 +328,9 @@ def _make_step(values, params, scene, observations, optim, opt_state):
         log_like = sum(obs.set(values_).log_likelihood(scene_) for obs in observations)
 
         # add log prior for all parameters which define priors
+        # Note: This calls priors separately even if they support batched execution
+        # see https://github.com/pmelchior/scarlet2/issues/103 for a possible solution
+        # however, testing after #103 got merged suggests that tree_reduce is faster than grouping
         log_prior = jtu.tree_reduce(
             operator.add,
             jtu.tree_map(
@@ -336,23 +339,6 @@ def _make_step(values, params, scene, observations, optim, opt_state):
                 params,
             ),
         )
-
-        # TODO: Gather parameters with the same ScorePrior for parallel evaluation
-        # from .nn import ScorePrior, pad_fwd
-        # grouped = defaultdict(list)
-        # for prior, value in zip(priors, values, strict=False):
-        #     if isinstance(prior, ScorePrior):
-        #         grouped[prior].append(pad_fwd(value, prior._model.shape)[0])
-        #     elif prior is not None:
-        #         log_prior += prior.log_prob(value)
-        #
-        # if len(grouped) > 0:
-        #     log_prior += sum(
-        #         sum(
-        #             jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0))
-        #             for prior, arr_list in grouped.items()
-        #         )
-        #     )
 
         return -(log_like + log_prior)
 
