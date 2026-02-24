@@ -670,7 +670,7 @@ def hallucination_score(scene, obs, src_num):
     weights = obs.weights
 
     # jit the HVP for this loss and this morph model
-    f = lambda morph: log_like(morph, spectrum, data, weights)  # noqa: E371
+    f = lambda morph: log_like(morph, spectrum, data, weights)  # noqa: E731
     jit_hvp_x = jit(lambda z: hvp(f, (morph,), (z,)))
     hvp_ll = hvp_rad(jit_hvp_x, morph.shape)
 
