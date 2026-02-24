@@ -46,17 +46,6 @@ class Frame(Module):
         """Number of channels"""
         return len(self.channels)
 
-    @property
-    def pixel_size(self):
-        """Get the size of the pixels
-
-        Returns
-        -------
-        float, astropy.units.quantity.Quantity
-            Pixel size in units of the WCS sky coordinates
-        """
-        return get_scale(self.wcs)
-
     def get_pixel(self, pos):
         """Get the sky coordinates from a world coordinate
 
@@ -131,7 +120,7 @@ class Frame(Module):
             size in pixels
         """
         if isinstance(distance, u.Quantity):
-            pixel_size = get_pixel_size(self.wcs, use_unit=True)
+            pixel_size = get_pixel_size(self.wcs)
             return (distance / pixel_size).to(1, equivalencies=u.dimensionless_angles()).value
         else:
             return distance
@@ -149,7 +138,7 @@ class Frame(Module):
         distance: :py:class:`astropy.units.Quantity`
         """
 
-        pixel_size = get_pixel_size(self.wcs, use_unit=True)
+        pixel_size = get_pixel_size(self.wcs)
         distance = size * pixel_size
         return distance
 
@@ -380,15 +369,13 @@ def _wcs_default(shape):
     return wcs
 
 
-def get_scale_angle_flip_shift(trans, use_unit=False):
+def get_scale_angle_flip_shift(trans):
     """Return, scale, angle, flip, translation from the WCS transformation matrix
 
     Parameters
     ----------
     trans: (`astropy.wcs.WCS`, array)
         WCS or WCS transformation matrix
-    use_unit: `bool`
-        Whether to use astropy units for `scale`
 
     Returns
     -------
@@ -403,8 +390,10 @@ def get_scale_angle_flip_shift(trans, use_unit=False):
     """
     if isinstance(trans, (np.ndarray, jnp.ndarray)):  # noqa: SIM108
         m = trans  # noqa: N806
+        use_unit = False
     else:
         m = get_affine(trans)  # noqa: N806
+        use_unit = True
 
     # get shift and then reduce to 2x2 for linear part
     if m.shape == (3, 3):
@@ -465,7 +454,7 @@ def get_relative_jacobian_shift(frame_in, frame_out):
     return jacobian, shift
 
 
-def get_pixel_size(wcs, use_unit=False):
+def get_pixel_size(wcs):
     """Extracts the pixel size from a wcs, and returns it in deg/pixel
 
     Parameters
@@ -477,11 +466,11 @@ def get_pixel_size(wcs, use_unit=False):
     -------
     pixel_size: `float`
     """
-    scale, _, _, _ = get_scale_angle_flip_shift(wcs, use_unit=use_unit)
+    scale, _, _, _ = get_scale_angle_flip_shift(wcs)
     return scale
 
 
-def get_scale(wcs, separate=False, use_unit=False):
+def get_scale(wcs, separate=False):
     """Get WCS axis scales in deg/pixel
 
     Parameters
@@ -499,12 +488,10 @@ def get_scale(wcs, separate=False, use_unit=False):
         M = get_affine(wcs)  # noqa: N806
         c1 = (M[0, :] ** 2).sum() ** 0.5
         c2 = (M[1, :] ** 2).sum() ** 0.5
-        scale = jnp.array([c1, c2])
-        if use_unit:
-            scale = scale * u.deg
+        scale = jnp.array([c1, c2]) * u.deg
         return scale
     else:
-        scale, _ = get_scale_angle_flip_shift(wcs, use_unit=use_unit)
+        scale, _ = get_scale_angle_flip_shift(wcs)
         return scale
 
 

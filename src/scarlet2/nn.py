@@ -6,12 +6,13 @@
 
 """Neural network priors"""
 
+from functools import partial
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpyro.distributions as dist
 import numpyro.distributions.constraints as constraints
 from jax import custom_vjp, vjp
-from functools import partial
 
 
 def pad_fwd(x, model_shape):

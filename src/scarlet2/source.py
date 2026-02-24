@@ -60,7 +60,7 @@ class Component(Module):
             raise
 
         self.center = _to_pixels(frame, center)
-        self.spectrum = spectrum # no unit conversion on spectrum (not yet defined)
+        self.spectrum = spectrum  # no unit conversion on spectrum (not yet defined)
         self.morphology = _to_pixels(frame, morphology)
 
         # define box with integer pixel coordinates to place the component
