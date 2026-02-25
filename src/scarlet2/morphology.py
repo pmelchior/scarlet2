@@ -211,11 +211,6 @@ class SersicMorphology(ProfileMorphology):
         return jnp.exp(-bn * (r2 ** (0.5 / n) - 1))
 
 
-prox_plus = lambda x: jnp.maximum(x, 0)  # noqa: E731
-prox_soft = lambda x, thresh: jnp.sign(x) * prox_plus(jnp.abs(x) - thresh)  # noqa: E731
-prox_soft_plus = lambda x, thresh: prox_plus(prox_soft(x, thresh))  # noqa: E731
-
-
 class StarletMorphology(Morphology):
     """Morphology in the starlet basis
 
@@ -226,15 +221,10 @@ class StarletMorphology(Morphology):
 
     coeffs: jnp.ndarray
     """Starlet coefficients"""
-    l1_thresh: float = eqx.field(default=0)
-    """L1 threshold for coefficient to create sparse representation"""
-    positive: bool = eqx.field(default=True)
-    """Whether the coefficients are restricted to non-negative values"""
 
     def __call__(self, **kwargs):
         """Evaluate the model"""
-        f = prox_soft_plus if self.positive else prox_soft
-        return starlet_reconstruction(f(self.coeffs, self.l1_thresh))
+        return starlet_reconstruction(self.coeffs)
 
     @property
     def shape(self):
@@ -242,15 +232,17 @@ class StarletMorphology(Morphology):
         return self.coeffs.shape[-2:]  # wavelet coeffs: scales x n1 x n2
 
     @staticmethod
-    def from_image(image, **kwargs):
+    def from_image(image, min_value=None, max_value=None):
         """Create starlet morphology from `image`
 
         Parameters
         ----------
         image: array
             2D image array to determine coefficients from.
-        kwargs: dict
-            Additional arguments for `__init__`
+        min_value: (float, None):
+            Minimum value threshold for coefficients
+        max_value: (float, None):
+            Minimum value threshold for coefficients
 
         Returns
         -------
@@ -258,4 +250,8 @@ class StarletMorphology(Morphology):
         """
         # Starlet transform of image (n1,n2) into coefficient with 3 dimensions: (scales+1,n1,n2)
         coeffs = starlet_transform(image)
-        return StarletMorphology(coeffs, **kwargs)
+        if min_value is not None:
+            coeffs = coeffs.at[coeffs < min_value].set(min_value)
+        if max_value is not None:
+            coeffs = coeffs.at[coeffs > max_value].set(max_value)
+        return StarletMorphology(coeffs)
