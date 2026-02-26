@@ -214,6 +214,12 @@ class SersicMorphology(ProfileMorphology):
 class StarletMorphology(Morphology):
     """Morphology in the starlet basis
 
+    Notes
+    -----
+    The starlet basis is overcomplete, which means it can exactly represent the same image in multiple ways.
+    If used without constraints or priors on the starlet coefficients, this morphology model is functionally
+    indistinguishable from a 2D pixel array, while using more operations.
+
     See Also
     --------
     scarlet2.wavelets.Starlet

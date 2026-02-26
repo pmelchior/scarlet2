@@ -173,7 +173,7 @@ def starlet_transform(image, scales=None, generation=2, convolve2d=None):
     return starlet
 
 
-def starlet_reconstruction(starlets, generation=2, convolve2d=None):
+def starlet_reconstruction(starlets, generation=2, convolve2d=None, scales=None):
     """Reconstruct an image from a dictionary of starlets
 
     Parameters
@@ -186,6 +186,8 @@ def starlet_reconstruction(starlets, generation=2, convolve2d=None):
     convolve2d: function
         The filter function to use to convolve the image
         with starlets in 2D.
+    scales: list of int
+        The scales to include in the reconstruction (0 being the smallest)
 
     Returns
     -------
@@ -196,11 +198,17 @@ def starlet_reconstruction(starlets, generation=2, convolve2d=None):
         return jnp.sum(starlets, axis=0)
     if convolve2d is None:
         convolve2d = bspline_convolve
-    scales = len(starlets) - 1
 
-    c = starlets[-1]
-    for i in range(1, scales + 1):
-        j = scales - i
+    # scales sorted in reverse order: from largest to smallest
+    max_scale = len(starlets) - 1
+    if scales is None:
+        scales = tuple(max_scale - i for i in range(1, max_scale + 1))
+    else:
+        scales = sorted(tuple(scale for scale in scales if scale <= max_scale), reverse=True)
+
+    # reconstruct: initialize from largest, go to smallest
+    c = starlets[scales[0]]
+    for j in scales[1:]:
         cj = convolve2d(c, j)
         c = cj + starlets[j]
     return c
