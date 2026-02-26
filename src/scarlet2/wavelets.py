@@ -90,28 +90,37 @@ def bspline_convolve(image, scale):
         spacing between adjacent pixels with the spline.
 
     """
-    # Filter for the scarlet transform. Here bspline
     h1d = jnp.array([1.0 / 16, 1.0 / 4, 3.0 / 8, 1.0 / 4, 1.0 / 16])
-    j = scale
+    step = 2**scale
+    ny, nx = image.shape
 
-    slice0 = slice(None, -(2 ** (j + 1)))
-    slice1 = slice(None, -(2**j))
-    slice3 = slice(2**j, None)
-    slice4 = slice(2 ** (j + 1), None)
+    row_idx = jnp.arange(ny)
+    col_idx = jnp.arange(nx)
 
-    # row
-    col = image * h1d[2]
-    col = col.at[slice4].add(image[slice0] * h1d[0])
-    col = col.at[slice3].add(image[slice1] * h1d[1])
-    col = col.at[slice1].add(image[slice3] * h1d[3])
-    col = col.at[slice0].add(image[slice4] * h1d[4])
+    def reflect(idx, size):
+        # reflect indices at boundaries into [0, size-1]
+        idx = jnp.abs(idx)
+        # Map into [0, 2*size - 2] period, then fold back
+        idx = idx % (2 * size - 2)
+        return jnp.where(idx >= size, 2 * size - 2 - idx, idx)
 
-    # column
-    result = col * h1d[2]
-    result = result.at[:, slice4].add(col[:, slice0] * h1d[0])
-    result = result.at[:, slice3].add(col[:, slice1] * h1d[1])
-    result = result.at[:, slice1].add(col[:, slice3] * h1d[3])
-    result = result.at[:, slice0].add(col[:, slice4] * h1d[4])
+        # a simpler version: clamp pixels beyond the edge to the edge pixels
+        #         return jnp.clip(idx, 0, size - 1)  # clamp — or use true reflection below
+
+    # Row convolution
+    col = jnp.zeros_like(image)
+    for k, offset in enumerate([-2 * step, -step, 0, step, 2 * step]):
+        reflected = reflect(row_idx + offset, ny)
+        shifted = jnp.take(image, reflected, axis=0)
+        col += shifted * h1d[k]
+
+    # Column convolution
+    result = jnp.zeros_like(col)
+    for k, offset in enumerate([-2 * step, -step, 0, step, 2 * step]):
+        reflected = reflect(col_idx + offset, nx)
+        shifted = jnp.take(col, reflected, axis=1)
+        result += shifted * h1d[k]
+
     return result
 
 
@@ -164,7 +173,7 @@ def starlet_transform(image, scales=None, generation=2, convolve2d=None):
     return starlet
 
 
-def starlet_reconstruction(starlets, generation=2, convolve2d=None):
+def starlet_reconstruction(starlets, generation=2, convolve2d=None, scales=None):
     """Reconstruct an image from a dictionary of starlets
 
     Parameters
@@ -177,6 +186,8 @@ def starlet_reconstruction(starlets, generation=2, convolve2d=None):
     convolve2d: function
         The filter function to use to convolve the image
         with starlets in 2D.
+    scales: list of int
+        The scales to include in the reconstruction (0 being the smallest)
 
     Returns
     -------
@@ -187,11 +198,17 @@ def starlet_reconstruction(starlets, generation=2, convolve2d=None):
         return jnp.sum(starlets, axis=0)
     if convolve2d is None:
         convolve2d = bspline_convolve
-    scales = len(starlets) - 1
 
-    c = starlets[-1]
-    for i in range(1, scales + 1):
-        j = scales - i
+    # scales sorted in reverse order: from largest to smallest
+    max_scale = len(starlets) - 1
+    if scales is None:
+        scales = tuple(max_scale - i for i in range(1, max_scale + 1))
+    else:
+        scales = sorted(tuple(scale for scale in scales if scale <= max_scale), reverse=True)
+
+    # reconstruct: initialize from largest, go to smallest
+    c = starlets[scales[0]]
+    for j in scales[1:]:
         cj = convolve2d(c, j)
         c = cj + starlets[j]
     return c
