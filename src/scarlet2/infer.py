@@ -335,7 +335,7 @@ def _make_step(values, params, scene, observations, optim, opt_state):
             operator.add,
             jtu.tree_map(
                 lambda value, param: param.prior.log_prob(value) if param.prior is not None else 0,
-                values,
+                values_,
                 params,
             ),
         )

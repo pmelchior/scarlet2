@@ -450,17 +450,5 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
                     },
                 )
             )
-        if param.prior is not None and param.constraint is not None:
-            validation_results.append(
-                ValidationError(
-                    f"Parameter {param.name} has both prior or constraint set. Choose one.",
-                    check=self.__class__.__name__,
-                    context={
-                        "name": param.name,
-                        "prior": param.prior,
-                        "constraint": param.constraint,
-                    },
-                )
-            )
 
         return validation_results
