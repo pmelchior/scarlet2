@@ -82,16 +82,24 @@ The residuals (4th panel) reveal the presence of previously undetected sources a
 #1).](scarlet2_model.png)
 
 To support the wide range of scientific studies that will be made with large sky surveys, `scarlet2` was designed with
-flexibility and ease of use in mind. Several publications have developed and demonstrated its capabilities,
-including
+flexibility and ease of use in mind. 
+Several publications have developed and demonstrated its capabilities, including
 modeling of interstellar dust embedded in distant galaxies [@siegel-2025] and of transient sources such as
-active galactic
-nuclei [@ward-2025] and tidal disruption events [@yao-2025].
-Future developments will integrate `scarlet2` into cloud-based science platforms, provide support for users to
-make effective
-modeling choices and to validate their inference results, and create a robust processing pipeline for joint pixel-level
+active galactic nuclei [@ward-2025] and tidal disruption events [@yao-2025].
+We have recently added support for users to make effective modeling choices and to validate their inference results.
+Future developments will integrate `scarlet2` into cloud-based science platforms and create a robust processing pipeline for joint pixel-level
 analyses of surveys from the Vera C. Rubin Observatory, the Euclid mission, the Nancy Grace Roman Space Telescope, and
 the La Silla Schmidt Southern Survey.
+
+# State of the field
+
+`GALFIT` [@galfit] and `GALAPAGOS` [@galapagos] implement parametric Sérsic model fitting in single-band, single-epoch data in the proprietary IDL programming language;
+`GALAPAGOS-2` [@galapagos2] added multi-band fitting.  
+`The Tractor` [@tractor] is implemented in python and allows modeling galaxies in multi-band imaging at different resolutions and posterior sampling, but remains limited to parametric source profiles. 
+`AstroPhot` [@astrophot] offers an astronomical modeling framework based in Pytorch [@pytorch], which 
+allows to optimize multiple sources with different parametric models to multiple images at different resolutions, and includes posterior sampling techniques.
+None of the implementations above support fully non-parametric galaxy models or neural network priors.
+
 
 # Acknowledgements
 
