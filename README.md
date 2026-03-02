@@ -2,6 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/scarlet2)](https://pypi.python.org/pypi/scarlet2/)
 [![Documentation Status](https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat&logo=readthedocs)](https://scarlet2.readthedocs.io/)
+[![status](https://joss.theoj.org/papers/25e966ab45b4411dbf05fa749ca70b82/status.svg)](https://joss.theoj.org/papers/25e966ab45b4411dbf05fa749ca70b82)
 
 _scarlet2_ is an open-source python library for modeling astronomical sources from multi-band, multi-epoch, and
 multi-instrument data. It provides non-parametric and parametric models, can handle source overlap (aka blending), and
