@@ -94,9 +94,9 @@ the La Silla Schmidt Southern Survey.
 # State of the field
 
 `GALFIT` [@galfit] and `GALAPAGOS` [@galapagos] implement parametric Sérsic model fitting in single-band, single-epoch data in the proprietary IDL programming language;
-`GALAPAGOS-2` [@galapagos2] added multi-band fitting.  
-`The Tractor` [@tractor] is implemented in python and allows modeling galaxies in multi-band imaging at different resolutions and posterior sampling, but remains limited to parametric source profiles. 
-`AstroPhot` [@astrophot] offers an astronomical modeling framework based in Pytorch [@pytorch], which 
+`GALAPAGOS-2` [@galapagos2] added multi-band fitting. 
+`The Tractor` [@tractor] is implemented in python and allows modeling galaxies in multi-band imaging at different resolutions as well as posterior sampling, but remains limited to parametric source profiles. 
+`AstroPhot` [@astrophot] offers an astronomical modeling framework based on PyTorch [@pytorch], which 
 allows to optimize multiple sources with different parametric models to multiple images at different resolutions, and includes posterior sampling techniques.
 None of the implementations above support fully non-parametric galaxy models or neural network priors.
 
