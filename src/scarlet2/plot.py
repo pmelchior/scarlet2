@@ -287,8 +287,7 @@ class AsinhAutomaticNorm(AsinhNorm):
             channel_map = channels_to_rgb(observation.frame.C)
 
         im3 = img_to_3channel(observation.data, channel_map=channel_map)
-        var3 = 1 / observation.weights
-        var3 = np.where(np.isfinite(var3), var3, 0)
+        var3 = np.where(observation.weights > 0, 1 / observation.weights, 0)  # filter pixels with 0 weight
         var3 = img_to_3channel(var3, channel_map=channel_map)
 
         # total intensity and variance images
@@ -334,20 +333,21 @@ def img_to_3channel(img, channel_map=None):
 
     # filterWeights: channel x band
     if channel_map is None:
-        channel_map = channels_to_rgb(num_channels)
+        channel_map = channels_to_rgb(num_channels)  # channel x band
     else:
         assert channel_map.shape == (3, len(img))
+
+    # filter out masked and bad values
+    img_ = jnp.where(jnp.isfinite(img_), img_, 0)
 
     # map channels onto RGB channels
     _, ny, nx = img_.shape
     rgb = jnp.dot(channel_map, img_.reshape(num_channels, -1)).reshape(3, ny, nx)
 
-    rgb = jnp.where(np.isfinite(rgb), rgb, 0)
-
     return rgb
 
 
-def img_to_rgb(img, channel_map=None, fill_value=0, norm=None, mask=None):
+def img_to_rgb(img, channel_map=None, norm=None, mask=None):
     """Convert images to normalized RGB.
 
     If normalized values are outside of the range [0..255], they will be
@@ -359,14 +359,11 @@ def img_to_rgb(img, channel_map=None, fill_value=0, norm=None, mask=None):
         This should be an array with dimensions (channels, height, width).
     channel_map: array
         Linear mapping from channels to RGB, dimensions (3, channels)
-    fill_value: float, optional
-        Value to use for any masked pixels.
     norm: Norm, optional
         Norm to use for mapping in the allowed range [0..255]. If `norm=None`,
         `scarlet.display.LinearPercentileNorm` will be used.
     mask: array_like, optional
-        A [0,1] binary mask to apply over the top of the image,
-        where pixels with mask==1 are masked out.
+        A [0,1] binary mask set define where pixels will have 0 opacity.
 
     Returns
     -------
