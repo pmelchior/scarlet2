@@ -571,11 +571,10 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         """
         if self.observation.weights is not None and self.observation.data is not None:
             # Mask self.observation.data where self.observation.weights is 0
-            if jnp.isinf(self.observation.data[self.observation.weights > 0]).any():
+            if not jnp.isfinite(self.observation.data[self.observation.weights > 0]).all():
                 return ValidationError(
-                    message="Data in the observation must be finite.",
+                    message="Data in the observation must be finite where weights are greater than zero.",
                     check=self.__class__.__name__,
-                    context={"observation.data": self.observation.data},
                 )
             else:
                 return ValidationInfo(
@@ -583,13 +582,15 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
                     check=self.__class__.__name__,
                 )
         else:
+            context = {}
+            if self.observation.data is None:
+                context["observation.data"] = self.observation.data
+            if self.observation.weights is None:
+                context["observation.weights"] = self.observation.weights
             return ValidationWarning(
                 message="Observation data or weights are not defined.",
                 check=self.__class__.__name__,
-                context={
-                    "observation.data": self.observation.data,
-                    "observation.weights": self.observation.weights,
-                },
+                context=context,
             )
 
     def check_psf_has_3_dimensions(self) -> ValidationResult:

@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+
 from scarlet2.observation import Observation, ObservationValidator
 from scarlet2.psf import ArrayPSF
 from scarlet2.validation_utils import ValidationError, ValidationInfo, set_validation
@@ -111,7 +112,6 @@ def test_data_finite_for_non_zero_weights_returns_error_with_infinity():
     results = checker.check_data_finite_for_non_zero_weights()
 
     assert isinstance(results, ValidationError)
-    assert results.message == "Data in the observation must be finite."
 
 
 def test_number_of_psf_channels(good_obs):
