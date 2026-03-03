@@ -101,7 +101,7 @@ def test_flip():
     assert_allclose(g_obs.ellipticity, g.ellipticity, atol=3e-5)
 
 
-def test_translation():
+def test_translate():
     shift = jnp.array((12, -1.9))
     shape = model.shape
     wcs_obs = _wcs_default(shape)
@@ -121,7 +121,7 @@ def test_translation():
     assert_allclose(g_obs.ellipticity, g.ellipticity, atol=3e-5)
 
 
-def test_convolution():
+def test_convolve():
     # create model PSF and convolve g
     t_p = 0.7
     eps_p = None

@@ -10,9 +10,10 @@ from .bbox import Box, overlap_slices
 from .fft import _get_fast_shape, _trim, _wrap_hermitian_x, convolve, deconvolve, good_fft_size, transform
 from .frame import _minmax_int, get_relative_jacobian_shift, get_scale_angle_flip_shift
 from .interpolation import Interpolant, Lanczos, resample3d, resample_fourier
+from .module import Module
 
 
-class Renderer(eqx.Module):
+class Renderer(Module):
     """Renderer base class
 
     Renderers are (potentially parameterized) transformations between the model
@@ -24,7 +25,7 @@ class Renderer(eqx.Module):
         raise NotImplementedError
 
 
-class HashableSlice(eqx.Module):
+class HashableSlice(Module):
     """A slice version that is hashable (for python < 3.12)"""
 
     start: int
@@ -124,6 +125,8 @@ class ConvolutionRenderer(Renderer):
 
     _diff_kernel_fft: jnp.array = eqx.field(repr=False)
     _fft_shape: jnp.array = eqx.field(repr=False)
+    _kcoords_out: jnp.array = eqx.field(repr=False)
+    shift: jnp.array
 
     def __init__(self, model_frame, obs_frame):
         """Initialize convolution renderer with difference kernel between `model_frame` and `obs_frame`
@@ -152,9 +155,30 @@ class ConvolutionRenderer(Renderer):
         )
         self._diff_kernel_fft = diff_kernel_fft
 
+        # for shift operations
+        self.shift = jnp.zeros(2)
+        self._kcoords_out = jnp.stack(
+            jnp.meshgrid(
+                jnp.fft.rfftfreq(self._fft_shape[-1]),  # meshgrid uses x,y convention
+                jnp.fft.fftfreq(self._fft_shape[-2]),
+            )[::-1],  # so we flip it back
+            -1,
+        )
+
     def __call__(self, model, key=None):
         """What to run when ConvolutionRenderer is called"""
-        return convolve(model, self._diff_kernel_fft, axes=(-2, -1), fft_shape=self._fft_shape)
+        # apply shift to diff kernel
+        return convolve(
+            model,
+            self._diff_kernel_fft * self._phase_factor[..., :, :],
+            axes=(-2, -1),
+            fft_shape=self._fft_shape,
+        )
+
+    @property
+    def _phase_factor(self):
+        # apply shift to frequencies in Fourier space
+        return jnp.exp(-1j * 2 * jnp.pi * (self._kcoords_out @ self.shift))
 
 
 class TrimSpatialBox(Renderer):
@@ -193,7 +217,7 @@ class ResamplingRenderer(Renderer):
     scale: float
     angle: float
     handedness: int
-    shift: tuple
+    shift: jnp.array
     has_psf_in: bool
     has_psf_out: bool
     fft_shape_target: int = eqx.field(repr=False)
@@ -231,6 +255,10 @@ class ResamplingRenderer(Renderer):
         # store these properties for convenience and printing
         # (ignore shift because it doesn't include CRPIX/CRVAL changes)
         self.scale, self.angle, self.handedness, _ = get_scale_angle_flip_shift(self.jacobian)
+        center_model = jnp.array(model_frame.bbox.spatial.center)
+        center_model_in_obs = obs_frame.get_pixel(model_frame.get_sky_coord(center_model))
+        center_obs = jnp.array(obs_frame.bbox.spatial.center)
+        self.shift = center_obs - center_model_in_obs
 
         # Get maximum of the fft shapes to interpolate on the highest resolved FFT image
         self.real_shape_target = obs_frame.bbox.shape
@@ -339,7 +367,7 @@ class LanczosResamplingRenderer(Renderer):
     scale: float
     angle: float
     handedness: int
-    shift: tuple
+    shift: jnp.array
     _coords: jnp.ndarray = eqx.field(repr=False)
     _warp: jnp.ndarray = eqx.field(repr=False)
     _diff_kernel_fft: jnp.array = eqx.field(repr=False, default=None)

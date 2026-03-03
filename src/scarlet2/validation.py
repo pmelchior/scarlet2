@@ -1,6 +1,6 @@
+from .infer import FitValidator
 from .module import ParameterValidator
 from .observation import ObservationValidator
-from .scene import FitValidator
 from .source import SourceValidator
 from .validation_utils import ValidationResult
 
@@ -141,6 +141,9 @@ def check_parameter(parameter) -> list[ValidationResult]:
     ----------
     parameter : Parameter
         The parameter  to check
+
+    parameters : Parameters
+        The full list parameters
 
     Returns
     -------

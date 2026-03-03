@@ -2,11 +2,10 @@ import operator
 
 import jax
 import jax.numpy as jnp
-from astropy.coordinates import SkyCoord
 
 from . import Scenery
 from .bbox import Box, overlap_slices
-from .module import Module
+from .module import Module, _to_pixels
 from .morphology import Morphology
 from .spectrum import Spectrum
 from .validation_utils import (
@@ -53,21 +52,21 @@ class Component(Module):
         >>> with Scene(model_frame) as scene:
         >>>    component = Component(center, spectrum, morphology)
         """
-        self.spectrum = spectrum
-        self.morphology = morphology
+        try:
+            frame = Scenery.scene.frame
+        except AttributeError:
+            print("Attributes defined in sky coordinates can only be created within the context of a Scene")
+            print("Use 'with Scene(frame) as scene: (...)'")
+            raise
 
-        if isinstance(center, SkyCoord):
-            try:
-                center = Scenery.scene.frame.get_pixel(center)
-            except AttributeError:
-                print("`center` defined in sky coordinates can only be created within the context of a Scene")
-                print("Use 'with Scene(frame) as scene: (...)'")
-                raise
-        self.center = center
+        self.center = _to_pixels(frame, center)
+        self.spectrum = spectrum  # no unit conversion on spectrum (not yet defined)
+        self.morphology = _to_pixels(frame, morphology)
 
+        # define box with integer pixel coordinates to place the component
         box = Box(spectrum.shape)
         box2d = Box(morphology.shape)
-        box2d.set_center(center.astype(int))
+        box2d.set_center(self.center.astype(int))
         self.bbox = box @ box2d
 
     def __call__(self):
@@ -143,6 +142,7 @@ class Source(Component):
         # add this source to the active scene
         try:
             Scenery.scene.sources.append(self)
+
         except AttributeError:
             print("Source can only be created within the context of a Scene")
             print("Use 'with Scene(frame) as scene: Source(...)'")
@@ -250,25 +250,3 @@ class SourceValidator(metaclass=ValidationMethodCollector):
 
     def __init__(self, source: Source):
         self.source = source
-
-    # def check_source_has_positive_contribution(self) -> ValidationResult:
-    #     """Check that the source has a positive contribution i.e. that the result
-    #     of evaluating self.source() does not contain negative values.
-    #
-    #     Returns
-    #     -------
-    #     ValidationResult
-    #         A subclass of ValidationResult indicating the result of the check.
-    #     """
-    #     model = self.source()
-    #     if jnp.any(model < 0):
-    #         return ValidationError(
-    #             "Source model has negative contributions.",
-    #             check=self.__class__.__name__,
-    #             context={"source": self.source},
-    #         )
-    #     else:
-    #         return ValidationInfo(
-    #             "Source model has positive contributions.",
-    #             check=self.__class__.__name__,
-    #         )

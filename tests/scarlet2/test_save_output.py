@@ -8,49 +8,21 @@ import os
 import astropy.wcs as wcs
 import h5py
 import jax
-import jax.numpy as jnp
-from huggingface_hub import hf_hub_download
+import jax.tree_util as jtu
+import pytest
 
-from scarlet2 import *  # noqa: F403
-from scarlet2 import init
-from scarlet2.bbox import Box
-from scarlet2.frame import Frame
 from scarlet2.io import model_from_h5, model_to_h5
-from scarlet2.observation import Observation
-from scarlet2.psf import GaussianPSF
-from scarlet2.scene import Scene
-from scarlet2.source import Source
 from scarlet2.validation_utils import set_validation
 
-# turn off automatic validation checks
-set_validation(False)
+
+@pytest.fixture(autouse=True)
+def setup_validation():
+    """Automatically disable validation for all tests. This permits the creation
+    of intentionally invalid Observation objects."""
+    set_validation(False)
 
 
-def test_save_output():
-    filename = hf_hub_download(
-        repo_id="astro-data-lab/scarlet-test-data", filename="hsc_cosmos_35.npz", repo_type="dataset"
-    )
-    file = jnp.load(filename)
-    data = jnp.asarray(file["images"])
-    centers = [(src["y"], src["x"]) for src in file["catalog"]]  # Note: y/x convention!
-    weights = jnp.asarray(1 / file["variance"])
-    psf = jnp.asarray(file["psfs"])
-
-    frame_psf = GaussianPSF(0.7)
-    model_frame = Frame(Box(data.shape), psf=frame_psf)
-    obs = Observation(data, weights, psf=psf)
-
-    with Scene(model_frame) as scene:
-        for center in centers:
-            center = jnp.array(center)
-            try:
-                spectrum, morph = init.from_gaussian_moments(obs, center, min_corr=0.99)
-            except ValueError:
-                spectrum = init.pixel_spectrum(obs, center)
-                morph = init.compact_morphology()
-
-            Source(center, spectrum, morph)
-
+def test_save_output(scene):
     # save the output
     id = 1
     filename = "demo_io.h5"
@@ -75,15 +47,15 @@ def test_save_output():
     print("Output loaded from h5 file")
 
     # compare scenes
-    saved = jax.tree_util.tree_leaves(scene)
-    loaded = jax.tree_util.tree_leaves(scene_loaded)
+    saved = jtu.tree_leaves(scene)
+    loaded = jtu.tree_leaves(scene_loaded)
     status = True
     for leaf_saved, leaf_loaded in zip(saved, loaded, strict=False):
         if isinstance(leaf_saved, wcs.WCS):  # wcs doesn't allow direct == comparison...
             if not leaf_saved.wcs.compare(leaf_loaded.wcs):
                 status = False
-        elif hasattr(leaf_saved, "__iter__"):
-            if (leaf_saved != leaf_loaded).all():
+        elif isinstance(leaf_saved, jax.Array):
+            if (leaf_saved != leaf_loaded).any():
                 status = False
         else:
             if leaf_saved != leaf_loaded:

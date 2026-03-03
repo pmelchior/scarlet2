@@ -1,22 +1,11 @@
-import logging
-from collections import defaultdict
-
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 
 from . import Scenery
 from .bbox import overlap_slices
 from .frame import Frame
-from .module import Module, Parameters
-from .validation_utils import (
-    ValidationError,
-    ValidationInfo,
-    ValidationMethodCollector,
-    ValidationResult,
-    ValidationWarning,
-    print_validation_results,
-)
+from .module import Module
+from .validation_utils import print_validation_results
 
 
 class Scene(Module):
@@ -96,6 +85,9 @@ class Scene(Module):
         return model
 
     def __enter__(self):
+        # this scene might have parameters defined, we need to reset its registry key
+        object.__setattr__(self, "registry_key", "")
+
         # context manager to register sources
         # purpose is to provide scene.frame to source inits that will need some of its information
         # also allows us to append the sources automatically to the scene
@@ -114,123 +106,10 @@ class Scene(Module):
             validation_results = check_scene(self)
             print_validation_results("Source validation results", validation_results)
 
-    def sample(
-        self, observations, parameters, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs
-    ):
-        """Sample `parameters` of every source in the scene to get posteriors given `observations`.
-
-        This method runs the HMC NUTS sampler from `numpyro` to get parameter
-        posteriors. It uses the likelihood of `observations` as well as the `prior`
-        attribute set for every :py:class:`~scarlet2.Parameter` in `parameters`.
-
-        Parameters
-        ----------
-        observations: :py:class:`~scarlet2.Observation` or list
-            The observations to fit the models to.
-        parameters: :py:class:`~scarlet2.Parameters`
-            Parameters to sample. This method will ignore all parameters that are not in this list.
-            Every parameter in the list needs to have the attribute `prior` set.
-        seed: int, optional
-            RNG seed for the sampler
-        num_warmup: int, optional
-            Number of samples during HMC warm-up
-        num_samples: int, optional
-            Number of samples to create from tuned HMC
-        progress_bar: bool, optional
-            Whether to show a progress bar
-        **kwargs: dict, optional
-            Additional keyword arguments passed to the `numpyro.infer.NUTS` sampler.
-
-        Notes
-        -----
-        Requires `numpyro`
-
-        Returns
-        -------
-        numpyro.infer.mcmc.MCMC
-        """
-        # uses numpyro NUTS on all non-fixed parameters
-        # requires that those have priors set
-        try:
-            import numpyro
-            import numpyro.distributions as dist
-            import numpyro.distributions.constraints as constraints
-            from numpyro.infer import MCMC, NUTS
-        except ImportError as err:
-            raise ImportError("scarlet2.Scene.sample() requires numpyro.") from err
-
-        # making sure we can iterate
-        if not isinstance(observations, (list, tuple)):
-            observations = (observations,)
-        for obs in observations:
-            obs.check_set_renderer(self.frame)
-
-        # helper class to turn observation likelihood(s) into numpyro distribution
-        class ObsDistribution(dist.Distribution):
-            support = constraints.real_vector
-
-            def __init__(self, obs, model, validate_args=None):
-                self.obs = obs
-                self.model = model
-                event_shape = jnp.shape(model)
-                super().__init__(
-                    event_shape=event_shape,
-                    validate_args=validate_args,
-                )
-
-            def sample(self, key, sample_shape=()):
-                raise NotImplementedError
-
-            def mean(self):
-                return self.obs.render(self.model)
-
-            @dist.util.validate_sample
-            def log_prob(self, value):
-                # numpyro needs sampling distribution of data (=value), not likelihood function of parameters
-                return self.obs._log_likelihood(self.model, value)
-
-        # find all non-fixed parameters and their priors
-        priors = {p.name: p.prior for p in parameters}
-        has_none = any(prior is None for prior in priors.values())
-        if has_none:
-            from pprint import pformat
-
-            msg = f"All parameters need to have priors set. Got:\n{pformat(priors)}"
-            raise AttributeError(msg)
-
-        # define the pyro model, where every parameter becomes a sample,
-        # and the observations sample from their likelihood given the rendered model
-        def pyro_model(model):
-            samples = tuple(numpyro.sample(p.name, p.prior) for p in parameters)
-            model_ = model.replace(parameters, samples)
-            pred = model_()  # create prediction once for all observations
-            # dealing with multiple observations
-            for i, obs_ in enumerate(observations):
-                numpyro.sample(f"obs.{i}", ObsDistribution(obs_, pred), obs=obs_.data)
-
-        from numpyro.infer import MCMC, NUTS
-
-        # use init from current value of model
-        try:
-            init_strategy = kwargs.pop("init_strategy")
-        except KeyError:
-            from functools import partial
-
-            from numpyro.infer.initialization import init_to_value
-
-            values = {p.name: p.node for p in parameters}
-            init_strategy = partial(init_to_value, values=values)
-
-        nuts_kernel = NUTS(pyro_model, init_strategy=init_strategy, **kwargs)
-        mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, progress_bar=progress_bar)
-        rng_key = jax.random.PRNGKey(seed)
-        mcmc.run(rng_key, self)
-        return mcmc
-
     def fit(
         self,
         observations,
-        parameters,
+        *args,
         schedule=None,
         max_iter=100,
         e_rel=1e-4,
@@ -240,15 +119,12 @@ class Scene(Module):
     ):
         """Fit model `parameters` of every source in the scene to match `observations`.
 
-        Computes the best-fit parameters of all components in every source by
-        first-order gradient descent with the Adam optimizer from `optax`.
-
         Parameters
         ----------
         observations: :py:class:`~scarlet2.Observation` or list
             The observations to fit the model to.
-        parameters: :py:class:`~scarlet2.Parameters`
-            Parameters to optimize. This method will ignore all parameters that are not in this list.
+        *args: list, optional
+            Additional arguments passed. Only used for backwards (v0.3) compatibility.
         schedule: callable, optional
             A function that maps optimizer step count to value. See :py:class:`optax.Schedule` for details.
         max_iter: int, optional
@@ -266,317 +142,80 @@ class Scene(Module):
         **kwargs: dict, optional
             Additional keyword arguments passed to the `optax.scale_by_adam` optimizer.
 
-        Notes
-        -----
-        Requires `optax`
-
         Returns
         -------
         Scene
             The scene model with updated parameters
+
+        See Also
+        --------
+        :py:func:`~scarlet2.fit`
         """
-        try:
-            import optax
-            import optax._src.base as base
-            from tqdm.auto import trange
-        except ImportError as err:
-            raise ImportError("scarlet2.Scene.fit() requires optax and numpyro.") from err
 
         # making sure we can iterate
         if not isinstance(observations, (list, tuple)):
             observations = (observations,)
-        for obs in observations:
-            obs.check_set_renderer(self.frame)
-        assert isinstance(parameters, Parameters)
+        # don't use this function with observation parameters
+        if any(len(obs.parameters) for obs in observations):
+            msg = "For Scene.fit(), observations must not have parameters. Use scarlet2.fit() instead."
+            raise RuntimeError(msg)
 
-        # make a stepsize tree
-        where = lambda model: model.get(parameters)
-        replace = tuple(p.stepsize for p in parameters)
-        steps = eqx.tree_at(where, self, replace=replace)
+        from .infer import fit
 
-        def scale_by_stepsize() -> base.GradientTransformation:
-            # adapted from optax.scale_by_param_block_norm()
-            def init_fn(params):
-                del params
-                return base.EmptyState()
-
-            def update_fn(updates, state, params):
-                if params is None:
-                    raise ValueError(base.NO_PARAMS_MSG)
-                updates = jax.tree_util.tree_map(
-                    # minus because we want gradient descent
-                    lambda u, s, p: None if u is None else -s * u if not callable(s) else -s(p) * u,
-                    updates,
-                    steps,
-                    params,
-                    is_leaf=lambda x: x is None,
-                )
-                return updates, state
-
-            return base.GradientTransformation(init_fn, update_fn)
-
-        # run adam, followed by stepsize adjustments
-        optim = optax.chain(
-            optax.scale_by_adam(**kwargs),
-            optax.scale_by_schedule(schedule if callable(schedule) else lambda x: 1),
-            scale_by_stepsize(),
+        scene_, _ = fit(
+            self,
+            observations,
+            schedule=schedule,
+            max_iter=max_iter,
+            e_rel=e_rel,
+            progress_bar=progress_bar,
+            callback=callback,
+            **kwargs,
         )
+        return scene_
 
-        # transform to unconstrained parameters
-        scene = _constraint_replace(self, parameters, inv=True)
+    def sample(
+        self, observations, *args, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs
+    ):
+        """Sample `parameters` of every source in the scene to get posteriors given `observations`.
 
-        # get optimizer initialized with the optimization parameters
-        filter_spec = self.get_filter_spec(parameters)
-        opt_state = optim.init(scene) if filter_spec is None else optim.init(eqx.filter(scene, filter_spec))
-
-        with trange(max_iter, disable=not progress_bar) as t:
-            for step in t:  # noqa: B007
-                # optimizer step
-                scene, loss, opt_state, convergence = _make_step(
-                    scene, observations, parameters, optim, opt_state, filter_spec=filter_spec
-                )
-
-                # compute max change across all non-fixed parameters for convergence test
-                max_change = jax.tree_util.tree_reduce(lambda a, b: max(a, b), convergence)
-
-                # report current iteration results to callback
-                if callback is not None:
-                    scene_ = _constraint_replace(scene, parameters)
-                    callback(scene_, convergence, loss)
-
-                # Log the loss and max_change in the tqdm progress bar
-                t.set_postfix(loss=f"{loss:08.2f}", max_change=f"{max_change:1.6f}")
-
-                # test convergence
-                if max_change < e_rel:
-                    break
-
-        returned_scene = _constraint_replace(scene, parameters)  # transform back to constrained variables
-
-        # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
-        from .validation_utils import VALIDATION_SWITCH
-
-        if VALIDATION_SWITCH:
-            from .validation import check_fit
-
-            for i, obs in enumerate(observations):
-                print(f"Running validation checks on the fit of the scene for observation {i}.")
-                validation_results = check_fit(returned_scene, obs)
-                print_validation_results("Fit validation results", validation_results)
-
-        return returned_scene
-
-    def set_spectra_to_match(self, observations, parameters):
-        """Set spectra to match given observations."""
-        msg = "set_spectra_to_match() is unnecessary and therefore deprecated.\n"
-        msg += "This method call does not have any effect."
-        logging.warning(msg)
-
-
-def _constraint_replace(self, parameters, inv=False):
-    # replace any parameter with constraint into unconstrained ones by calling its constraint bijector
-    # return transformed pytree
-    where_in = lambda model: model.get(parameters)
-    param_values = where_in(self)
-    if not inv:
-        replace = tuple(
-            p.constraint_transform(v) if p.constraint is not None else v
-            for p, v in zip(parameters, param_values, strict=False)
-        )
-    else:
-        replace = tuple(
-            p.constraint_transform.inv(v) if p.constraint is not None else v
-            for p, v in zip(parameters, param_values, strict=False)
-        )
-
-    return eqx.tree_at(where_in, self, replace=replace)
-
-
-# update step for optax optimizer
-@eqx.filter_jit
-def _make_step(model, observations, parameters, optim, opt_state, filter_spec=None):
-    from .nn import ScorePrior, pad_fwd
-
-    def loss_fn(model):
-        if any(param.constraint is not None for param in parameters):
-            # parameters now obey constraints
-            # transformation happens in the grad path, so gradients are wrt to unconstrained variables
-            # likelihood and prior grads transparently apply the Jacobians of these transformations
-            model = _constraint_replace(model, parameters)
-
-        pred = model()
-        log_like = sum(obs.log_likelihood(pred) for obs in observations)
-
-        param_values = model.get(parameters)
-
-        log_prior = 0
-
-        # Gather parameters with the same ScorePrior for parallel evaluation
-        grouped = defaultdict(list)
-        for param, value in zip(parameters, param_values, strict=False):
-            if isinstance(param.prior, ScorePrior):
-                grouped[param.prior].append(pad_fwd(value, param.prior._model.shape)[0])
-            elif param.prior is not None:
-                log_prior += param.prior.log_prob(value)
-
-        if len(grouped) > 0:
-            log_prior += sum(
-                sum(
-                    jax.vmap(prior.log_prob)(jnp.stack(arr_list, axis=0))
-                    for prior, arr_list in grouped.items()
-                )
-            )
-
-        return -(log_like + log_prior)
-
-    if filter_spec is None:
-        loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
-    else:
-
-        @eqx.filter_value_and_grad
-        def filtered_loss_fn(diff_model, static_model):
-            model = eqx.combine(diff_model, static_model)
-            return loss_fn(model)
-
-        diff_model, static_model = eqx.partition(model, filter_spec)
-        loss, grads = filtered_loss_fn(diff_model, static_model)
-
-    updates, opt_state = optim.update(grads, opt_state, model)
-    model_ = eqx.apply_updates(model, updates)
-
-    # for convergence criterion: compute norms of parameters and updates
-    norm = lambda x, dx: 0 if dx is None else jnp.linalg.norm(dx) / jnp.linalg.norm(x)
-    convergence = jax.tree_util.tree_map(lambda x, dx: norm(x, dx), *(model, updates))
-
-    return model_, loss, opt_state, convergence
-
-
-class FitValidator(metaclass=ValidationMethodCollector):
-    """A class containing all of the validation checks for a Scene objects after
-    calling `.fit()`.
-
-    Note that the metaclass is defined as `MethodCollector`, which collects all
-    validation methods in this class into a single class attribute list called
-    `validation_checks`. This allows for easy iteration over all checks."""
-
-    def __init__(self, scene: Scene, observation):
-        """Initialize the FitValidator.
+        This method runs the HMC NUTS sampler from `numpyro` to get parameter
+        posteriors. It uses the likelihood of `observations` as well as the `prior`
+        attribute set for every :py:class:`~scarlet2.Parameter` in `parameters`.
 
         Parameters
         ----------
-        scene : Scene
-            The scene object to validate.
-        observation : Observation
-            The observation object containing the data to validate against.
-        """
-        self.scene = scene
-        self.observation = observation
-
-        # These are placeholders, waiting for the actual width of distribution to be
-        # implemented - see issue https://github.com/pmelchior/scarlet2/issues/192
-        self.chi2_tolerable_threshold = 1.5
-        self.chi2_critical_threshold = 5.0
-
-    def check_goodness_of_fit(self) -> ValidationResult:
-        """Evaluate the goodness of the model fit to the data by calling the Observation
-        class's `goodness_of_fit` method. Please see the docstring for that method
-        for details.
+        observations: :py:class:`~scarlet2.Observation` or list
+            The observations to fit the models to.
+        *args: list, optional
+            Additional arguments passed. Only used for backwards (v0.3) compatibility.
+        seed: int, optional
+            RNG seed for the sampler
+        num_warmup: int, optional
+            Number of samples during HMC warm-up
+        num_samples: int, optional
+            Number of samples to create from tuned HMC
+        progress_bar: bool, optional
+            Whether to show a progress bar
+        **kwargs: dict, optional
+            Additional keyword arguments passed to the `numpyro.infer.NUTS` sampler.
 
         Returns
         -------
-        ValidationResult
-            A subclass of ValidationResult indicating the result of the check.
+        numpyro.infer.mcmc.MCMC
+
+        See Also
+        --------
+        :py:func:`~scarlet2.sample`
         """
-        obs = self.observation
+        from .infer import sample
 
-        chi2 = obs.goodness_of_fit(self.scene())
-
-        ret_val: ValidationResult = ValidationInfo("The model fit is good.", check=self.__class__.__name__)
-        if self.chi2_tolerable_threshold <= chi2 < self.chi2_critical_threshold:
-            ret_val = ValidationWarning(
-                "The model fit is acceptable, but the goodness of fit is not optimal.",
-                check=self.__class__.__name__,
-                context={"chi2": chi2},
-            )
-        elif chi2 >= self.chi2_critical_threshold:
-            ret_val = ValidationError(
-                "The model fit is poor.", check=self.__class__.__name__, context={"chi2": chi2}
-            )
-
-        return ret_val
-
-    def check_chi_square_in_box_and_border(self) -> list[ValidationResult]:
-        """Evaluate the weighted mean (weighted by the inverse variance weights)
-        of the squared residuals for each source. Chi square is also computed for
-        the perimeter outside the box of with `border_width`.
-
-        Returns
-        -------
-        list[ValidationResult]
-            A list of ValidationResult subclasses for each source. For each source
-            there will be two results. One for inside the bounding box and one
-            for the border. The ValidationResults will each be one of the following:
-            - If the chi-square is above the critical threshold, a ValidationError.
-            - If the chi-square is below the tolerable threshold, a ValidationInfo.
-            - If the chi-square is between the two thresholds, a ValidationWarning.
-        """
-        obs = self.observation
-
-        chi2_per_source = obs.eval_chi_square_in_box_and_border(self.scene)
-
-        validation_results: list[ValidationResult] = []
-        for i, chi2 in chi2_per_source.items():
-            chi2_inside = chi2["in"]
-            chi2_outside = chi2["out"]
-
-            if chi2_inside < self.chi2_tolerable_threshold:
-                validation_results.append(
-                    ValidationInfo(
-                        f"The chi-square in the box for source {i} is good.",
-                        check=self.__class__.__name__,
-                        context={"chi2_in": chi2_inside, "source": i},
-                    )
-                )
-            elif self.chi2_tolerable_threshold <= chi2_inside < self.chi2_critical_threshold:
-                validation_results.append(
-                    ValidationWarning(
-                        f"The chi-square in the box for source {i} is acceptable, but not optimal.",
-                        check=self.__class__.__name__,
-                        context={"chi2_in": chi2_inside, "source": i},
-                    )
-                )
-            elif chi2_inside >= self.chi2_critical_threshold:
-                validation_results.append(
-                    ValidationError(
-                        f"The chi-square in the box for source {i} is poor.",
-                        check=self.__class__.__name__,
-                        context={"chi2_in": chi2_inside, "source": i},
-                    )
-                )
-
-            if chi2_outside < self.chi2_tolerable_threshold:
-                validation_results.append(
-                    ValidationInfo(
-                        f"The chi-square in the border for source {i} is good.",
-                        check=self.__class__.__name__,
-                        context={"chi2_border": chi2_outside, "source": i},
-                    )
-                )
-            elif self.chi2_tolerable_threshold <= chi2_outside < self.chi2_critical_threshold:
-                validation_results.append(
-                    ValidationWarning(
-                        f"The chi-square in the border for source {i} is acceptable, but not optimal.",
-                        check=self.__class__.__name__,
-                        context={"chi2_border": chi2_outside, "source": i},
-                    )
-                )
-            elif chi2_outside >= self.chi2_critical_threshold:
-                validation_results.append(
-                    ValidationError(
-                        f"The chi-square in the border for source {i} is poor.",
-                        check=self.__class__.__name__,
-                        context={"chi2_border": chi2_outside, "source": i},
-                    )
-                )
-
-        return validation_results
+        return sample(
+            self,
+            observations,
+            seed=seed,
+            num_warmup=num_warmup,
+            num_samples=num_samples,
+            progress_bar=progress_bar,
+            **kwargs,
+        )

@@ -35,8 +35,6 @@ class Observation(Module):
     """Metadata to describe what view of the sky `data` amounts to"""
     renderer: (None, Renderer, eqx.nn.Sequential)
     """Renderer to translate from the model frame the observation frame"""
-    n: int
-    """Number of valid pixels in `data`"""
     name: str
     """Name to describe the observation"""
 
@@ -52,9 +50,6 @@ class Observation(Module):
             # add a channel dimension if it is missing
             self.weights = self.weights[None, ...]
 
-        # number of unmasked pixels
-        self.n = jnp.prod(jnp.asarray(data.shape)) - jnp.sum(self.weights == 0)
-
         self.frame = Frame(Box(self.data.shape), psf, wcs, channels=channels)
         self.renderer = renderer
         self.name = name if name is not None else ""
@@ -67,6 +62,11 @@ class Observation(Module):
 
             validation_results = check_observation(self)
             print_validation_results("Observation validation results", validation_results)
+
+    @property
+    def n(self):
+        """Number of unmasked pixels in the observation"""
+        return jnp.prod(jnp.asarray(self.data.shape)) - jnp.sum(self.weights == 0)
 
     def render(self, model):
         """Render `model` in the frame of this observation
@@ -82,9 +82,10 @@ class Observation(Module):
             Prediction of the observation given the `model`. Has the same shape as :py:attr:`data`.
         """
         assert self.renderer is not None, (
-            "Observation requires a renderer. Call Observation.match(model_frame) first"
+            "Observation.render() requires a renderer. Call Observation.match(model_frame) first"
         )
-        return self.renderer(model)
+        model_ = model() if isinstance(model, eqx.Module) else model
+        return self.renderer(model_)
 
     def log_likelihood(self, model):
         """The logarithm the likelihood of :py:attr:`data` given `model`

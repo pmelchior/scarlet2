@@ -1,15 +1,15 @@
 import astropy.units as u
 import astropy.wcs
-import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from astropy.coordinates import SkyCoord
 
 from .bbox import Box
+from .module import Module
 from .psf import PSF, ArrayPSF, GaussianPSF
 
 
-class Frame(eqx.Module):
+class Frame(Module):
     """Definition of a view of the sky
 
     This class combines all elements to determine how a piece of the sky will appear.
@@ -20,7 +20,7 @@ class Frame(eqx.Module):
     """Bounding box of the frame"""
     psf: PSF = None
     """PSF of the frame"""
-    wcs: astropy.wcs.WCS = None
+    wcs: astropy.wcs.WCS
     """WCS information of the frame"""
     channels: list
     """Identifiers for the spectral elements"""
@@ -45,17 +45,6 @@ class Frame(eqx.Module):
     def C(self) -> int:  # noqa: N802
         """Number of channels"""
         return len(self.channels)
-
-    @property
-    def pixel_size(self):
-        """Get the size of the pixels
-
-        Returns
-        -------
-        float, astropy.units.quantity.Quantity
-            Pixel size in units of the WCS sky coordinates
-        """
-        return get_scale(self.wcs)
 
     def get_pixel(self, pos):
         """Get the sky coordinates from a world coordinate
@@ -130,9 +119,9 @@ class Frame(eqx.Module):
         float
             size in pixels
         """
-        if self.wcs is not None:
+        if isinstance(distance, u.Quantity):
             pixel_size = get_pixel_size(self.wcs)
-            return distance / pixel_size
+            return (distance / pixel_size).to(1, equivalencies=u.dimensionless_angles()).value
         else:
             return distance
 
@@ -390,7 +379,7 @@ def get_scale_angle_flip_shift(trans):
 
     Returns
     -------
-    scale: `float`
+    scale: `float` or `astropy.units.Quantity`
     angle: `float`, in radian
     flip: -1 or 1
     shift: `numpy.ndarray`
@@ -401,8 +390,10 @@ def get_scale_angle_flip_shift(trans):
     """
     if isinstance(trans, (np.ndarray, jnp.ndarray)):  # noqa: SIM108
         m = trans  # noqa: N806
+        use_unit = False
     else:
         m = get_affine(trans)  # noqa: N806
+        use_unit = True
 
     # get shift and then reduce to 2x2 for linear part
     if m.shape == (3, 3):
@@ -416,6 +407,8 @@ def get_scale_angle_flip_shift(trans):
     # if not, use scale = jnp.linalg.svd(M, compute_uv=False)
     # but be careful with rotations as anisotropic stretch and rotation do not commute
     scale = jnp.sqrt(jnp.abs(det)).item(0)
+    if use_unit:
+        scale = scale * u.deg
 
     # if rotation is improper: need to apply y-flip to M to get pure rotation matrix (and unique angle)
     improper = det < 0
@@ -427,14 +420,14 @@ def get_scale_angle_flip_shift(trans):
     return scale, angle, flip, shift
 
 
-def get_relative_jacobian_shift(model_frame, obs_frame):
+def get_relative_jacobian_shift(frame_in, frame_out):
     """Return the linear transformation matrix and shift between two frame WCSs
 
     Parameters
     ----------
-    model_frame: `~scarlet2.Frame`
+    frame_in: `~scarlet2.Frame`
         The frame that defines the origin of the transformation
-    obs_frame: `~scarlet2.Frame`
+    frame_out: `~scarlet2.Frame`
         The frame that defines the target of the transformation
 
     Returns
@@ -446,16 +439,16 @@ def get_relative_jacobian_shift(model_frame, obs_frame):
 
     """
     # Extract rotation angle, flip, scale between WCSs
-    m_in = get_affine(model_frame.wcs)
-    m_out = get_affine(obs_frame.wcs)
+    m_in = get_affine(frame_in.wcs)
+    m_out = get_affine(frame_out.wcs)
     jacobian = jnp.linalg.inv(m_out) @ m_in  # transformation from model pixel -> sky -> obs pixels
 
     # shift can be defined by the extended 3x3 Jacobian of the affine transformation matrix,
     # but it would ignore CRPIX/CRVAL difference between frmes
     # so we define it from the shift of the center of the two frames
-    center_model = jnp.array(model_frame.bbox.spatial.center)
-    center_model_in_obs = obs_frame.get_pixel(model_frame.get_sky_coord(center_model))
-    center_obs = jnp.array(obs_frame.bbox.spatial.center)
+    center_model = jnp.array(frame_in.bbox.spatial.center)
+    center_model_in_obs = frame_out.get_pixel(frame_in.get_sky_coord(center_model))
+    center_obs = jnp.array(frame_out.bbox.spatial.center)
     shift = center_obs - center_model_in_obs
     shift = tuple(c.item() for c in shift)  # avoid tracing
     return jacobian, shift
@@ -495,7 +488,8 @@ def get_scale(wcs, separate=False):
         M = get_affine(wcs)  # noqa: N806
         c1 = (M[0, :] ** 2).sum() ** 0.5
         c2 = (M[1, :] ** 2).sum() ** 0.5
-        return jnp.array([c1, c2])
+        scale = jnp.array([c1, c2]) * u.deg
+        return scale
     else:
         scale, _ = get_scale_angle_flip_shift(wcs)
         return scale

@@ -26,9 +26,13 @@ class Parameterization:
     """Parameters of the currently opened context"""
 
 
+parameter_registry = dict()
+
+
 from . import init, measure, plot
 from .bbox import Box
 from .frame import Frame
+from .infer import fit, sample
 from .module import Module, Parameter, Parameters, relative_step
 from .morphology import (
     GaussianMorphology,
@@ -51,6 +55,8 @@ __all__ = [
     "init",
     "measure",
     "plot",
+    "fit",
+    "sample",
     "Scenery",
     "Parameterization",
     "Box",
@@ -58,7 +64,6 @@ __all__ = [
     "Parameter",
     "Parameters",
     "Module",
-    "relative_step",
     "Morphology",
     "ProfileMorphology",
     "GaussianMorphology",
@@ -82,6 +87,7 @@ __all__ = [
     "check_observation",
     "check_scene",
     "check_source",
-    "VALIDATION_SWITCH",
+    "relative_step",
     "set_validation",
+    "VALIDATION_SWITCH",
 ]

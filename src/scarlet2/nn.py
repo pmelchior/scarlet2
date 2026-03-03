@@ -8,15 +8,10 @@
 
 from functools import partial
 
-try:
-    import numpyro.distributions as dist
-    import numpyro.distributions.constraints as constraints
-
-except ImportError as err:
-    raise ImportError("scarlet2.nn requires numpyro.") from err
-
 import equinox as eqx
 import jax.numpy as jnp
+import numpyro.distributions as dist
+import numpyro.distributions.constraints as constraints
 from jax import custom_vjp, vjp
 
 
