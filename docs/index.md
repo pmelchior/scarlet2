@@ -32,6 +32,7 @@ optimizer/sampler. If you want a fully fledged library out of the box, you need 
 :maxdepth: 2
 
 0-quickstart
+0-example
 1-howto
 2-questionnaire
 3-validation
@@ -79,3 +80,5 @@ method, including error estimates.
 ## Ideas, Questions or Problems?
 
 If you have any of those, head over to our [github repo](https://github.com/pmelchior/scarlet2/) and create an issue.
+For other ways to contribute, check out
+our [contributing guide](https://github.com/pmelchior/scarlet2/blob/main/CONTRIBUTING.md).

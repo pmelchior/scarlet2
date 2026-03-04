@@ -467,72 +467,6 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
     def __init__(self, observation: Observation):
         self.observation = observation
 
-    def check_weights_non_negative(self) -> ValidationResult:
-        """Check that the weights in the observation are non-negative.
-
-        Returns
-        -------
-        ValidationResult
-            A subclass of ValidationResult indicating the result of the check.
-        """
-        if self.observation.weights is not None and (self.observation.weights < 0).any():
-            return ValidationError(
-                message="Weights in the observation must be non-negative.",
-                check=self.__class__.__name__,
-                context={"observation.weights": self.observation.weights},
-            )
-        else:
-            return ValidationInfo(
-                message="Weights in the observation are non-negative.",
-                check=self.__class__.__name__,
-            )
-
-    def check_weights_finite(self) -> ValidationResult:
-        """Check that the weights in the observation are finite.
-
-        Returns
-        -------
-        ValidationResult
-            A subclass of ValidationResult indicating the result of the check.
-        """
-        if self.observation.weights is not None and jnp.isinf(self.observation.weights).any():
-            return ValidationError(
-                message="Weights in the observation must be finite.",
-                check=self.__class__.__name__,
-                context={"observation.weights": self.observation.weights},
-            )
-        else:
-            return ValidationInfo(
-                message="Weights in the observation are finite.",
-                check=self.__class__.__name__,
-            )
-
-    def check_data_and_weights_shape(self) -> ValidationResult:
-        """Check that the data and weights have the same shape.
-
-        Returns
-        -------
-        ValidationResult
-            A subclass of ValidationResult indicating the result of the check.
-        """
-        if (
-            self.observation.weights is not None
-            and self.observation.data.shape != self.observation.weights.shape
-        ):
-            return ValidationError(
-                message="Data and weights must have the same shape.",
-                check=self.__class__.__name__,
-                context={
-                    "observation.data.shape": self.observation.data.shape,
-                    "observation.weights.shape": self.observation.weights.shape,
-                },
-            )
-        else:
-            return ValidationInfo(
-                message="Data and weights have the same shape.",
-                check=self.__class__.__name__,
-            )
-
     def check_num_channels_matches_data(self) -> ValidationResult:
         """Check that the number of channels in the observation matches the data.
 
@@ -561,6 +495,58 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
                 check=self.__class__.__name__,
             )
 
+    def check_data_and_weights_shape(self) -> ValidationResult:
+        """Check that the data and weights exist and have the same shape.
+
+        Returns
+        -------
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
+        """
+        if self.observation.data is None:
+            return ValidationError(message="Observation.data are not set.", check=self.__class__.__name__)
+        if self.observation.weights is None:
+            return ValidationError(message="Observation.weights are not set.", check=self.__class__.__name__)
+        if self.observation.data.shape != self.observation.weights.shape:
+            return ValidationError(
+                message="Observation data and weights must have the same shape.",
+                check=self.__class__.__name__,
+                context={
+                    "observation.data.shape": self.observation.data.shape,
+                    "observation.weights.shape": self.observation.weights.shape,
+                },
+            )
+        else:
+            return ValidationInfo(
+                message="Data and weights have the same shape.",
+                check=self.__class__.__name__,
+            )
+
+    def check_weights_finite_and_non_negative(self) -> ValidationResult:
+        """Check that the weights in the observation are finite and non-negative.
+
+        Returns
+        -------
+        ValidationResult
+            A subclass of ValidationResult indicating the result of the check.
+        """
+        if self.observation.weights is not None:
+            if not jnp.isfinite(self.observation.weights).all():
+                return ValidationError(
+                    message="Observation.weights must be finite.",
+                    check=self.__class__.__name__,
+                )
+            elif (self.observation.weights < 0).any():
+                return ValidationError(
+                    message="Observation.weights must be non-negative.",
+                    check=self.__class__.__name__,
+                )
+            else:
+                return ValidationInfo(
+                    message="Observation.weights in the observation are finite and non-negative.",
+                    check=self.__class__.__name__,
+                )
+
     def check_data_finite_for_non_zero_weights(self) -> ValidationResult:
         """Check that the data in the observation is finite where weights are greater
         than zero.
@@ -579,20 +565,9 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
                 )
             else:
                 return ValidationInfo(
-                    message="Data in the observation is finite where weights are greater than zero.",
+                    message="Data in the observation are finite where weights are greater than zero.",
                     check=self.__class__.__name__,
                 )
-        else:
-            context = {}
-            if self.observation.data is None:
-                context["observation.data"] = self.observation.data
-            if self.observation.weights is None:
-                context["observation.weights"] = self.observation.weights
-            return ValidationWarning(
-                message="Observation data or weights are not defined.",
-                check=self.__class__.__name__,
-                context=context,
-            )
 
     def check_psf_has_3_dimensions(self) -> ValidationResult:
         """Check that the PSF in the observation is 3-dimensional.
@@ -617,9 +592,8 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
                 )
         else:
             return ValidationWarning(
-                message="Observation PSF is not defined.",
+                message="Observation.psf is not defined.",
                 check=self.__class__.__name__,
-                context={"observation.frame.psf": self.observation.frame.psf},
             )
 
     def check_number_of_psf_channels(self) -> ValidationResult:
@@ -632,17 +606,18 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         ValidationResult
             A subclass of ValidationResult indicating the result of the check.
         """
-        return_value: ValidationResult = ValidationInfo(
-            message="Number of PSF channels matches the number of data channels.",
-            check=self.__class__.__name__,
-        )
         if self.observation.frame.psf is not None:
             num_psf_channels = self.observation.frame.psf().shape[0]
             num_data_channels = self.observation.data.shape[0]
 
             # The number of bands is different between the PSF and data
-            if num_psf_channels != num_data_channels:
-                return_value = ValidationError(
+            if num_psf_channels == num_data_channels:
+                return ValidationInfo(
+                    message="Number of PSF channels matches the number of data channels.",
+                    check=self.__class__.__name__,
+                )
+            else:
+                return ValidationError(
                     message="Number of PSF channels does not match the number of data channels.",
                     check=self.__class__.__name__,
                     context={
@@ -650,15 +625,6 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
                         "observation.data.shape": self.observation.data.shape,
                     },
                 )
-
-        else:
-            return_value = ValidationWarning(
-                message="Observation PSF is not defined.",
-                check=self.__class__.__name__,
-                context={"observation.frame.psf": self.observation.frame.psf},
-            )
-
-        return return_value
 
     def check_psf_centroid_consistent(self) -> ValidationResult:
         """Check that the pixel location of the PSF centroid is consistent across
@@ -669,11 +635,6 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
         ValidationResult
             A subclass of ValidationResult indicating the result of the check.
         """
-        return_value: ValidationResult = ValidationInfo(
-            message="PSF centroid is consistent across channels.",
-            check=self.__class__.__name__,
-        )
-
         if self.observation.frame.psf is not None:
             from .measure import Moments
 
@@ -686,20 +647,18 @@ class ObservationValidator(metaclass=ValidationMethodCollector):
             psf_centroid_y, psf_centroid_x = psf_centroid
 
             tolerance = 1e-3
-            if not jnp.allclose(psf_centroid_y, psf_centroid_y[0], atol=tolerance) or not jnp.allclose(
+            if jnp.allclose(psf_centroid_y, psf_centroid_y[0], atol=tolerance) and jnp.allclose(
                 psf_centroid_x, psf_centroid_x[0], atol=tolerance
             ):
-                return_value = ValidationError(
+                return ValidationInfo(
+                    message="PSF centroid is consistent across channels.",
+                    check=self.__class__.__name__,
+                )
+            else:
+                return ValidationWarning(
                     message="PSF centroid is not the same in all channels.",
                     check=self.__class__.__name__,
                     context={
                         "psf_centroid": psf_centroid,
                     },
                 )
-        else:
-            return_value = ValidationWarning(
-                message="Observation PSF is not defined.",
-                check=self.__class__.__name__,
-                context={"observation.frame.psf": self.observation.frame.psf},
-            )
-        return return_value

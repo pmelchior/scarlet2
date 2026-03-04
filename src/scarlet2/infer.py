@@ -392,17 +392,20 @@ class FitValidator(metaclass=ValidationMethodCollector):
         obs = self.observation
 
         chi2 = obs.goodness_of_fit(self.scene())
+        context = {"chi2": chi2}
 
-        ret_val: ValidationResult = ValidationInfo("The model fit is good.", check=self.__class__.__name__)
+        ret_val: ValidationResult = ValidationInfo(
+            "The model fit is good.", check=self.__class__.__name__, context=context
+        )
         if self.chi2_tolerable_threshold <= chi2 < self.chi2_critical_threshold:
             ret_val = ValidationWarning(
                 "The model fit is acceptable, but the goodness of fit is not optimal.",
                 check=self.__class__.__name__,
-                context={"chi2": chi2},
+                context=context,
             )
         elif chi2 >= self.chi2_critical_threshold:
             ret_val = ValidationError(
-                "The model fit is poor.", check=self.__class__.__name__, context={"chi2": chi2}
+                "The model fit is poor.", check=self.__class__.__name__, context=context
             )
 
         return ret_val

@@ -186,24 +186,23 @@ def standardize_moments(g, obs):
         print("Adaptive morphology can only be created within the context of a Scene")
         print("Use 'with Scene(frame) as scene: Source(...)'")
         raise
-    if frame.psf is None:
-        raise AttributeError("Adaptive morphology can only be created with a PSF in the model frame")
 
     # adjust moments for model frame
     g.transfer(obs.frame.wcs, frame.wcs)
     # deconvolve from PSF (actually: difference kernel between obs PSF and model frame PSF)
-    if hasattr(obs, "_dp"):
-        p = obs._dp
-    else:
-        # moments of difference kernel between the model PSF and the observed PSF
-        p = measure.Moments(obs.frame.psf(), N=2)
-        p.transfer(obs.frame.wcs, frame.wcs)
-        p0 = measure.Moments(frame.psf(), N=2)
-        p.deconvolve(p0)
-        # store in obs for repeated use
-        object.__setattr__(obs, "_dp", p)
-    # deconvolve from difference kernel
-    g.deconvolve(p)
+    if frame.psf is not None and obs.frame.psf is not None:
+        if hasattr(obs, "_dp"):
+            p = obs._dp
+        else:
+            # moments of difference kernel between the model PSF and the observed PSF
+            p = measure.Moments(obs.frame.psf(), N=2)
+            p.transfer(obs.frame.wcs, frame.wcs)
+            p0 = measure.Moments(frame.psf(), N=2)
+            p.deconvolve(p0)
+            # store in obs for repeated use
+            object.__setattr__(obs, "_dp", p)
+        # deconvolve from difference kernel
+        g.deconvolve(p)
     return g
 
 
@@ -273,7 +272,9 @@ def from_gaussian_moments(
     centers = [obs_.frame.get_pixel(center) for obs_ in observations]
     if box_sizes is None:
         # growing sizes in units of the observed PSF
-        psf_sizes = [measure.fwhm(obs.frame.psf()).min() for obs in observations]  # in obs pixels
+        psf_sizes = [
+            measure.fwhm(obs.frame.psf()).min() if obs.frame.psf is not None else 1 for obs in observations
+        ]  # in obs pixels
         magic_number = lambda i: 6.0 if i == 0 else 1.5 * magic_number(i - 1)  # noqa:E731
         # NOTE: Not forced to be odd
         box_sizes = [[int(psf_size * magic_number(i)) for i in range(10)] for psf_size in psf_sizes]
