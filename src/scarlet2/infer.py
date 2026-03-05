@@ -403,7 +403,7 @@ class FitValidator(metaclass=ValidationMethodCollector):
                 check=self.__class__.__name__,
                 context=context,
             )
-        elif chi2 >= self.chi2_critical_threshold:
+        elif chi2 >= self.chi2_critical_threshold or jnp.isnan(chi2):
             ret_val = ValidationError(
                 "The model fit is poor.", check=self.__class__.__name__, context=context
             )
