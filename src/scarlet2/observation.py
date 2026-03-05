@@ -312,7 +312,7 @@ class CorrelatedObservation(Observation):
         return jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum)
 
     @classmethod
-    def from_observation(cls, obs, patch_size=50, maxlength=2, resample_to_frame=None, lanczos_order=9):
+    def from_observation(cls, obs, patch_size=50, maxlength=2, resample_to_frame=None, lanczos_order=9, resample_psf=True):
         """Create a :py:class:`CorrelatedObservation` from :py:class:`Observation`
 
         The method will construct a new Observation instance with a modified likelihood that takes into
@@ -331,7 +331,9 @@ class CorrelatedObservation(Observation):
             Frame describing the desired spatial sampling
         lanczos_order: int
             Lanczos order used by the resampling operation
-
+        resample_psf: bool, optional
+            Whether to resample `psf` to `resample_to_frame`. Should be set to False if PSF is already oversampled.
+		
         Returns
         -------
         :py:class:`CorrelatedObservation`
@@ -346,7 +348,7 @@ class CorrelatedObservation(Observation):
 
             # resample data
             data = _renderer(obs.data)
-
+	
             # resample PSF: first insert PSF into middle of image with same size of obs
             psf_image = obs.frame.psf()
             full_psf_image = jnp.zeros(obs.data.shape)
@@ -354,7 +356,10 @@ class CorrelatedObservation(Observation):
             shift = tuple(full_psf_image.shape[d] // 2 - psf_image.shape[d] // 2 for d in range(full_box.D))
             psf_box = Box(psf_image.shape) + shift
             full_psf_image = insert_into(full_psf_image, psf_image, psf_box)
-            psf = _renderer(full_psf_image)
+            if resample_psf==True:
+                psf = _renderer(full_psf_image)
+            else:
+                psf = psf_image 
 
             # resample mask plane (weights themselves are not needed)
             mask = jnp.asarray(obs.weights == 0, dtype=jnp.float32)
