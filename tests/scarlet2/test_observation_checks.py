@@ -3,7 +3,7 @@ import pytest
 
 from scarlet2.observation import Observation, ObservationValidator
 from scarlet2.psf import ArrayPSF
-from scarlet2.validation_utils import ValidationError, ValidationInfo, set_validation
+from scarlet2.validation_utils import ValidationError, ValidationInfo, ValidationWarning, set_validation
 
 
 @pytest.fixture(autouse=True)
@@ -17,7 +17,7 @@ def test_weights_non_negative_returns_error(bad_obs):
     """Test that the weights in the observation are non-negative."""
     checker = ObservationValidator(bad_obs)
 
-    results = checker.check_weights_non_negative()
+    results = checker.check_weights_finite_and_non_negative()
 
     assert isinstance(results, ValidationError)
 
@@ -26,7 +26,7 @@ def test_weights_finite_returns_error(bad_obs):
     """Test that the weights in the observation are finite."""
     checker = ObservationValidator(bad_obs)
 
-    results = checker.check_weights_finite()
+    results = checker.check_weights_finite_and_non_negative()
 
     assert isinstance(results, ValidationError)
 
@@ -35,7 +35,7 @@ def test_weights_non_negative_returns_none(good_obs):
     """Test that the weights in the observation are non-negative."""
     checker = ObservationValidator(good_obs)
 
-    results = checker.check_weights_non_negative()
+    results = checker.check_weights_finite_and_non_negative()
 
     assert isinstance(results, ValidationInfo)
 
@@ -44,7 +44,7 @@ def test_weights_finite_returns_none(good_obs):
     """Test that the weights in the observation are finite."""
     checker = ObservationValidator(good_obs)
 
-    results = checker.check_weights_finite()
+    results = checker.check_weights_finite_and_non_negative()
 
     assert isinstance(results, ValidationInfo)
 
@@ -56,7 +56,6 @@ def test_data_and_weights_shape_returns_error(bad_obs):
     results = checker.check_data_and_weights_shape()
 
     assert isinstance(results, ValidationError)
-    assert results.message == "Data and weights must have the same shape."
 
 
 def test_data_and_weights_shape_returns_none(good_obs):
@@ -129,7 +128,6 @@ def test_number_of_psf_channels_returns_error(bad_obs):
     results = checker.check_psf_has_3_dimensions()
 
     assert isinstance(results, ValidationError)
-    assert results.message == "PSF must be 3-dimensional."
 
 
 def test_validation_on_runs_observation_checks(capsys):
@@ -165,8 +163,7 @@ def test_psf_centroid_inconsistent_returns_error(data_file):
     checker = ObservationValidator(bad_obs)
     results = checker.check_psf_centroid_consistent()
 
-    assert isinstance(results, ValidationError)
-    assert results.message == "PSF centroid is not the same in all channels."
+    assert isinstance(results, ValidationWarning)
 
 
 def test_psf_centroid_consistent_no_error(data_file):

@@ -876,7 +876,7 @@ def scene(
 ):
     """Plot all sources to recreate the scene.
     The functions provide a fast way of evaluating the quality of the entire model,
-    i.e. the combination of all scenes that seek to fit the observation.
+    i.e. the combination of all sources that seek to fit the observation.
 
     Parameters
     ----------
