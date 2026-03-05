@@ -2,6 +2,7 @@ import re
 
 import astropy.units as u
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import varname
@@ -13,6 +14,7 @@ from .validation_utils import (
     ValidationError,
     ValidationMethodCollector,
     ValidationResult,
+    print_validation_results,
 )
 
 
@@ -291,13 +293,13 @@ class Parameters(dict):
         Parameterization.parameters = None
 
         # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
+        from .validation_utils import VALIDATION_SWITCH
 
-        # TODO: reenable
-        # if VALIDATION_SWITCH:
-        #     from .validation import check_parameters
-        #
-        #     validation_results = check_parameters(self)
-        #     print_validation_results("Parameters validation results", validation_results)
+        if VALIDATION_SWITCH:
+            from .validation import check_parameters
+
+            validation_results = check_parameters(self)
+            print_validation_results("Parameters validation results", validation_results)
 
     def __repr__(self):
         # equinox-like formatting
@@ -383,46 +385,22 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
     :py:func:`~scarlet2.validation.check_scene`.
     """
 
-    def __init__(self, parameter: Parameter) -> None:
+    def __init__(self, name: str, parameter: Parameter, node: jax.Array) -> None:
         """Initialize the SceneValidator.
 
         Parameters
         ----------
+        name: str
+            Parameter name
         parameter : Parameter
-            The parameter to validate.
-        parameters : Parameters
-            The parameters collection for `parameter`.
+            The parameter information to validate.
+        node : jax.Array
+            The parameters array to validate.
 
         """
+        self.name = name
         self.parameter = parameter
-
-    def check_constrained_parameter_is_feasible(self) -> list[ValidationResult]:
-        """Check that a constrained parameter has a feasible value.
-
-        Returns
-        -------
-        list[ValidationResult]
-            A list of validation results, which can be either `ValidationInfo`
-            or `ValidationError`.
-        """
-        validation_results: list[ValidationResult] = []
-        node, param = self.parameter
-        constraint_is_none = param.constraint is None
-        if not constraint_is_none:
-            is_feasible = param.constraint.check(node)
-        if param.constraint is not None and not is_feasible.all():
-            validation_results.append(
-                ValidationError(
-                    f"Parameter {param.name} value is infeasible.",
-                    check=self.__class__.__name__,
-                    context={
-                        "name": param.name,
-                        "constraint": param.constraint,
-                        "feasible": is_feasible,
-                    },
-                )
-            )
-        return validation_results
+        self.node = node
 
     def check_parameter_has_necessary_fields(self) -> list[ValidationResult]:
         """Check that all parameter ave the necessary fields set.
@@ -437,18 +415,46 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
             or `ValidationError`.
         """
         validation_results: list[ValidationResult] = []
-        node, param = self.parameter
+        param = self.parameter
         if param.prior is None and param.stepsize is None:
             validation_results.append(
                 ValidationError(
-                    f"Parameter {param.name} does not have prior or stepsize set.",
+                    f"Parameter {self.name} does not have prior or stepsize set.",
                     check=self.__class__.__name__,
                     context={
-                        "name": param.name,
+                        "name": self.name,
                         "prior": param.prior,
                         "stepsize": param.stepsize,
                     },
                 )
             )
 
+        return validation_results
+
+    def check_constrained_parameter_is_feasible(self) -> list[ValidationResult]:
+        """Check that a constrained parameter has a feasible value.
+
+        Returns
+        -------
+        list[ValidationResult]
+            A list of validation results, which can be either `ValidationInfo`
+            or `ValidationError`.
+        """
+        validation_results: list[ValidationResult] = []
+        name, node, param = self.name, self.node, self.parameter
+        constraint_is_none = param.constraint is None
+        if not constraint_is_none:
+            is_feasible = param.constraint.check(node)
+        if param.constraint is not None and not is_feasible.all():
+            validation_results.append(
+                ValidationError(
+                    f"Parameter {name} value is infeasible.",
+                    check=self.__class__.__name__,
+                    context={
+                        "name": name,
+                        "constraint": param.constraint,
+                        "feasible": is_feasible,
+                    },
+                )
+            )
         return validation_results

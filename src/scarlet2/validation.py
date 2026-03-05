@@ -128,22 +128,24 @@ def check_parameters(parameters) -> list[ValidationResult]:
     """
 
     validation_results = []
-    for p in parameters:
-        validation_results.extend(check_parameter(p))
+    for name, (_, param) in parameters.items():
+        node = parameters.base.get(name)
+        validation_results.extend(check_parameter(name, param, node))
 
     return validation_results
 
 
-def check_parameter(parameter) -> list[ValidationResult]:
+def check_parameter(name, parameter, node) -> list[ValidationResult]:
     """Check the parameter against the various validation rules.
 
     Parameters
     ----------
+    name: str
+        The parameter name.
     parameter : Parameter
-        The parameter  to check
-
-    parameters : Parameters
-        The full list parameters
+        The parameter informaiton to check
+    node:   jnp.array
+        The parameter array check
 
     Returns
     -------
@@ -151,4 +153,4 @@ def check_parameter(parameter) -> list[ValidationResult]:
         A list of validation results from the validation checks of the parameters.
     """
 
-    return _check(validation_class=ParameterValidator, **{"parameter": parameter})
+    return _check(validation_class=ParameterValidator, **{"name": name, "parameter": parameter, "node": node})
