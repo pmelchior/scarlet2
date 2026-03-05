@@ -140,17 +140,6 @@ def _to_pixels(frame, field):
             except Exception:
                 # jax throws exceptions for deprecated attributes, so we ignore exceptions silently
                 pass
-
-        # TODO: is this needed for distributions that use SkyCoord arguments?
-        # Doesn't play nice with ScorePrior
-        #
-        # if isinstance(field, dist.Distribution):
-        #     # converting SkyCoord to Array in numpyro distributions requires
-        #     # to update batch and event shape
-        #     batch_shape = max([getattr(field, name).shape for name in field.reparametrized_params])
-        #     field._batch_shape = batch_shape
-        #     return dist.Independent(field, 1)
-
     return field
 
 
