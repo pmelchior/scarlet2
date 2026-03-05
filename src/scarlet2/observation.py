@@ -332,7 +332,8 @@ class CorrelatedObservation(Observation):
         lanczos_order: int
             Lanczos order used by the resampling operation
         resample_psf: bool, optional
-            Whether to resample the psf or to avoid it because the model_frame being resampled to already matches the PSF     
+            Whether to resample `psf` to `resample_to_frame`. Should be set to False if PSF is already oversampled.
+		
         Returns
         -------
         :py:class:`CorrelatedObservation`
@@ -349,7 +350,6 @@ class CorrelatedObservation(Observation):
             data = _renderer(obs.data)
 	
             # resample PSF: first insert PSF into middle of image with same size of obs
-            
             psf_image = obs.frame.psf()
             full_psf_image = jnp.zeros(obs.data.shape)
             full_box = Box(full_psf_image.shape)
