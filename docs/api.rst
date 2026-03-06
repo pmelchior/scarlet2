@@ -13,6 +13,7 @@ API Documentation
    :template: custom-module-template.rst
    :recursive:
 
+   scarlet2.constraint
    scarlet2.fft
    scarlet2.init
    scarlet2.interpolation
