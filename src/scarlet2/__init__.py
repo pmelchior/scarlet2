@@ -29,7 +29,7 @@ class Parameterization:
 parameter_registry = dict()
 
 
-from . import init, measure, plot
+from . import constraint, init, measure, plot
 from .bbox import Box
 from .frame import Frame
 from .infer import fit, sample
@@ -52,6 +52,7 @@ from .wavelets import Starlet
 
 # for * imports and docs
 __all__ = [
+    "constraint",
     "init",
     "measure",
     "plot",
