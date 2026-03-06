@@ -3,6 +3,7 @@ from pathlib import Path
 
 import yaml
 from ipywidgets import HTML, Button
+
 from scarlet2.questionnaire import QuestionnaireWidget, run_questionnaire
 from scarlet2.questionnaire.models import Questionnaire
 from scarlet2.questionnaire.questionnaire import load_questions

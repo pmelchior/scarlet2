@@ -9,6 +9,7 @@ from pygments import highlight
 from pygments.formatters.html import HtmlFormatter
 from pygments.lexers.python import PythonLexer
 from pytest import fixture
+
 from scarlet2.questionnaire.models import QuestionAnswer, QuestionAnswers, Questionnaire
 from scarlet2.questionnaire.questionnaire import (
     OUTPUT_BOX_LAYOUT,
