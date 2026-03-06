@@ -4,7 +4,7 @@ import astropy.units as u
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.tree_util as jtu
+import jax.tree as jt
 import varname
 from astropy.coordinates import SkyCoord
 from numpyro.distributions.transforms import biject_to
@@ -55,7 +55,7 @@ class Module(eqx.Module):
         dict
             requested data arrays for `parameters`
         """
-        leaves = jtu.tree_leaves(self)
+        leaves = jt.leaves(self)
         if name is None:
             return {name: leaves[idx] for name, (idx, param) in self.parameters.items()}
         else:
@@ -94,7 +94,7 @@ class Module(eqx.Module):
         found_leaves = dict([get_pair(name) for name in values_ if name in params])
 
         def get_leaves(model):
-            leaves = jtu.tree_leaves(model)
+            leaves = jt.leaves(model)
             return tuple(leaves[i] for i in found_leaves)
 
         where = lambda model: get_leaves(model)
@@ -140,17 +140,6 @@ def _to_pixels(frame, field):
             except Exception:
                 # jax throws exceptions for deprecated attributes, so we ignore exceptions silently
                 pass
-
-        # TODO: is this needed for distributions that use SkyCoord arguments?
-        # Doesn't play nice with ScorePrior
-        #
-        # if isinstance(field, dist.Distribution):
-        #     # converting SkyCoord to Array in numpyro distributions requires
-        #     # to update batch and event shape
-        #     batch_shape = max([getattr(field, name).shape for name in field.reparametrized_params])
-        #     field._batch_shape = batch_shape
-        #     return dist.Independent(field, 1)
-
     return field
 
 
@@ -328,7 +317,7 @@ class Parameters(dict):
         # find index of node in leaves of base
         # Note: this lookup would be broken if someone modifies base after the parameters are define
         # The context manager of Scene therefore resets the registry_key of base for an empty parameter list
-        leaves = jtu.tree_leaves(self.base)
+        leaves = jt.leaves(self.base)
         idx = None
         for i, leaf in enumerate(leaves):
             if leaf is node:

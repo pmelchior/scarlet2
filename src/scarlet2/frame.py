@@ -18,7 +18,7 @@ class Frame(Module):
 
     bbox: Box
     """Bounding box of the frame"""
-    psf: PSF = None
+    psf: (PSF, None)
     """PSF of the frame"""
     wcs: astropy.wcs.WCS
     """WCS information of the frame"""
@@ -27,7 +27,8 @@ class Frame(Module):
 
     def __init__(self, bbox, psf=None, wcs=None, channels=None):
         self.bbox = bbox
-        if isinstance(psf, jnp.ndarray):
+        if isinstance(psf, (list, tuple, np.ndarray, jnp.ndarray)):
+            psf = jnp.asarray(psf).astype(float)
             psf = ArrayPSF(psf)
         self.psf = psf
         if wcs is None:
@@ -45,6 +46,16 @@ class Frame(Module):
     def C(self) -> int:  # noqa: N802
         """Number of channels"""
         return len(self.channels)
+
+    @property
+    def H(self) -> int:  # noqa: N802
+        """Height: number of pixels in the vertical direction"""
+        return self.bbox.spatial.shape[0]
+
+    @property
+    def W(self) -> int:  # noqa: N802
+        """Width: number of pixels in the horizontal direction"""
+        return self.bbox.spatial.shape[1]
 
     def get_pixel(self, pos):
         """Get the sky coordinates from a world coordinate

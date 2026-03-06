@@ -4,7 +4,7 @@ from pprint import pformat
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.tree_util as jtu
+import jax.tree as jt
 import numpyro
 import numpyro.distributions as dist
 import numpyro.distributions.constraints as constraints
@@ -224,10 +224,10 @@ def fit(
     # construct eqx.Module containing all parameter arrays as attributes
     values = _dict_to_eqx_module("ParamModel", values)
     # same tree structure but for param specs so that we can use them below
-    treedef = jtu.tree_structure(values)
+    treedef = jt.structure(values)
     params = tuple(param for name, (node, param) in parameters.items())
-    params = jtu.build_tree(treedef, params)
-    steps = jtu.tree_map(lambda param: param.stepsize, params)
+    params = jt.unflatten(treedef, params)
+    steps = jt.map(lambda param: param.stepsize, params)
 
     def scale_by_stepsize() -> base.GradientTransformation:
         # adapted from optax.scale_by_param_block_norm()
@@ -238,7 +238,7 @@ def fit(
         def update_fn(updates, state, params):
             if params is None:
                 raise ValueError(base.NO_PARAMS_MSG)
-            updates = jax.tree_util.tree_map(
+            updates = jt.map(
                 # minus because we want gradient descent
                 lambda u, s, p: None if u is None else -s * u if not callable(s) else -s(p) * u,
                 updates,
@@ -313,7 +313,7 @@ def _constraint_replace(values, params, inv=False):
         else:
             return value
 
-    return jtu.tree_map(transform, values, params)
+    return jt.map(transform, values, params)
 
 
 # update step for optax optimizer
@@ -331,9 +331,9 @@ def _make_step(values, params, scene, observations, optim, opt_state):
         # Note: This calls priors separately even if they support batched execution
         # see https://github.com/pmelchior/scarlet2/issues/103 for a possible solution
         # however, testing after #103 got merged suggests that tree_reduce is faster than grouping
-        log_prior = jtu.tree_reduce(
+        log_prior = jt.reduce(
             operator.add,
-            jtu.tree_map(
+            jt.map(
                 lambda value, param: param.prior.log_prob(value) if param.prior is not None else 0,
                 values_,
                 params,
@@ -348,7 +348,7 @@ def _make_step(values, params, scene, observations, optim, opt_state):
 
     # for convergence criterion: compute norms of parameters and updates
     norm = lambda x, dx: 0 if dx is None else jnp.linalg.norm(dx) / jnp.linalg.norm(x)
-    convergence = jtu.tree_map(lambda x, dx: norm(x, dx), values, updates)
+    convergence = jt.map(lambda x, dx: norm(x, dx), values, updates)
 
     return values_, loss, opt_state, convergence
 

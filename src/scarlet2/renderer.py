@@ -123,10 +123,10 @@ class ConvolutionRenderer(Renderer):
     between model PSF and observed PSF.
     """
 
-    _diff_kernel_fft: jnp.array = eqx.field(repr=False)
+    kernel_fft: jnp.array
+    shift: jnp.array
     _fft_shape: jnp.array = eqx.field(repr=False)
     _kcoords_out: jnp.array = eqx.field(repr=False)
-    shift: jnp.array
 
     def __init__(self, model_frame, obs_frame):
         """Initialize convolution renderer with difference kernel between `model_frame` and `obs_frame`
@@ -153,7 +153,7 @@ class ConvolutionRenderer(Renderer):
             fft_shape=self._fft_shape,
             return_fft=True,
         )
-        self._diff_kernel_fft = diff_kernel_fft
+        self.kernel_fft = diff_kernel_fft
 
         # for shift operations
         self.shift = jnp.zeros(2)
@@ -170,7 +170,7 @@ class ConvolutionRenderer(Renderer):
         # apply shift to diff kernel
         return convolve(
             model,
-            self._diff_kernel_fft * self._phase_factor[..., :, :],
+            self.kernel_fft * self._phase_factor[..., :, :],
             axes=(-2, -1),
             fft_shape=self._fft_shape,
         )
@@ -220,11 +220,10 @@ class ResamplingRenderer(Renderer):
     shift: jnp.array
     has_psf_in: bool
     has_psf_out: bool
+    kernel_fft: jnp.array
+    jacobian: jnp.array
     fft_shape_target: int = eqx.field(repr=False)
     fft_shape_model_im: int = eqx.field(repr=False)
-    jacobian: jnp.array = eqx.field(repr=False)
-    model_kpsf_interp: jnp.array = eqx.field(repr=False, default=None)
-    obs_kpsf_interp: jnp.array = eqx.field(repr=False, default=None)
     real_shape_target: tuple = eqx.field(repr=False)
 
     def __init__(self, model_frame, obs_frame, padding=4):
@@ -274,6 +273,7 @@ class ResamplingRenderer(Renderer):
         # PSF models in Fourier space
         if model_frame.psf is None:
             self.has_psf_in = False
+            model_kpsf_interp = 1
         else:
             self.has_psf_in = True
             psf_model = model_frame.psf()
@@ -286,7 +286,7 @@ class ResamplingRenderer(Renderer):
                 transform(psf_model, (fft_shape_model_psf, fft_shape_model_psf), (-2, -1)), (-2)
             )
             # resample with warp
-            self.model_kpsf_interp = resample_fourier(
+            model_kpsf_interp = resample_fourier(
                 model_kpsf,
                 model_kpsf.shape[-2],
                 self.fft_shape_target,
@@ -295,6 +295,7 @@ class ResamplingRenderer(Renderer):
 
         if obs_frame.psf is None:
             self.has_psf_out = False
+            obs_kpsf_interp = 1
         else:
             self.has_psf_out = True
             psf_obs = obs_frame.psf()
@@ -305,11 +306,12 @@ class ResamplingRenderer(Renderer):
                 transform(psf_obs, (fft_shape_obs_psf, fft_shape_obs_psf), (-2, -1)), (-2)
             )
             # resample without warp
-            self.obs_kpsf_interp = resample_fourier(
+            obs_kpsf_interp = resample_fourier(
                 obs_kpsf,
                 obs_kpsf.shape[-2],
                 self.fft_shape_target,
             )
+        self.kernel_fft = obs_kpsf_interp / model_kpsf_interp
 
     def __call__(self, model, key=None):
         """What to run when ResamplingRenderer is called"""
@@ -328,11 +330,7 @@ class ResamplingRenderer(Renderer):
         )
 
         # deconvolve with model psf, re-convolve with observation psf and Fourier transform back to real space
-        kimage_final = model_kim_interp
-        if self.has_psf_in:
-            kimage_final /= self.model_kpsf_interp
-        if self.has_psf_out:
-            kimage_final *= self.obs_kpsf_interp
+        kimage_final = model_kim_interp * self.kernel_fft
 
         kimage_final_wrap = jax.vmap(_wrap_hermitian_x, in_axes=(0, None, None, None, None, None, None))(
             kimage_final,
@@ -370,7 +368,7 @@ class LanczosResamplingRenderer(Renderer):
     shift: jnp.array
     _coords: jnp.ndarray = eqx.field(repr=False)
     _warp: jnp.ndarray = eqx.field(repr=False)
-    _diff_kernel_fft: jnp.array = eqx.field(repr=False, default=None)
+    kernel_fft: jnp.array = eqx.field(default=None)
     _fft_shape: int = eqx.field(repr=False, default=None)
 
     def __init__(self, model_frame, obs_frame, lanczos_order=5):
@@ -422,7 +420,7 @@ class LanczosResamplingRenderer(Renderer):
             self._fft_shape = good_fft_size(max(max(psf_obs_interp.shape[-2:]), max(model_shape)) + padding)
 
             # compute and store diff kernel in Fourier space
-            self._diff_kernel_fft = deconvolve(
+            self.kernel_fft = deconvolve(
                 psf_obs_interp,
                 psf_model,
                 axes=(-2, -1),
@@ -440,9 +438,9 @@ class LanczosResamplingRenderer(Renderer):
             warp=warp,
             interpolant=self.interpolant,
         )
-        if self._diff_kernel_fft is not None:
+        if self.kernel_fft is not None:
             model_ = convolve(
-                model, self._diff_kernel_fft, axes=(-2, -1), fft_shape=(self._fft_shape, self._fft_shape)
+                model, self.kernel_fft, axes=(-2, -1), fft_shape=(self._fft_shape, self._fft_shape)
             )
         else:
             model_ = model

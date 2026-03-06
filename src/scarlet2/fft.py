@@ -5,7 +5,6 @@ import operator
 
 import jax.lax
 import jax.numpy as jnp
-from scipy import fftpack
 
 
 def transform(image, fft_shape, axes=None):
@@ -199,8 +198,7 @@ def _get_fast_shape(im_or_shape1, im_or_shape2, axes=None, padding=3, max_shape=
     combine_shapes = lambda s1, s2: max(s1, s2) if max_shape else s1 + s2  # noqa: E731
     shape = [combine_shapes(shape1[ax], shape2[ax]) + padding for ax in axes]
     # Use the next fastest shape in each dimension
-    # TODO: check what jnp actually uses for FFTs
-    shape = [fftpack.helper.next_fast_len(s) for s in shape]
+    shape = [good_fft_size(s) for s in shape]
     return shape
 
 
