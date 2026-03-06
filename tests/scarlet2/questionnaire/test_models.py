@@ -1,4 +1,5 @@
 import pytest
+
 from scarlet2.questionnaire.models import Questionnaire
 
 
