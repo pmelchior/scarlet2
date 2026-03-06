@@ -113,11 +113,14 @@ class GaussianMorphology(ProfileMorphology):
             _x = jnp.arange(-(self.shape[-1] // 2), self.shape[-1] // 2 + 1, dtype=float) - delta_center[-1]
 
             # with pixel integration
-            f = lambda x, s: 0.5 * (  # noqa: E731
-                1
-                - jax.scipy.special.erfc((0.5 - x) / jnp.sqrt(2) / s)
-                + 1
-                - jax.scipy.special.erfc((0.5 + x) / jnp.sqrt(2) / s)
+            f = lambda x, s: (  # noqa: E731
+                0.5
+                * (
+                    1
+                    - jax.scipy.special.erfc((0.5 - x) / jnp.sqrt(2) / s)
+                    + 1
+                    - jax.scipy.special.erfc((0.5 + x) / jnp.sqrt(2) / s)
+                )
             )
             # # without pixel integration
             # f = lambda x, s: jnp.exp(-(x ** 2) / (2 * s ** 2)) / (jnp.sqrt(2 * jnp.pi) * s)

@@ -63,7 +63,7 @@ class Observation(Module):
             print_validation_results("Observation validation results", validation_results)
 
     @property
-    def n(self):
+    def N(self):  # noqa: N802
         """Number of unmasked pixels in the observation"""
         return jnp.prod(jnp.asarray(self.data.shape)) - jnp.sum(self.weights == 0)
 
@@ -107,7 +107,7 @@ class Observation(Module):
         # with inverse variance weights: sigma^2 = 1/weight
         # full likelihood is sum over all (unmasked) pixels in data
         log_like = -self._chisquare(model) / 2
-        log_norm = self.n / 2 * jnp.log(2 * jnp.pi)
+        log_norm = self.N / 2 * jnp.log(2 * jnp.pi)
         return log_like - log_norm
 
     def goodness_of_fit(self, model):
@@ -129,7 +129,7 @@ class Observation(Module):
         float
         """
         # only use unmasked pixels in the data
-        return self._chisquare(model) / self.n
+        return self._chisquare(model) / self.N
 
     def _chisquare(self, model):
         return jnp.sum(self.weights * (self.render(model) - self.data) ** 2)
@@ -307,11 +307,13 @@ class CorrelatedObservation(Observation):
         # TODO: We could avoid the FFT because the last step of a typical renderer is an inverse FFT.
         #       The problem is that image shapes in Fourier space are usually padded, so shapes don't match.
         # normalization sqrt(n/2) added because it's missing in numpy/jax forward fft
-        res_fft = jnp.fft.rfft2(res, axes=(-2, -1)) / jnp.sqrt(self.n / 2)
+        res_fft = jnp.fft.rfft2(res, axes=(-2, -1)) / jnp.sqrt(self.N / 2)
         return jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum)
 
     @classmethod
-    def from_observation(cls, obs, patch_size=50, maxlength=2, resample_to_frame=None, lanczos_order=9, resample_psf=True):
+    def from_observation(
+        cls, obs, patch_size=50, maxlength=2, resample_to_frame=None, lanczos_order=9, resample_psf=True
+    ):
         """Create a :py:class:`CorrelatedObservation` from :py:class:`Observation`
 
         The method will construct a new Observation instance with a modified likelihood that takes into
@@ -330,9 +332,12 @@ class CorrelatedObservation(Observation):
             Frame describing the desired spatial sampling
         lanczos_order: int
             Lanczos order used by the resampling operation
+            The argument has no effect if `resample_to_frame` is `None`.
         resample_psf: bool, optional
-            Whether to resample `psf` to `resample_to_frame`. Should be set to False if PSF is already oversampled.
-		
+            Whether to resample `obs.psf` to `resample_to_frame`.
+            Should be set to False only if PSF is already sampled with the resolution of `resample_to_frame`.
+            The argument has no effect if `resample_to_frame` is `None`.
+
         Returns
         -------
         :py:class:`CorrelatedObservation`
@@ -347,18 +352,20 @@ class CorrelatedObservation(Observation):
 
             # resample data
             data = _renderer(obs.data)
-	
+
             # resample PSF: first insert PSF into middle of image with same size of obs
             psf_image = obs.frame.psf()
-            full_psf_image = jnp.zeros(obs.data.shape)
-            full_box = Box(full_psf_image.shape)
-            shift = tuple(full_psf_image.shape[d] // 2 - psf_image.shape[d] // 2 for d in range(full_box.D))
-            psf_box = Box(psf_image.shape) + shift
-            full_psf_image = insert_into(full_psf_image, psf_image, psf_box)
-            if resample_psf==True:
+            if resample_psf:
+                full_psf_image = jnp.zeros(obs.data.shape)
+                full_box = Box(full_psf_image.shape)
+                shift = tuple(
+                    full_psf_image.shape[d] // 2 - psf_image.shape[d] // 2 for d in range(full_box.D)
+                )
+                psf_box = Box(psf_image.shape) + shift
+                full_psf_image = insert_into(full_psf_image, psf_image, psf_box)
                 psf = _renderer(full_psf_image)
             else:
-                psf = psf_image 
+                psf = psf_image
 
             # resample mask plane (weights themselves are not needed)
             mask = jnp.asarray(obs.weights == 0, dtype=jnp.float32)
