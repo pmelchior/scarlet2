@@ -8,10 +8,22 @@ assignees: ''
 ---
 **Bug report**
 
+**Environment Information**
+
+
+<details>
+<summary>Traceback</summary>
+
+FILL IN YOUR STACK TRACE HERE
+
+</details>
 
 **Before submitting**
 Please check the following:
 
-- [ ] I have described the situation in which the bug arose, including what code was executed, information about my environment, and any applicable data others will need to reproduce the problem.
+- [ ] I have described the situation in which the bug arose, including what code was executed, and any
+  applicable data others will need to reproduce the problem.
+- [ ] I have included information about my environment, including the version of this package (e.g.
+  `scarlet2.__version__`)
 - [ ] I have included available evidence of the unexpected behavior (including error messages, screenshots, and/or plots) as well as a description of what I expected instead.
 - [ ] If I have a solution in mind, I have provided an explanation and/or pseudocode and/or task list.
