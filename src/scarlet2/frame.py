@@ -356,10 +356,8 @@ def _rot_matrix(phi, d=2):
 
 # flip in y!!!
 # uses (x,y) coordinates!
-_flip_matrix = flip_matrix = (
-    lambda flip, d=2: jnp.diag(jnp.array((1, flip), dtype=float))
-    if d == 2
-    else jnp.diag(jnp.array((1, flip, 1), dtype=float))
+_flip_matrix = lambda flip, d=2: (
+    jnp.diag(jnp.array((1, flip), dtype=float)) if d == 2 else jnp.diag(jnp.array((1, flip, 1), dtype=float))
 )
 
 # 2x2 matrix determinant

@@ -30,6 +30,12 @@ parameter_registry = dict()
 
 
 from . import constraint, init, measure, plot
+
+try:
+    from ._version import __version__
+except ImportError:
+    __version__ = "0.0.0+unknown"
+
 from .bbox import Box
 from .frame import Frame
 from .infer import fit, sample

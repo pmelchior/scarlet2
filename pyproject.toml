@@ -92,16 +92,18 @@ select = [
     "D102",
     "D103",
     "D106",
-    "D206",
     "D207",
     "D208",
-    "D300",
     "D417",
     "D419",
     # Numpy v2.0 compatibility
     "NPY201",
 ]
 ignore = [
+    "E111",
+    "E114",
+    "E117",
+    "W191",
     "UP006", # Allow non standard library generics in type hints
     "UP007", # Allow Union in type hints
     "SIM114", # Allow if with same arms
@@ -109,7 +111,6 @@ ignore = [
     "SIM117", # Allow nested with
     "UP015", # Allow redundant open parameters
     "UP028", # Allow yield in for loop
-    "UP038", # Allow tuple in `isinstance`
     "E731", # Allow assignment of lambda expressions
 ]
 

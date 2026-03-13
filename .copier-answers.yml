@@ -1,18 +1,19 @@
 # Changes here will be overwritten by Copier
-_commit: v2.0.7
+_commit: v2.2.0
 _src_path: gh:lincc-frameworks/python-project-template
 author_email: peter.m.melchior@gmail.com
 author_name: Peter Melchior
 create_example_module: false
-custom_install: true
+custom_install: library
 enforce_style:
 - ruff_lint
 - ruff_format
 failure_notification: []
 include_benchmarks: true
 include_docs: false
-mypy_type_checking: none
+mypy_type_checking: basic
 package_name: scarlet2
+project_description: Astronomical source modeling in jax
 project_license: MIT
 project_name: scarlet2
 project_organization: pmelchior
@@ -21,4 +22,5 @@ python_versions:
 - '3.11'
 - '3.12'
 - '3.13'
-test_lowest_version: none
+- '3.14'
+test_lowest_version: direct
