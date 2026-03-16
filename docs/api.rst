@@ -14,6 +14,7 @@ API Documentation
    :recursive:
 
    scarlet2.constraint
+   scarlet2.detect
    scarlet2.fft
    scarlet2.init
    scarlet2.interpolation
