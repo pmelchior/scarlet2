@@ -1,6 +1,7 @@
 """Wavelet functions"""
 # from https://github.com/pmelchior/scarlet/blob/master/scarlet/wavelet.py
 
+import jax
 import jax.numpy as jnp
 
 
@@ -212,6 +213,89 @@ def starlet_reconstruction(starlets, generation=2, convolve2d=None, scales=None)
         cj = convolve2d(c, j)
         c = cj + starlets[j]
     return c
+
+
+def get_multiresolution_support(image, starlets, sigma, K=3, epsilon=1e-1, max_iter=20, image_type="ground", rng_key=None):
+    """Calculate the multi-resolution support for a dictionary of starlet coefficients.
+
+    This is different for ground and space based telescopes.
+    For space-based telescopes the procedure in Starck and Murtagh 1998
+    iteratively calculates the multi-resolution support.
+    For ground based images, where the PSF is much wider and there are no
+    pixels with no signal at all scales, we use a modified method that
+    estimates support at each scale independently.
+
+    Parameters
+    ----------
+    image: 2D array
+        The image to transform into starlet coefficients.
+    starlets: array with dimension (scales+1, Ny, Nx)
+        The starlet dictionary used to reconstruct `image`.
+    sigma: float
+        The standard deviation of the `image`.
+    K: float
+        The multiple of `sigma` to use to calculate significance.
+        Coefficients `w` where `|w| > K*sigma_j`, where `sigma_j` is
+        the standard deviation at the jth scale, are considered significant.
+    epsilon: float
+        The convergence criteria of the algorithm.
+        Once ``|new_sigma_j - sigma_j| / new_sigma_j < epsilon`` the
+        algorithm has completed.
+    max_iter: int
+        Maximum number of iterations to fit `sigma_j` at each scale.
+    image_type: str
+        The type of image that is being used.
+        This should be ``"ground"`` for ground based images with wide PSFs or
+        ``"space"`` for images from space-based telescopes with a narrow PSF.
+    rng_key: jax.random.PRNGKey, optional
+        Random key used only when ``image_type="space"`` to generate a noise
+        realisation for estimating per-scale standard deviations.
+        Defaults to ``jax.random.PRNGKey(0)`` if not provided.
+
+    Returns
+    -------
+    M: array of int
+        Mask with significant coefficients in `starlets` set to ``1``.
+    """
+    assert image_type in ("ground", "space")
+
+    if image_type == "space":
+        if rng_key is None:
+            rng_key = jax.random.PRNGKey(0)
+        # Calculate sigma_je, the standard deviation at each scale due to gaussian noise
+        noise_img = jax.random.normal(rng_key, shape=image.shape)
+        noise_starlet = starlet_transform(noise_img, scales=get_scales(image.shape), generation=1)
+        sigma_je = jnp.array([jnp.std(star) for star in noise_starlet])
+        noise = image - starlets[-1]
+
+        last_sigma_i = sigma
+        M = None
+        for _ in range(max_iter):
+            M = (jnp.abs(starlets) > K * sigma * sigma_je[:, None, None])
+            S = jnp.sum(M, axis=0) == 0
+            sigma_i = jnp.std(noise * S)
+            if jnp.abs(sigma_i - last_sigma_i) / sigma_i < epsilon:
+                break
+            last_sigma_i = sigma_i
+    else:
+        # Sigma to use for significance at each scale.
+        # Initially we use the input `sigma`.
+        sigma_j = jnp.ones((len(starlets),), dtype=image.dtype) * sigma
+        last_sigma_j = sigma_j
+        M = None
+        for _ in range(max_iter):
+            M = (jnp.abs(starlets) > K * sigma_j[:, None, None])
+            # Take the standard deviation of the current insignificant coeffs at each scale
+            S = ~M
+            sigma_j = jnp.std(starlets * S.astype(int), axis=(1, 2))
+            # At lower scales all of the pixels may be significant,
+            # so sigma is effectively zero. To avoid infinities we
+            # only check the scales with non-zero sigma
+            cut = sigma_j > 0
+            if jnp.all(jnp.abs(sigma_j[cut] - last_sigma_j[cut]) / sigma_j[cut] < epsilon):
+                break
+            last_sigma_j = sigma_j
+    return M.astype(int)
 
 
 def get_scales(image_shape, scales=None):
