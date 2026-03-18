@@ -29,7 +29,7 @@ class Parameterization:
 parameter_registry = dict()
 
 
-from . import constraint, init, measure, plot
+from . import constraint, detect, init, measure, plot
 
 try:
     from ._version import __version__

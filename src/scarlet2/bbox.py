@@ -1,8 +1,7 @@
-import equinox as eqx
 import jax.numpy as jnp
 
 
-class Box(eqx.Module):
+class Box:
     """Bounding Box for data array
 
     A Bounding box describes the location of a data array in the model coordinate system.
@@ -15,11 +14,6 @@ class Box(eqx.Module):
     - 2D shapes denote (Height, Width)
     - 3D shapes denote (Channels, Height, Width)
     """
-
-    shape: tuple
-    """Size of the array"""
-    origin: tuple
-    """Start coordinate (in 2D: lower-left corner) of the array in model frame"""
 
     def __init__(self, shape, origin=None):
         """
@@ -131,9 +125,8 @@ class Box(eqx.Module):
 
     def set_center(self, pos):
         """Center box at given position"""
-        pos_ = tuple(_.item() for _ in pos)
-        origin = tuple(o + p - c for o, p, c in zip(self.origin, pos_, self.center, strict=False))
-        object.__setattr__(self, "origin", origin)
+        pos_ = tuple(int(_) for _ in pos)
+        self.origin = tuple(o + p - c for o, p, c in zip(self.origin, pos_, self.center, strict=False))
 
     def grow(self, delta):
         """Grow the Box by the given delta in each direction"""
@@ -228,6 +221,9 @@ class Box(eqx.Module):
 
     def __hash__(self):
         return hash((self.shape, self.origin))
+
+    def __repr__(self):
+        return f"Box(shape={self.shape}, origin={self.origin})"
 
 
 def overlap_slices(bbox1, bbox2, return_boxes=False):

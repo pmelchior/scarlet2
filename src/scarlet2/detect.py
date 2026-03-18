@@ -1,15 +1,26 @@
 """Detection utilities: connected-pixel footprint extraction and peak finding.
 
-Translated from scarlet v1's ``detect_pybind11.cc``. Uses NumPy rather than
-JAX because detection involves dynamic data structures (variable-length peak
-lists, irregularly shaped footprints) that are not compatible with JAX's JIT.
-Both NumPy and JAX arrays are accepted as inputs.
+Low-level routines (``get_connected_pixels``, ``get_footprints``) are
+translated from scarlet v1's ``detect_pybind11.cc``.  Higher-level helpers
+(``get_wavelets``, ``QuadTreeRegion``, ``get_peaks``, …) are adapted from
+scarlet v1's ``detect.py``.
+
+Uses NumPy rather than JAX because detection involves dynamic data structures
+(variable-length peak lists, irregularly shaped footprints) that are not
+compatible with JAX's JIT.  Both NumPy and JAX arrays are accepted as inputs.
 """
 
-from dataclasses import dataclass
-from typing import List
+from dataclasses import dataclass, field
+from typing import List, Tuple
 
 import numpy as np
+
+from .bbox import Box, overlap_slices
+from .wavelets import get_multiresolution_support, starlet_transform
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -50,11 +61,16 @@ class Footprint:
     bounds: np.ndarray
 
 
+# ---------------------------------------------------------------------------
+# Low-level detection (translated from detect_pybind11.cc)
+# ---------------------------------------------------------------------------
+
+
 def get_connected_pixels(i, j, image, unchecked, footprint, bounds, thresh=0):
     """Find all pixels 4-connected to ``(i, j)`` that exceed ``thresh``.
 
     Uses an iterative flood-fill to avoid Python's recursion limit on large
-    images. Modifies ``unchecked``, ``footprint``, and ``bounds`` in-place.
+    images.  Modifies ``unchecked``, ``footprint``, and ``bounds`` in-place.
 
     Parameters
     ----------
@@ -98,7 +114,7 @@ def get_connected_pixels(i, j, image, unchecked, footprint, bounds, thresh=0):
                 stack.append((ci, cj + 1))
 
 
-def get_peaks(image, min_separation, y0=0, x0=0):
+def _get_patch_peaks(image, min_separation, y0=0, x0=0):
     """Find local maxima in an image patch.
 
     A pixel is a local maximum if its value strictly exceeds all 8-connected
@@ -109,7 +125,7 @@ def get_peaks(image, min_separation, y0=0, x0=0):
     image : 2D ndarray
         The (possibly masked) image patch to search for peaks.
     min_separation : float
-        Minimum pixel distance between peaks. When two peaks are closer than
+        Minimum pixel distance between peaks.  When two peaks are closer than
         this, the dimmer one is removed.
     y0, x0 : int, optional
         Row and column offsets added to peak coordinates so they refer to the
@@ -176,7 +192,7 @@ def get_footprints(image, min_separation, min_area, thresh=0):
     Parameters
     ----------
     image : 2D array-like
-        The image to detect sources in. Accepts NumPy or JAX arrays.
+        The image to detect sources in.  Accepts NumPy or JAX arrays.
     min_separation : float
         Minimum pixel separation between peaks within a footprint.
     min_area : int
@@ -207,9 +223,681 @@ def get_footprints(image, min_separation, min_area, thresh=0):
                 if sub_fp.sum() >= min_area:
                     patch = image[bounds[0] : bounds[1] + 1, bounds[2] : bounds[3] + 1].copy()
                     patch[~sub_fp] = 0
-                    peaks = get_peaks(patch, min_separation, y0=int(bounds[0]), x0=int(bounds[2]))
+                    peaks = _get_patch_peaks(
+                        patch, min_separation, y0=int(bounds[0]), x0=int(bounds[2])
+                    )
                     if peaks:
                         footprints.append(Footprint(sub_fp.copy(), peaks, bounds.copy()))
             footprint[bounds[0] : bounds[1] + 1, bounds[2] : bounds[3] + 1] = False
 
     return footprints
+
+
+# ---------------------------------------------------------------------------
+# Box / footprint utilities (adapted from scarlet v1 detect.py)
+# ---------------------------------------------------------------------------
+
+
+def bounds_to_bbox(bounds):
+    """Convert the bounds of a :class:`Footprint` into a :class:`~scarlet2.bbox.Box`.
+
+    Parameters
+    ----------
+    bounds : array-like of int, shape (4,)
+        ``[y_min, y_max, x_min, x_max]`` as stored in :attr:`Footprint.bounds`.
+
+    Returns
+    -------
+    bbox : Box
+    """
+    return Box(
+        (bounds[1] + 1 - bounds[0], bounds[3] + 1 - bounds[2]),
+        origin=(int(bounds[0]), int(bounds[2])),
+    )
+
+
+def box_intersect(box1, box2):
+    """Check whether two :class:`~scarlet2.bbox.Box` instances overlap.
+
+    Parameters
+    ----------
+    box1, box2 : Box
+
+    Returns
+    -------
+    overlap : bool
+    """
+    overlap = box1 & box2
+    return overlap.shape[0] != 0 and overlap.shape[1] != 0
+
+
+def footprint_intersect(footprint1, box1, footprint2, box2):
+    """Check whether two footprint masks overlap.
+
+    Parameters
+    ----------
+    footprint1, footprint2 : ndarray of bool
+        The boolean masks for the two footprints, each sized to its own
+        bounding box.
+    box1, box2 : Box
+        The corresponding bounding boxes.
+
+    Returns
+    -------
+    overlap : bool
+    """
+    if not box_intersect(box1, box2):
+        return False
+    slices1, slices2 = overlap_slices(box1, box2)
+    return np.sum(footprint1[slices1] * footprint2[slices2]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Matplotlib drawing helpers
+# ---------------------------------------------------------------------------
+
+
+def draw_box(box, ax, color):
+    """Draw a :class:`~scarlet2.bbox.Box` outline on a Matplotlib axis.
+
+    Parameters
+    ----------
+    box : Box
+    ax : matplotlib.axes.Axes
+    color : str
+        Colour name for the rectangle edge.
+    """
+    import matplotlib.patches as patches
+
+    rect = patches.Rectangle(
+        box.origin[::-1],
+        box.shape[1],
+        box.shape[0],
+        linewidth=1,
+        edgecolor=color,
+        facecolor="none",
+    )
+    ax.add_patch(rect)
+
+
+def draw_region(region, ax):
+    """Recursively draw a :class:`QuadTreeRegion` and all its sub-regions.
+
+    Parameters
+    ----------
+    region : QuadTreeRegion
+    ax : matplotlib.axes.Axes
+    """
+    draw_box(region.bbox, ax, "r")
+    if region.sub_regions is not None:
+        for sub in region.sub_regions:
+            draw_region(sub, ax)
+
+
+def draw_footprint_box(footprint, ax):
+    """Draw the bounding box of a :class:`Footprint` on a Matplotlib axis.
+
+    Parameters
+    ----------
+    footprint : Footprint
+    ax : matplotlib.axes.Axes
+    """
+    draw_box(bounds_to_bbox(footprint.bounds), ax, "k")
+
+
+# ---------------------------------------------------------------------------
+# QuadTree
+# ---------------------------------------------------------------------------
+
+
+class QuadTreeRegion:
+    """A QuadTree that stores bounding boxes (rather than points).
+
+    Boxes that span sub-region boundaries are stored in *all* overlapping
+    sub-regions so that :meth:`query` always returns the full set of
+    overlapping boxes.
+    """
+
+    def __init__(self, bbox, capacity=5, sub_regions=None, boxes=None, depth=0, detect=None):
+        """
+        Parameters
+        ----------
+        bbox : Box
+            The box that encloses this region.
+        capacity : int
+            Maximum number of boxes before the region is split.
+        sub_regions : list of QuadTreeRegion, optional
+            Pre-existing sub-regions (normally left as ``None``).
+        boxes : list of Box, optional
+            Pre-existing boxes (normally left as ``None``).
+        depth : int
+            Depth of this node in the full tree (used for debugging).
+        detect : array-like, optional
+            Detection image; when provided enables debug visualisations.
+        """
+        self.bbox = bbox
+        self.sub_regions = sub_regions
+        self.boxes = boxes if boxes is not None else []
+        self.capacity = capacity
+        self.depth = depth
+        self.detect = detect
+        self.debug = detect is not None
+
+    def footprint_image(self, bbox=None):
+        """Return a 2-D image of all footprint masks in the tree.
+
+        Parameters
+        ----------
+        bbox : Box, optional
+            Output image bounding box.  If ``None``, the union of all
+            footprint bounding boxes is used.
+
+        Returns
+        -------
+        image : ndarray
+        """
+        boxes = self.query(self.bbox)
+
+        if bbox is None:
+            bbox = Box((0, 0))
+            for box in boxes:
+                bbox = bbox | box
+
+        footprint = np.zeros(bbox.shape)
+        for box in boxes:
+            full, local = overlap_slices(bbox, box)
+            footprint[full] += box.footprint.footprint[local]
+        return footprint
+
+    @property
+    def peaks(self):
+        """Yield all :class:`Peak` objects contained in the tree."""
+        for box in self.query(self.bbox):
+            yield from box.footprint.peaks
+
+    def add(self, other_box):
+        """Add a box to the region.
+
+        Parameters
+        ----------
+        other_box : Box
+            The box to insert.
+        """
+        if not box_intersect(self.bbox, other_box):
+            return
+        if self.sub_regions is not None:
+            self._add_to_sub_regions(other_box)
+            return
+        if len(self.boxes) < self.capacity - 1:
+            self.boxes.append(other_box)
+        else:
+            self.split()
+            self.boxes = None
+            self._add_to_sub_regions(other_box)
+
+    def add_footprints(self, footprints):
+        """Insert bounding boxes for a list of :class:`Footprint` objects.
+
+        Each box gets a ``.footprint`` attribute pointing back to the
+        originating :class:`Footprint` so it can be retrieved from a query.
+
+        Parameters
+        ----------
+        footprints : list of Footprint
+
+        Returns
+        -------
+        self : QuadTreeRegion
+        """
+        for fp in footprints:
+            box = bounds_to_bbox(fp.bounds)
+            box.footprint = fp
+            self.add(box)
+        return self
+
+    def split(self):
+        """Sub-divide this region into four quadrants."""
+        import matplotlib.pyplot as plt
+
+        height, width = self.bbox.shape
+        h2 = height // 2
+        w2 = width // 2
+        h3 = height - h2
+        w3 = width - w2
+
+        if self.debug:
+            fig, ax = plt.subplots()
+            ax.imshow(self.detect[2], cmap="Greys")
+            ax.set_title(self.depth)
+            draw_box(self.bbox, ax, "r")
+            for box in self.boxes:
+                draw_box(box, ax, "b")
+
+        origin = self.bbox.origin
+        self.sub_regions = [
+            QuadTreeRegion(Box((h2, w2), origin), capacity=self.capacity, depth=self.depth + 1),
+            QuadTreeRegion(
+                Box((h3, w2), (origin[0] + h2, origin[1])),
+                capacity=self.capacity,
+                depth=self.depth + 1,
+            ),
+            QuadTreeRegion(
+                Box((h2, w3), (origin[0], origin[1] + w2)),
+                capacity=self.capacity,
+                depth=self.depth + 1,
+            ),
+            QuadTreeRegion(
+                Box((h3, w3), (origin[0] + h2, origin[1] + w2)),
+                capacity=self.capacity,
+                depth=self.depth + 1,
+            ),
+        ]
+        for box in self.boxes:
+            self._add_to_sub_regions(box)
+
+    def _add_to_sub_regions(self, other_box):
+        for region in self.sub_regions:
+            region.add(other_box)
+
+    def query(self, other_box=None):
+        """Return all boxes that overlap with ``other_box``.
+
+        Parameters
+        ----------
+        other_box : Box, optional
+            Query box.  Defaults to the full region bbox.
+
+        Returns
+        -------
+        results : set of Box
+            Boxes that overlap with ``other_box``.  A ``set`` is used so that
+            boxes stored in multiple sub-regions are only returned once.
+        """
+        if other_box is None:
+            other_box = self.bbox
+        if self.boxes is not None:
+            return {box for box in self.boxes if box_intersect(box, other_box)}
+        if self.sub_regions is not None:
+            results = set()
+            for region in self.sub_regions:
+                if box_intersect(region.bbox, other_box):
+                    results |= region.query(other_box)
+            return results
+        return set()
+
+
+# ---------------------------------------------------------------------------
+# Multi-scale structure
+# ---------------------------------------------------------------------------
+
+
+class SingleScaleStructure:
+    """A connected set of pixels with common peaks at a single wavelet scale.
+
+    Using the terminology of Starck et al. 2011, a *structure* is a connected
+    set of significant wavelet coefficients at a given scale, together with
+    any peaks contributed by overlapping structures at other scales.
+
+    Attributes
+    ----------
+    scale : int
+        The wavelet scale of this structure.
+    footprint : Footprint
+        The footprint at the primary scale.
+    bbox : Box
+        Bounding box of the primary footprint.
+    peaks : dict
+        ``{scale: [Peak, …]}`` — peaks contributed from each scale.
+    """
+
+    def __init__(self, scale, footprint):
+        """
+        Parameters
+        ----------
+        scale : int
+            Wavelet scale of the primary footprint.
+        footprint : Footprint
+        """
+        self.scale = scale
+        self.footprint = footprint
+        self.bbox = bounds_to_bbox(footprint.bounds)
+        self.peaks = {scale: footprint.peaks}
+        self._all_peaks = None
+
+    def add_footprint(self, scale, footprint):
+        """Add peaks from a footprint at another scale.
+
+        Parameters
+        ----------
+        scale : int
+        footprint : Footprint
+        """
+        if scale not in self.peaks:
+            self.peaks[scale] = []
+        self.peaks[scale] += footprint.peaks
+        self._all_peaks = None
+
+    def add_scale_tree(self, scale, tree):
+        """Add all footprints from a :class:`QuadTreeRegion` at another scale
+        that overlap with this structure.
+
+        Parameters
+        ----------
+        scale : int
+        tree : QuadTreeRegion
+
+        Returns
+        -------
+        self : SingleScaleStructure
+        """
+        for box in tree.query(self.bbox):
+            self.add_footprint(scale, box.footprint)
+        return self
+
+    @property
+    def all_peaks(self):
+        """Set of ``(x, y)`` tuples for every peak across all scales."""
+        if self._all_peaks is not None:
+            return self._all_peaks
+        all_peaks = set()
+        for peaks in self.peaks.values():
+            all_peaks |= {(peak.x, peak.y) for peak in peaks}
+        self._all_peaks = all_peaks
+        return self._all_peaks
+
+
+# ---------------------------------------------------------------------------
+# Wavelet-based detection helpers
+# ---------------------------------------------------------------------------
+
+
+def get_wavelets(images, variance, scales=3):
+    """Compute significant starlet coefficients for a multi-band image cube.
+
+    Parameters
+    ----------
+    images : array-like, shape (bands, height, width)
+        Observed images.
+    variance : array-like, shape (bands, height, width)
+        Per-pixel variances matching ``images``.
+    scales : int
+        Number of wavelet scales.  The output has ``scales + 1`` planes per
+        band.
+
+    Returns
+    -------
+    coeffs : ndarray, shape (bands, scales+1, height, width)
+        Starlet coefficients masked to the multi-resolution support.
+    """
+    images = np.asarray(images)
+    variance = np.asarray(variance)
+    sigma = np.median(np.sqrt(variance), axis=(1, 2))
+    coeffs = []
+    for b, image in enumerate(images):
+        _coeffs = np.asarray(starlet_transform(image, scales=scales))
+        M = get_multiresolution_support(image, _coeffs, sigma[b], K=3, epsilon=1e-1, max_iter=20)
+        coeffs.append(M * _coeffs)
+    return np.array(coeffs)
+
+
+def get_detect_wavelets(images, variance, scales=3):
+    """Get starlet coefficients of a detection image for source finding.
+
+    The detection image is the per-pixel sum across all bands.
+
+    Parameters
+    ----------
+    images : array-like, shape (bands, height, width)
+    variance : array-like, shape (bands, height, width)
+    scales : int
+        Number of wavelet scales.
+
+    Returns
+    -------
+    coeffs : ndarray, shape (scales+1, height, width)
+        Masked starlet coefficients of the summed detection image.
+    """
+    images = np.asarray(images)
+    variance = np.asarray(variance)
+    sigma = np.median(np.sqrt(variance))
+    detect = np.sum(images, axis=0)
+    _coeffs = np.asarray(starlet_transform(detect, scales=scales))
+    M = get_multiresolution_support(detect, _coeffs, sigma, K=3, epsilon=1e-1, max_iter=20)
+    return M * _coeffs
+
+
+def get_blend_trees(detect):
+    """Build a :class:`QuadTreeRegion` for each wavelet scale in ``detect``.
+
+    Parameters
+    ----------
+    detect : ndarray, shape (scales+1, height, width)
+        Masked starlet coefficients (e.g. from :func:`get_detect_wavelets`).
+
+    Returns
+    -------
+    trees : list of QuadTreeRegion
+        One tree per scale (the last coarse-residual plane is excluded).
+    all_footprints : list of list of Footprint
+        Raw footprints at each scale.
+    """
+    all_footprints = []
+    for _detect in detect:
+        footprints = get_footprints(np.asarray(_detect), min_separation=0, min_area=4, thresh=0)
+        all_footprints.append(footprints)
+
+    trees = [
+        QuadTreeRegion(Box(detect.shape[-2:]), capacity=10).add_footprints(fps)
+        for fps in all_footprints
+    ]
+    return trees, all_footprints
+
+
+def get_blend_structures(detect):
+    """Build :class:`SingleScaleStructure` objects for the third wavelet scale.
+
+    Each structure at the larges scale is linked to all overlapping footprints at
+    finer scales, creating a hierarchy that connects fine-scale peaks to coarser detections.
+
+    Parameters
+    ----------
+    detect : ndarray, shape (scales+1, height, width)
+        Masked starlet coefficients (e.g. from :func:`get_detect_wavelets`).
+
+    Returns
+    -------
+    high_structures : list of SingleScaleStructure
+        Structures at larges scale with peaks from smaller scales attached.
+    """
+    all_footprints = []
+    for scale, _detect in enumerate(detect):
+        footprints = get_footprints(np.asarray(_detect), min_separation=0, min_area=4, thresh=0)
+        all_footprints.append(footprints)
+
+    # start with the footprints at the largest scale
+    largest_scale = len(detect) - 1
+    structures = [
+        SingleScaleStructure(largest_scale, fp)
+        for fp in all_footprints[largest_scale]
+    ]
+    # add tree connecting to smaller scales
+    box = Box(detect.shape[-2:])
+    scale_trees = [ QuadTreeRegion(box, capacity=10).add_footprints(fps) for fps in all_footprints[:-1] ]
+    for i in range(len(structures)):
+        for scale, tree in enumerate(scale_trees):
+            structures[i].add_scale_tree(scale, tree)
+    return structures
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical source list
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SceneSource:
+    """A source detected in the starlet wavelet hierarchy.
+
+    Attributes
+    ----------
+    center : tuple of int
+        ``(y, x)`` peak position, refined to the finest scale reached.
+    bbox : Box
+        Bounding box at the scale this source was first detected.
+    scale : int
+        Wavelet scale at which this source was first identified as distinct.
+    children : list of SceneSource
+        Sources whose peaks lie inside this source's footprint and are
+        spatially inconsistent with this source's primary peak.
+    """
+
+    center: Tuple[int, int]
+    bbox: Box
+    footprint: np.ndarray
+    scale: int
+    children: List["SceneSource"] = field(default_factory=list)
+
+
+def build_source_list(detect, flat_list=False):
+    """Decompose a detection image into a hierarchy of :class:`SceneSource` objects.
+
+    Starting from the largest starlet detail scale and working down to scale 0,
+    each source is refined by finding the fine-scale footprint that contains its
+    current center — that footprint's peak becomes the new center.  Any other
+    overlapping fine-scale footprints whose peak lies inside the parent's footprint
+    mask become child sources.  Children are excluded from the parent's subsequent
+    refinement steps to prevent double-counting.
+
+    After the top-down pass, a sweep over every finer scale promotes any footprint
+    whose primary peak is not already covered by an existing source to a new
+    top-level source.  This catches compact sources that are below the noise at
+    the largest scale but significant at finer scales.
+
+    Parameters
+    ----------
+    detect : ndarray, shape (scales+1, H, W)
+        Masked starlet coefficients from :func:`get_detect_wavelets`.
+        Pass ``detect[k:]`` to restrict detection to scales ``k`` and above.
+    flat_list: bool, optional
+        Whether to flatten the source list
+
+    Returns
+    -------
+    sources : list of SceneSource
+        Top-level sources, each potentially carrying a tree of children.
+        Sources detected only at finer scales appear as additional top-level
+        entries with their ``scale`` set accordingly.
+    """
+    trees, all_footprints = get_blend_trees(detect)
+    n_scales = len(trees)
+    largest = n_scales - 1
+
+    def peak_in_footprint(y, x, fp):
+        """True if pixel (y, x) lies inside the boolean mask of Footprint fp."""
+        ly = y - int(fp.bounds[0])
+        lx = x - int(fp.bounds[2])
+        h, w = fp.footprint.shape
+        return 0 <= ly < h and 0 <= lx < w and bool(fp.footprint[ly, lx])
+
+    def all_nodes(node_list):
+        """Yield every SceneSource in the tree rooted at each node in node_list."""
+        for node in node_list:
+            yield node
+            yield from all_nodes(node.children)
+
+    def refine(node, parent_fp, scale):
+        """Refine node.center and attach children, then recurse one scale finer.
+
+        Parameters
+        ----------
+        node : SceneSource
+            The source being refined.
+        parent_fp : Footprint
+            The Footprint at node's detection scale, used to decide whether a
+            newly found peak belongs to this source (child) or is unrelated.
+        scale : int
+            The wavelet scale to query for refinement.
+        """
+        if scale < 0:
+            return
+
+        # Footprints overlapping node's bbox at this scale, excluding regions
+        # already claimed by previously added children.
+        child_bboxes = [c.bbox for c in node.children]
+        overlapping = [
+            fp for fp in (box.footprint for box in trees[scale].query(node.bbox))
+            if not any(cb.contains((fp.peaks[0].y, fp.peaks[0].x)) for cb in child_bboxes)
+        ]
+
+        if not overlapping:
+            refine(node, parent_fp, scale - 1)
+            return
+
+        # Primary: the fine-scale footprint whose mask contains the parent's
+        # current center.  Its peak is the refined position of this source.
+        cy, cx = node.center
+        primary_fp = next(
+            (fp for fp in overlapping if peak_in_footprint(cy, cx, fp)), None
+        )
+        if primary_fp is not None:
+            node.center = (primary_fp.peaks[0].y, primary_fp.peaks[0].x)
+
+        # Children: all other overlapping footprints whose peak lies inside
+        # the parent's footprint mask.
+        for fp in overlapping:
+            if fp is primary_fp:
+                continue
+            peak = fp.peaks[0]
+            if peak_in_footprint(peak.y, peak.x, parent_fp):
+                child = SceneSource(
+                    center=(peak.y, peak.x),
+                    bbox=bounds_to_bbox(fp.bounds),
+                    footprint=fp,
+                    scale=scale,
+                )
+                refine(child, fp, scale - 1)
+                node.children.append(child)
+
+        # Continue refining this node; newly added children are now in
+        # child_bboxes and will be filtered out in the recursive call.
+        refine(node, parent_fp, scale - 1)
+
+    # --- top-down pass: seed from the largest scale -------------------------
+    sources = []
+    for fp in all_footprints[largest]:
+        node = SceneSource(
+            center=(fp.peaks[0].y, fp.peaks[0].x),
+            bbox=bounds_to_bbox(fp.bounds),
+            footprint=fp,
+            scale=largest,
+        )
+        refine(node, fp, largest - 1)
+        sources.append(node)
+
+    # --- orphan sweep: promote finer-scale footprints with no parent --------
+    for scale in range(largest - 1, -1, -1):
+        # registered_bboxes = [n.bbox for n in all_nodes(sources)]
+        registered_footprints = [n.footprint for n in all_nodes(sources)]
+        for fp in all_footprints[scale]:
+            peak = fp.peaks[0]
+            # if not any(bb.contains((peak.y, peak.x)) for bb in registered_bboxes):
+            if not any(peak_in_footprint(peak.y, peak.x, fp) for fp in registered_footprints):
+                node = SceneSource(
+                    center=(peak.y, peak.x),
+                    bbox=bounds_to_bbox(fp.bounds),
+                    footprint=fp,
+                    scale=scale,
+                )
+                refine(node, fp, scale - 1)
+                sources.append(node)
+
+    if flat_list:
+        sources = list(all_nodes(sources))
+
+    # clean up list: only os mask array of footprint; empty child lists to avoid duplication when flat
+    for i in range(len(sources)):
+        sources[i].footprint = sources[i].footprint.footprint
+        if flat_list:
+            sources[i].children = []
+
+    return sources
