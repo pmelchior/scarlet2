@@ -5,14 +5,13 @@
 import numpy as np
 import pytest
 
+from scarlet2.bbox import Box
 from scarlet2.detect import (
     Footprint,
     Peak,
     SceneSource,
-    bounds_to_bbox,
     box_intersect,
     build_source_list,
-    flatten_source_list,
     footprint_intersect,
     get_connected_pixels,
     get_footprints,
@@ -53,14 +52,14 @@ def test_get_connected_pixels_basic():
     img[3:6, 3:6] = 1.0
     unchecked = np.ones((10, 10), dtype=bool)
     footprint = np.zeros((10, 10), dtype=bool)
-    bounds = np.array([4, 4, 4, 4], dtype=int)
+    bounds = [[4, 5], [4, 5]]
 
     get_connected_pixels(4, 4, img, unchecked, footprint, bounds, thresh=0)
 
     assert footprint[3:6, 3:6].all()
     assert not footprint[0, 0]
-    assert bounds[0] == 3 and bounds[1] == 5
-    assert bounds[2] == 3 and bounds[3] == 5
+    assert bounds[0] == [3, 6]
+    assert bounds[1] == [3, 6]
 
 
 def test_get_connected_pixels_thresh():
@@ -68,7 +67,7 @@ def test_get_connected_pixels_thresh():
     img[2, 2] = 0.5  # below thresh=1
     unchecked = np.ones((5, 5), dtype=bool)
     footprint = np.zeros((5, 5), dtype=bool)
-    bounds = np.array([2, 2, 2, 2], dtype=int)
+    bounds = [[2, 3], [2, 3]]
 
     get_connected_pixels(2, 2, img, unchecked, footprint, bounds, thresh=1.0)
 
@@ -119,28 +118,35 @@ def test_get_footprints_below_min_area():
 
 
 # ---------------------------------------------------------------------------
-# bounds_to_bbox / box_intersect / footprint_intersect
+# Footprint bounds / Box
 # ---------------------------------------------------------------------------
 
 
-def test_bounds_to_bbox():
-    bounds = np.array([2, 7, 3, 9], dtype=int)
-    bbox = bounds_to_bbox(bounds)
-    assert bbox.shape == (6, 7)
-    assert bbox.origin == (2, 3)
+def test_footprint_bounds():
+    """Footprint bounds use exclusive end coordinates, matching Box convention."""
+    img = np.zeros((10, 10), dtype=np.float32)
+    img[2:8, 3:9] = 1.0
+    img[5, 6] = 2.0
+    fps = get_footprints(img, min_separation=1, min_area=4, thresh=0)
+    assert len(fps) == 1
+    bounds = fps[0].bounds
+    bbox = Box.from_bounds(*bounds)
+    assert bbox.origin == (bounds[0][0], bounds[1][0])
+    assert bbox.shape == (bounds[0][1] - bounds[0][0], bounds[1][1] - bounds[1][0])
+
+
+# ---------------------------------------------------------------------------
+# box_intersect / footprint_intersect
+# ---------------------------------------------------------------------------
 
 
 def test_box_intersect_overlapping():
-    from scarlet2.bbox import Box
-
     b1 = Box((10, 10), origin=(0, 0))
     b2 = Box((10, 10), origin=(5, 5))
     assert box_intersect(b1, b2)
 
 
 def test_box_intersect_non_overlapping():
-    from scarlet2.bbox import Box
-
     b1 = Box((5, 5), origin=(0, 0))
     b2 = Box((5, 5), origin=(10, 10))
     assert not box_intersect(b1, b2)
@@ -149,8 +155,6 @@ def test_box_intersect_non_overlapping():
 def test_footprint_intersect():
     fp1 = np.ones((5, 5), dtype=bool)
     fp2 = np.ones((5, 5), dtype=bool)
-    from scarlet2.bbox import Box
-
     b1 = Box((5, 5), origin=(0, 0))
     b2 = Box((5, 5), origin=(3, 3))
     assert footprint_intersect(fp1, b1, fp2, b2)
@@ -159,8 +163,6 @@ def test_footprint_intersect():
 def test_footprint_no_intersect():
     fp1 = np.ones((5, 5), dtype=bool)
     fp2 = np.ones((5, 5), dtype=bool)
-    from scarlet2.bbox import Box
-
     b1 = Box((5, 5), origin=(0, 0))
     b2 = Box((5, 5), origin=(10, 10))
     assert not footprint_intersect(fp1, b1, fp2, b2)
@@ -190,7 +192,7 @@ def test_build_source_list_two_blobs():
     img += _make_blob((50, 50), center=(12, 12), radius=4, peak_value=10.0)
     img += _make_blob((50, 50), center=(37, 37), radius=4, peak_value=6.0)
     detect = _detect_coeffs(img)
-    sources = flatten_source_list(build_source_list(detect))
+    sources = build_source_list(detect, flat_list=True)
 
     assert len(sources) >= 2
 
@@ -216,7 +218,33 @@ def test_build_source_list_orphan_promoted():
     img[38, 38] = 8.0
     img[37:40, 37:40] = 2.0
     detect = _detect_coeffs(img)
-    all_sources = flatten_source_list(build_source_list(detect))
+    all_sources = build_source_list(detect, flat_list=True)
 
     all_centers = [(s.center[0], s.center[1]) for s in all_sources]
     assert any(abs(cy - 38) <= 3 and abs(cx - 38) <= 3 for cy, cx in all_centers)
+
+
+def test_build_source_list_flat_list():
+    """flat_list=True returns all nodes with empty children lists."""
+    img = np.zeros((50, 50), dtype=np.float32)
+    img += _make_blob((50, 50), center=(12, 12), radius=4, peak_value=10.0)
+    img += _make_blob((50, 50), center=(37, 37), radius=4, peak_value=6.0)
+    detect = _detect_coeffs(img)
+    sources = build_source_list(detect, flat_list=True)
+
+    assert all(isinstance(s, SceneSource) for s in sources)
+    assert all(s.children == [] for s in sources)
+
+
+def test_build_source_list_scale_coarsening():
+    """Passing detect[k:] restricts detection to scales k and above."""
+    img = np.zeros((50, 50), dtype=np.float32)
+    img += _make_blob((50, 50), center=(25, 25), radius=6, peak_value=10.0)
+    detect = _detect_coeffs(img, scales=4)
+
+    sources_all = build_source_list(detect)
+    sources_coarse = build_source_list(detect[2:])
+
+    assert all(s.scale >= 0 for s in sources_coarse)
+    assert len(sources_all) >= 1
+    assert len(sources_coarse) >= 1
