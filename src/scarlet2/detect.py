@@ -615,7 +615,7 @@ def get_wavelets(images, variance, max_scale=3):
     """
     images = np.asarray(images)
     variance = np.asarray(variance)
-    sigma = np.median(np.sqrt(variance), axis=(1, 2))
+    sigma = np.median(np.sqrt(variance), axis=(-2, -1))
     coeffs = []
     for b, image in enumerate(images):
         _coeffs = np.asarray(starlet_transform(image, scales=max_scale))
@@ -643,8 +643,10 @@ def get_detect_wavelets(images, variance, max_scale=3):
     """
     images = np.asarray(images)
     variance = np.asarray(variance)
-    sigma = np.median(np.sqrt(variance))
-    detect = np.sum(images, axis=0)
+    sigma = np.median(np.sqrt(variance), axis=(-2,-1))
+    weights = 1/sigma**2 # inverse variance weighting, per band
+    detect = np.sum(images * weights[:,None,None], axis=0) / np.sum(weights)
+    sigma = np.sqrt(1/weights.sum())
     _coeffs = np.asarray(starlet_transform(detect, scales=max_scale))
     M = get_multiresolution_support(detect, _coeffs, sigma, K=3, epsilon=1e-1, max_iter=20)
     return M * _coeffs
@@ -790,9 +792,10 @@ def build_source_list(detect, flat_list=False, scales=None):
         entries with their ``scale`` set accordingly.
     """
     if scales is None:
-        scales = list(range(len(detect)))
+        scales = scale_indices = list(range(len(detect)))
     else:
         scales = sorted(scales)
+        scale_indices = list(range(len(scales)))
 
     trees, all_footprints = get_blend_trees(detect, scales=scales)
 
@@ -809,7 +812,7 @@ def build_source_list(detect, flat_list=False, scales=None):
             yield node
             yield from all_nodes(node.children)
 
-    def refine(node, parent_fp, scale):
+    def refine(node, parent_fp, idx):
         """Refine node.center and attach children, then recurse one scale finer.
 
         Parameters
@@ -819,33 +822,38 @@ def build_source_list(detect, flat_list=False, scales=None):
         parent_fp : Footprint
             The Footprint at node's detection scale, used to decide whether a
             newly found peak belongs to this source (child) or is unrelated.
-        scale : int
-            The wavelet scale to query for refinement.
+        idx : int
+            The index of the wavelet scale to query for refinement.
         """
-        if scale not in scales:
+        if idx < 0 or idx >= len(scales):
             return
-        pos = scales.index(scale)
+        scale = scales[idx]
 
         # Footprints overlapping node's bbox at this scale, excluding regions
         # already claimed by previously added children.
         child_bboxes = [c.bbox for c in node.children]
         overlapping = [
-            fp for fp in (box.footprint for box in trees[pos].query(node.bbox))
+            fp for fp in (box.footprint for box in trees[idx].query(node.bbox))
             if not any(cb.contains((fp.peaks[0].y, fp.peaks[0].x)) for cb in child_bboxes)
         ]
 
         if not overlapping:
-            refine(node, parent_fp, pos - 1)
+            refine(node, parent_fp, idx - 1)
             return
 
-        # Primary: the fine-scale footprint whose mask contains the parent's
+        # Primary: the fine-scale footprint that contains the parent's
         # current center.  Its peak is the refined position of this source.
         cy, cx = node.center
         primary_fp = next(
             (fp for fp in overlapping if peak_in_footprint(cy, cx, fp)), None
         )
         if primary_fp is not None:
-            node.center = (primary_fp.peaks[0].y, primary_fp.peaks[0].x)
+            # if there are multiple peaks in fp, use the closest to the current node center
+            closest = np.argmin([
+                (p.y - node.center[0])**2 + (p.x - node.center[1])**2
+                for p in primary_fp.peaks
+            ])
+            node.center = (primary_fp.peaks[closest].y, primary_fp.peaks[closest].x)
 
         # Children: all other overlapping footprints whose peak lies inside
         # the parent's footprint mask.
@@ -860,30 +868,29 @@ def build_source_list(detect, flat_list=False, scales=None):
                     footprint=fp,
                     scale=scale,
                 )
-                refine(child, fp, scale - 1)
+                refine(child, fp, idx - 1)
                 node.children.append(child)
 
         # Continue refining this node; newly added children are now in
         # child_bboxes and will be filtered out in the recursive call.
-        refine(node, parent_fp, scale - 1)
+        refine(node, parent_fp, idx - 1)
 
     # --- top-down pass: seed from the largest selected scale ----------------
-    largest_scale = scales[-1]
+    idx = len(scales) - 1
     sources = []
     for fp in all_footprints[-1]:
         node = SceneSource(
             center=(fp.peaks[0].y, fp.peaks[0].x),
             bbox=Box.from_bounds(*fp.bounds),
             footprint=fp,
-            scale=largest_scale,
+            scale=scales[idx],
         )
-        refine(node, fp, largest_scale - 1)
+        refine(node, fp, idx - 1)
         sources.append(node)
 
     # --- orphan sweep: promote finer-scale footprints with no parent --------
-    for scale in scales[:-1][::-1]: # exclude largest scale, 2nd largest to smallest
+    for idx in scale_indices[:-1][::-1]:  # exclude largest scale, 2nd largest to smallest
         registered_footprints = [n.footprint for n in all_nodes(sources)]
-        idx = scales.index(scale)
         for fp in all_footprints[idx]:
             peak = fp.peaks[0]
             if not any(peak_in_footprint(peak.y, peak.x, fp) for fp in registered_footprints):
@@ -891,9 +898,9 @@ def build_source_list(detect, flat_list=False, scales=None):
                     center=(peak.y, peak.x),
                     bbox=Box.from_bounds(*fp.bounds),
                     footprint=fp,
-                    scale=scale,
+                    scale=scales[idx],
                 )
-                refine(node, fp, scale - 1)
+                refine(node, fp, idx - 1)
                 sources.append(node)
 
     if flat_list:
