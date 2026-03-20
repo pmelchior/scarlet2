@@ -9,9 +9,9 @@ from scarlet2.bbox import Box
 from scarlet2.detect import (
     Footprint,
     Peak,
-    SceneSource,
+    SourceFootprint,
     box_intersect,
-    build_source_list,
+    hierarchical_footprints,
     footprint_intersect,
     get_connected_pixels,
     get_footprints,
@@ -178,7 +178,7 @@ def test_build_source_list_single_source():
     yy, xx = np.mgrid[:40, :40]
     img = 10.0 * np.exp(-((yy - 20) ** 2 + (xx - 20) ** 2) / (2 * 2.0**2)).astype(np.float32)
     detect = _detect_coeffs(img)
-    sources = build_source_list(detect)
+    sources = hierarchical_footprints(detect)
 
     assert len(sources) >= 1
     centers = [(s.center[0], s.center[1]) for s in sources]
@@ -192,7 +192,7 @@ def test_build_source_list_two_blobs():
     img += _make_blob((50, 50), center=(12, 12), radius=4, peak_value=10.0)
     img += _make_blob((50, 50), center=(37, 37), radius=4, peak_value=6.0)
     detect = _detect_coeffs(img)
-    sources = build_source_list(detect, flat_list=True)
+    sources = hierarchical_footprints(detect, flatten=True)
 
     assert len(sources) >= 2
 
@@ -200,9 +200,9 @@ def test_build_source_list_two_blobs():
 def test_build_source_list_returns_scene_source():
     img = _make_blob((30, 30), center=(15, 15), radius=4, peak_value=8.0)
     detect = _detect_coeffs(img)
-    sources = build_source_list(detect)
+    sources = hierarchical_footprints(detect)
 
-    assert all(isinstance(s, SceneSource) for s in sources)
+    assert all(isinstance(s, SourceFootprint) for s in sources)
     for s in sources:
         assert isinstance(s.center, tuple) and len(s.center) == 2
         assert isinstance(s.scale, int)
@@ -218,7 +218,7 @@ def test_build_source_list_orphan_promoted():
     img[38, 38] = 8.0
     img[37:40, 37:40] = 2.0
     detect = _detect_coeffs(img)
-    all_sources = build_source_list(detect, flat_list=True)
+    all_sources = hierarchical_footprints(detect, flatten=True)
 
     all_centers = [(s.center[0], s.center[1]) for s in all_sources]
     assert any(abs(cy - 38) <= 3 and abs(cx - 38) <= 3 for cy, cx in all_centers)
@@ -230,9 +230,9 @@ def test_build_source_list_flat_list():
     img += _make_blob((50, 50), center=(12, 12), radius=4, peak_value=10.0)
     img += _make_blob((50, 50), center=(37, 37), radius=4, peak_value=6.0)
     detect = _detect_coeffs(img)
-    sources = build_source_list(detect, flat_list=True)
+    sources = hierarchical_footprints(detect, flatten=True)
 
-    assert all(isinstance(s, SceneSource) for s in sources)
+    assert all(isinstance(s, SourceFootprint) for s in sources)
     assert all(s.children == [] for s in sources)
 
 
@@ -242,8 +242,8 @@ def test_build_source_list_scale_coarsening():
     img += _make_blob((50, 50), center=(25, 25), radius=6, peak_value=10.0)
     detect = _detect_coeffs(img, scales=4)
 
-    sources_all = build_source_list(detect)
-    sources_coarse = build_source_list(detect[2:])
+    sources_all = hierarchical_footprints(detect)
+    sources_coarse = hierarchical_footprints(detect[2:])
 
     assert all(s.scale >= 0 for s in sources_coarse)
     assert len(sources_all) >= 1

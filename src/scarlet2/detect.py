@@ -736,7 +736,7 @@ def get_blend_structures(detect, scales=None):
 
 
 @dataclass
-class SceneSource:
+class SourceFootprint:
     """A source detected in the starlet wavelet hierarchy.
 
     Attributes
@@ -747,7 +747,7 @@ class SceneSource:
         Bounding box at the scale this source was first detected.
     scale : int
         Wavelet scale at which this source was first identified as distinct.
-    children : list of SceneSource
+    children : list of SourceFootprint
         Sources whose peaks lie inside this source's footprint and are
         spatially inconsistent with this source's primary peak.
     """
@@ -756,11 +756,11 @@ class SceneSource:
     bbox: Box
     footprint: np.ndarray
     scale: int
-    children: List["SceneSource"] = field(default_factory=list)
+    children: List["SourceFootprint"] = field(default_factory=list)
 
 
-def build_source_list(detect, flat_list=False, scales=None):
-    """Decompose a detection image into a hierarchy of :class:`SceneSource` objects.
+def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, wcs=None):
+    """Decompose a detection image into a hierarchy of :class:`SourceFootprint` objects.
 
     Starting from the largest starlet detail scale and working down to scale 0,
     each source is refined by finding the fine-scale footprint that contains its
@@ -778,19 +778,27 @@ def build_source_list(detect, flat_list=False, scales=None):
     ----------
     detect : ndarray, shape (scales+1, H, W)
         Masked starlet coefficients from :func:`get_detect_wavelets`.
-    flat_list : bool, optional
+    flatten : bool, optional
         Whether to flatten the source list.
     scales : list of int, optional
         Indices into ``detect`` specifying which planes to use.  If ``None``
         (default) all planes are used.
+    limit_to : list of :class:`astropy.coordinates.SkyCoord`, optional
+        If given, only footprints that contain at least one of these sky
+        positions are returned.  Requires ``wcs``.
+    wcs : :class:`astropy.wcs.WCS`, optional
+        WCS used to convert ``limit_to`` sky coordinates to pixel positions.
+        Required when ``limit_to`` is not ``None``.
 
     Returns
     -------
-    sources : list of SceneSource
+    sources : list of SourceFootprint
         Top-level sources, each potentially carrying a tree of children.
         Sources detected only at finer scales appear as additional top-level
         entries with their ``scale`` set accordingly.
     """
+    if limit_to is not None and wcs is None:
+        raise ValueError("wcs must be provided when limit_to is given")
     if scales is None:
         scales = scale_indices = list(range(len(detect)))
     else:
@@ -817,7 +825,7 @@ def build_source_list(detect, flat_list=False, scales=None):
 
         Parameters
         ----------
-        node : SceneSource
+        node : SourceFootprint
             The source being refined.
         parent_fp : Footprint
             The Footprint at node's detection scale, used to decide whether a
@@ -862,7 +870,7 @@ def build_source_list(detect, flat_list=False, scales=None):
                 continue
             peak = fp.peaks[0]
             if peak_in_footprint(peak.y, peak.x, parent_fp):
-                child = SceneSource(
+                child = SourceFootprint(
                     center=(peak.y, peak.x),
                     bbox=Box.from_bounds(*fp.bounds),
                     footprint=fp,
@@ -879,7 +887,7 @@ def build_source_list(detect, flat_list=False, scales=None):
     idx = len(scales) - 1
     sources = []
     for fp in all_footprints[-1]:
-        node = SceneSource(
+        node = SourceFootprint(
             center=(fp.peaks[0].y, fp.peaks[0].x),
             bbox=Box.from_bounds(*fp.bounds),
             footprint=fp,
@@ -894,7 +902,7 @@ def build_source_list(detect, flat_list=False, scales=None):
         for fp in all_footprints[idx]:
             peak = fp.peaks[0]
             if not any(peak_in_footprint(peak.y, peak.x, fp) for fp in registered_footprints):
-                node = SceneSource(
+                node = SourceFootprint(
                     center=(peak.y, peak.x),
                     bbox=Box.from_bounds(*fp.bounds),
                     footprint=fp,
@@ -903,13 +911,31 @@ def build_source_list(detect, flat_list=False, scales=None):
                 refine(node, fp, idx - 1)
                 sources.append(node)
 
-    if flat_list:
+    # --- limit_to filter: keep only footprints containing a given sky position -
+    if limit_to is not None:
+        wcs_cel = wcs.celestial
+        pixel_coords = []
+        for coord in limit_to:
+            x, y = coord.to_pixel(wcs_cel)
+            pixel_coords.append((int(round(float(y))), int(round(float(x)))))
+
+        def _contains_any(node):
+            """True if node's footprint contains any limit_to pixel, or a kept child does."""
+            for py, px in pixel_coords:
+                if peak_in_footprint(py, px, node.footprint):
+                    return True
+            node.children = [c for c in node.children if _contains_any(c)]
+            return len(node.children) > 0
+
+        sources = [s for s in sources if _contains_any(s)]
+
+    if flatten:
         sources = list(all_nodes(sources))
 
     # clean up list: only os mask array of footprint; empty child lists to avoid duplication when flat
     for i in range(len(sources)):
         sources[i].footprint = sources[i].footprint.footprint
-        if flat_list:
+        if flatten:
             sources[i].children = []
 
     return sources
