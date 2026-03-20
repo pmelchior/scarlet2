@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 
+import astropy
 import jax
 import jax.numpy as jnp
 import jax.random as random
@@ -13,6 +14,7 @@ from matplotlib.patches import Polygon
 
 from . import measure
 from .bbox import Box, insert_into
+from .detect import SourceFootprint
 from .renderer import ChannelRenderer
 
 
@@ -386,9 +388,9 @@ def observation(
     observation,
     norm=None,
     channel_map=None,
-    sky_coords=None,
     show_psf=False,
-    add_labels=True,
+    add_peaks=None,
+    add_footprints=None,
     split_channels=False,
     fig_kwargs=None,
     title_kwargs=None,
@@ -407,15 +409,13 @@ def observation(
         Norm to scale the intensity of `observation` into RGB 0..256
     channel_map: array, optional
         Linear mapping from channels to RGB, dimensions (3, channels)
-    sky_coords: list, optional
-        2D coordinates (in pixel coordinates or sky coordinates).
-        If in sky coordinates, the Frame of `observation` needs to have a valid WCS.
     show_psf: bool, optional
         Whether to plot a panel with the PSF model of `observation` centered in
         the middle
-    add_labels: bool, optional
-        Whether to plot a text label with the running number for each of the
-        sources in `sky_coords`
+    add_peaks: (None, List[astropy.SkyCoords], List[SourceFootprints]), optional
+        Whether to plot a text label with the running number for each of the listed coordinates
+    add_footprints: (None, List[SourceFootprints]), optional
+        Whether to plot the footprints as semi-transparent layer over the image
     split_channels: bool, optional
         Whether to split the observation into separate channels
     fig_kwargs: dict, optional
@@ -451,6 +451,22 @@ def observation(
         ax = (ax,)
 
     extent = observation.frame.bbox.get_extent()
+    if add_peaks is not None and len(add_peaks):
+        if isinstance(add_peaks[0], astropy.coordinates.SkyCoord):
+            centers = [observation.frame.get_pixel(coord) for coord in add_peaks]
+        elif isinstance(add_peaks[0], SourceFootprint):
+            centers = [ fp.center for fp in add_peaks ]
+    else:
+        centers = []
+
+    if add_footprints is not None and len(add_footprints):
+        shape = observation.frame.bbox.spatial.shape
+        num_scales = len(jnp.unique(jnp.asarray([ sfp.scale for sfp in add_footprints ])))
+        footprint_map = jnp.zeros(shape)
+        for sfp in add_footprints:
+            footprint_map += insert_into(
+                jnp.zeros(shape), 1 / num_scales * sfp.footprint, sfp.bbox
+            )
 
     for row in range(rows):
         if split_channels:
@@ -483,10 +499,12 @@ def observation(
         )
         ax[row, panel].set_title(f"Observation {name}", **title_kwargs)
 
-        if add_labels and sky_coords is not None:
-            for k, center in enumerate(sky_coords):
-                center_ = observation.frame.get_pixel(center)
-                ax[row, panel].text(*center_[::-1], k, **label_kwargs)
+        if add_peaks is not None:
+            for k, center in enumerate(centers):
+                ax[row, panel].text(*center[::-1], k, **label_kwargs)
+
+        if add_footprints is not None:
+            ax[row, panel].imshow(footprint_map, cmap="grey", alpha=0.3, extent=extent, origin="lower")
 
         if show_psf:
             panel = 1
