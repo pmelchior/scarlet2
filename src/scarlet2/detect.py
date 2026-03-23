@@ -184,7 +184,7 @@ def _get_patch_peaks(image, min_separation, y0=0, x0=0):
     return peaks
 
 
-def get_footprints(image, min_separation, min_area, thresh=0):
+def footprints(image, min_separation, min_area, thresh=0):
     """Detect footprints and their peaks in an image.
 
     Iterates over every pixel, flood-fills each connected region of pixels
@@ -210,7 +210,7 @@ def get_footprints(image, min_separation, min_area, thresh=0):
     """
     image = np.asarray(image)
     height, width = image.shape
-    footprints = []
+    _footprints = []
     unchecked = np.ones((height, width), dtype=bool)
     footprint = np.zeros((height, width), dtype=bool)
 
@@ -228,12 +228,12 @@ def get_footprints(image, min_separation, min_area, thresh=0):
                     patch[~sub_fp] = 0
                     peaks = _get_patch_peaks(patch, min_separation, y0=y0, x0=x0)
                     if peaks:
-                        footprints.append(
+                        _footprints.append(
                             Footprint(sub_fp.copy(), peaks, ((y0, y1), (x0, x1)))
                         )
             footprint[y0:y1, x0:x1] = False
 
-    return footprints
+    return _footprints
 
 
 # ---------------------------------------------------------------------------
@@ -275,59 +275,6 @@ def footprint_intersect(footprint1, box1, footprint2, box2):
         return False
     slices1, slices2 = overlap_slices(box1, box2)
     return np.sum(footprint1[slices1] * footprint2[slices2]) > 0
-
-
-# ---------------------------------------------------------------------------
-# Matplotlib drawing helpers
-# ---------------------------------------------------------------------------
-
-
-def draw_box(box, ax, color):
-    """Draw a :class:`~scarlet2.bbox.Box` outline on a Matplotlib axis.
-
-    Parameters
-    ----------
-    box : Box
-    ax : matplotlib.axes.Axes
-    color : str
-        Colour name for the rectangle edge.
-    """
-    import matplotlib.patches as patches
-
-    rect = patches.Rectangle(
-        box.origin[::-1],
-        box.shape[1],
-        box.shape[0],
-        linewidth=1,
-        edgecolor=color,
-        facecolor="none",
-    )
-    ax.add_patch(rect)
-
-
-def draw_region(region, ax):
-    """Recursively draw a :class:`QuadTreeRegion` and all its sub-regions.
-
-    Parameters
-    ----------
-    region : QuadTreeRegion
-    ax : matplotlib.axes.Axes
-    """
-    draw_box(region.bbox, ax, "r")
-    if region.sub_regions is not None:
-        for sub in region.sub_regions:
-            draw_region(sub, ax)
-
-
-def draw_footprint_box(footprint, ax):
-    """Draw the bounding box of a :class:`Footprint` on a Matplotlib axis.
-
-    Parameters
-    ----------
-    footprint : Footprint
-    ax : matplotlib.axes.Axes
-    """
-    draw_box(Box.from_bounds(*footprint.bounds), ax, "k")
 
 
 # ---------------------------------------------------------------------------
@@ -627,7 +574,7 @@ def get_wavelets(images, variance, max_scale=3):
 def get_detect_wavelets(images, variance, max_scale=3):
     """Get starlet coefficients of a detection image for source finding.
 
-    The detection image is the per-pixel sum across all bands.
+    The detection image is inverse varianced weighted sum of `images` across all bands.
 
     Parameters
     ----------
@@ -652,7 +599,7 @@ def get_detect_wavelets(images, variance, max_scale=3):
     return M * _coeffs
 
 
-def get_blend_trees(detect, scales=None):
+def get_blend_trees(detect, scales=None, min_separation=0, min_area=4, thresh=0):
     """Build a :class:`QuadTreeRegion` for each wavelet scale in ``detect``.
 
     Parameters
@@ -662,6 +609,12 @@ def get_blend_trees(detect, scales=None):
     scales : list of int, optional
         Indices into ``detect`` specifying which scales to use.  If ``None``
         (default) all scales are used.
+    min_separation : float, optional
+        Minimum pixel separation between peaks within a footprint.
+    min_area : int, optional
+        Minimum number of pixels a footprint must contain to be kept.
+    thresh : float, optional
+        Detection threshold; pixels must strictly exceed this value.
 
     Returns
     -------
@@ -677,8 +630,13 @@ def get_blend_trees(detect, scales=None):
 
     all_footprints = []
     for s in scales:
-        footprints = get_footprints(np.asarray(detect[s]), min_separation=0, min_area=4, thresh=0)
-        all_footprints.append(footprints)
+        _footprints = footprints(
+            np.asarray(detect[s]),
+            min_separation=min_separation,
+            min_area=min_area,
+            thresh=thresh,
+        )
+        all_footprints.append(_footprints)
 
     trees = [
         QuadTreeRegion(Box(detect.shape[-2:]), capacity=10).add_footprints(fps)
@@ -687,7 +645,7 @@ def get_blend_trees(detect, scales=None):
     return trees, all_footprints
 
 
-def get_blend_structures(detect, scales=None):
+def get_blend_structures(detect, scales=None, min_separation=0, min_area=4, thresh=0):
     """Build :class:`SingleScaleStructure` objects for the third wavelet scale.
 
     Each structure at the largest scale is linked to all overlapping footprints at
@@ -700,6 +658,12 @@ def get_blend_structures(detect, scales=None):
     scales : list of int, optional
         Indices into ``detect`` specifying which scales to use.  If ``None``
         (default) all scales are used.
+    min_separation : float, optional
+        Minimum pixel separation between peaks within a footprint.
+    min_area : int, optional
+        Minimum number of pixels a footprint must contain to be kept.
+    thresh : float, optional
+        Detection threshold; pixels must strictly exceed this value.
 
     Returns
     -------
@@ -713,8 +677,13 @@ def get_blend_structures(detect, scales=None):
 
     all_footprints = []
     for s in scales:
-        footprints = get_footprints(np.asarray(detect[s]), min_separation=0, min_area=4, thresh=0)
-        all_footprints.append(footprints)
+        _footprints = footprints(
+            np.asarray(detect[s]),
+            min_separation=min_separation,
+            min_area=min_area,
+            thresh=thresh,
+        )
+        all_footprints.append(_footprints)
 
     # start with the footprints at the largest selected scale
     structures = [ SingleScaleStructure(scales[-1], fp) for fp in all_footprints[-1] ]
@@ -736,8 +705,8 @@ def get_blend_structures(detect, scales=None):
 
 
 @dataclass
-class SourceFootprint:
-    """A source detected in the starlet wavelet hierarchy.
+class HierarchicalFootprint:
+    """A source detected in the starlet hierarchy.
 
     Attributes
     ----------
@@ -745,28 +714,29 @@ class SourceFootprint:
         ``(y, x)`` peak position, refined to the finest scale reached.
     bbox : Box
         Bounding box at the scale this source was first detected.
+    footprint : np.ndarray
+        Binary mask for detected source in bbox.
     scale : int
-        Wavelet scale at which this source was first identified as distinct.
-    children : list of SourceFootprint
+        Largest wavelet scale at which this source was first identified.
+    children : list of HierarchicalFootprint
         Sources whose peaks lie inside this source's footprint and are
         spatially inconsistent with this source's primary peak.
     """
-
     center: Tuple[int, int]
     bbox: Box
     footprint: np.ndarray
     scale: int
-    children: List["SourceFootprint"] = field(default_factory=list)
+    children: List["HierarchicalFootprint"] = field(default_factory=list)
 
 
-def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, wcs=None):
-    """Decompose a detection image into a hierarchy of :class:`SourceFootprint` objects.
+def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, min_separation=0, min_area=4, thresh=0):
+    """Decompose a detection image into a hierarchy of :class:`HierarchicalFootprint` objects.
 
-    Starting from the largest starlet detail scale and working down to scale 0,
+    Starting from the largest starlet scale and working down to the smallest scale,
     each source is refined by finding the fine-scale footprint that contains its
     current center — that footprint's peak becomes the new center.  Any other
     overlapping fine-scale footprints whose peak lies inside the parent's footprint
-    mask become child sources.  Children are excluded from the parent's subsequent
+    mask become child footprints.  Children are excluded from the parent's subsequent
     refinement steps to prevent double-counting.
 
     After the top-down pass, a sweep over every finer scale promotes any footprint
@@ -783,29 +753,36 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, w
     scales : list of int, optional
         Indices into ``detect`` specifying which planes to use.  If ``None``
         (default) all planes are used.
-    limit_to : list of :class:`astropy.coordinates.SkyCoord`, optional
-        If given, only footprints that contain at least one of these sky
-        positions are returned.  Requires ``wcs``.
-    wcs : :class:`astropy.wcs.WCS`, optional
-        WCS used to convert ``limit_to`` sky coordinates to pixel positions.
-        Required when ``limit_to`` is not ``None``.
+    limit_to : list of (y, x) tuples, optional
+        If given, only footprints that contain at least one of these pixel
+        positions are returned.
+    min_separation : float, optional
+        Minimum pixel separation between peaks within a footprint.
+    min_area : int, optional
+        Minimum number of pixels a footprint must contain to be kept.
+    thresh : float, optional
+        Detection threshold; pixels must strictly exceed this value.
 
     Returns
     -------
-    sources : list of SourceFootprint
+    sources : list of HierarchicalFootprint
         Top-level sources, each potentially carrying a tree of children.
         Sources detected only at finer scales appear as additional top-level
         entries with their ``scale`` set accordingly.
     """
-    if limit_to is not None and wcs is None:
-        raise ValueError("wcs must be provided when limit_to is given")
     if scales is None:
         scales = scale_indices = list(range(len(detect)))
     else:
         scales = sorted(scales)
         scale_indices = list(range(len(scales)))
 
-    trees, all_footprints = get_blend_trees(detect, scales=scales)
+    trees, all_footprints = get_blend_trees(
+        detect,
+        scales=scales,
+        min_separation=min_separation,
+        min_area=min_area,
+        thresh=thresh,
+    )
 
     def peak_in_footprint(y, x, fp):
         """True if pixel (y, x) lies inside the boolean mask of Footprint fp."""
@@ -825,7 +802,7 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, w
 
         Parameters
         ----------
-        node : SourceFootprint
+        node : HierarchicalFootprint
             The source being refined.
         parent_fp : Footprint
             The Footprint at node's detection scale, used to decide whether a
@@ -870,7 +847,7 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, w
                 continue
             peak = fp.peaks[0]
             if peak_in_footprint(peak.y, peak.x, parent_fp):
-                child = SourceFootprint(
+                child = HierarchicalFootprint(
                     center=(peak.y, peak.x),
                     bbox=Box.from_bounds(*fp.bounds),
                     footprint=fp,
@@ -887,7 +864,7 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, w
     idx = len(scales) - 1
     sources = []
     for fp in all_footprints[-1]:
-        node = SourceFootprint(
+        node = HierarchicalFootprint(
             center=(fp.peaks[0].y, fp.peaks[0].x),
             bbox=Box.from_bounds(*fp.bounds),
             footprint=fp,
@@ -902,7 +879,7 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, w
         for fp in all_footprints[idx]:
             peak = fp.peaks[0]
             if not any(peak_in_footprint(peak.y, peak.x, fp) for fp in registered_footprints):
-                node = SourceFootprint(
+                node = HierarchicalFootprint(
                     center=(peak.y, peak.x),
                     bbox=Box.from_bounds(*fp.bounds),
                     footprint=fp,
@@ -913,16 +890,10 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, w
 
     # --- limit_to filter: keep only footprints containing a given sky position -
     if limit_to is not None:
-        wcs_cel = wcs.celestial
-        pixel_coords = []
-        for coord in limit_to:
-            x, y = coord.to_pixel(wcs_cel)
-            pixel_coords.append((int(round(float(y))), int(round(float(x)))))
-
         def _contains_any(node):
             """True if node's footprint contains any limit_to pixel, or a kept child does."""
-            for py, px in pixel_coords:
-                if peak_in_footprint(py, px, node.footprint):
+            for py, px in limit_to:
+                if peak_in_footprint(int(py), int(px), node.footprint):
                     return True
             node.children = [c for c in node.children if _contains_any(c)]
             return len(node.children) > 0
@@ -932,7 +903,7 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, w
     if flatten:
         sources = list(all_nodes(sources))
 
-    # clean up list: only os mask array of footprint; empty child lists to avoid duplication when flat
+    # clean up list: only use mask array of footprint; empty child lists to avoid duplication when flat
     for i in range(len(sources)):
         sources[i].footprint = sources[i].footprint.footprint
         if flatten:

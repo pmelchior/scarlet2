@@ -9,12 +9,12 @@ from scarlet2.bbox import Box
 from scarlet2.detect import (
     Footprint,
     Peak,
-    SourceFootprint,
+    HierarchicalFootprint,
     box_intersect,
     hierarchical_footprints,
     footprint_intersect,
     get_connected_pixels,
-    get_footprints,
+    footprints,
 )
 from scarlet2.wavelets import get_multiresolution_support, starlet_transform
 
@@ -86,7 +86,7 @@ def test_get_footprints_two_blobs():
     img[20:23, 20:23] = 3.0
     img[21, 21] = 6.0
 
-    fps = get_footprints(img, min_separation=2, min_area=4, thresh=0)
+    fps = footprints(img, min_separation=2, min_area=4, thresh=0)
 
     assert len(fps) == 2
     centers = {(fp.peaks[0].y, fp.peaks[0].x) for fp in fps}
@@ -99,7 +99,7 @@ def test_get_footprints_returns_footprint_type():
     img[3:7, 3:7] = 2.0
     img[5, 5] = 5.0
 
-    fps = get_footprints(img, min_separation=1, min_area=4, thresh=0)
+    fps = footprints(img, min_separation=1, min_area=4, thresh=0)
 
     assert len(fps) == 1
     fp = fps[0]
@@ -112,7 +112,7 @@ def test_get_footprints_below_min_area():
     img = np.zeros((10, 10), dtype=np.float32)
     img[5, 5] = 1.0  # single pixel — area = 1
 
-    fps = get_footprints(img, min_separation=1, min_area=4, thresh=0)
+    fps = footprints(img, min_separation=1, min_area=4, thresh=0)
 
     assert len(fps) == 0
 
@@ -127,7 +127,7 @@ def test_footprint_bounds():
     img = np.zeros((10, 10), dtype=np.float32)
     img[2:8, 3:9] = 1.0
     img[5, 6] = 2.0
-    fps = get_footprints(img, min_separation=1, min_area=4, thresh=0)
+    fps = footprints(img, min_separation=1, min_area=4, thresh=0)
     assert len(fps) == 1
     bounds = fps[0].bounds
     bbox = Box.from_bounds(*bounds)
@@ -202,7 +202,7 @@ def test_build_source_list_returns_scene_source():
     detect = _detect_coeffs(img)
     sources = hierarchical_footprints(detect)
 
-    assert all(isinstance(s, SourceFootprint) for s in sources)
+    assert all(isinstance(s, HierarchicalFootprint) for s in sources)
     for s in sources:
         assert isinstance(s.center, tuple) and len(s.center) == 2
         assert isinstance(s.scale, int)
@@ -232,7 +232,7 @@ def test_build_source_list_flat_list():
     detect = _detect_coeffs(img)
     sources = hierarchical_footprints(detect, flatten=True)
 
-    assert all(isinstance(s, SourceFootprint) for s in sources)
+    assert all(isinstance(s, HierarchicalFootprint) for s in sources)
     assert all(s.children == [] for s in sources)
 
 

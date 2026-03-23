@@ -3,18 +3,14 @@
 from abc import ABC, abstractmethod
 
 import astropy
-import jax
-import jax.numpy as jnp
-import jax.random as random
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
-from jax import grad, jit, jvp
 from matplotlib.patches import Polygon
 
 from . import measure
 from .bbox import Box, insert_into
-from .detect import SourceFootprint
+from .detect import HierarchicalFootprint
 from .renderer import ChannelRenderer
 
 
@@ -103,11 +99,11 @@ class Norm(ABC):
 
     def get_intensity(self, im):
         """Compute total intensity image"""
-        return jnp.maximum(0, im).sum(axis=0)
+        return np.maximum(0, im).sum(axis=0)
 
     def clip(self, im, min_value, max_value):
         """Clip image between min_value and max_value"""
-        return jnp.maximum(0, jnp.minimum(im - min_value, max_value - min_value))
+        return np.maximum(0, np.minimum(im - min_value, max_value - min_value))
 
     def convert_to_uint8(self, im):
         """Convert three-channel image to RGB image with uint8 dtype"""
@@ -119,7 +115,7 @@ class Norm(ABC):
     def make_rgb_image(self, *im):
         """Compute RGB image from three-channel image"""
         # backwards compatible to astropy Mapping Call
-        return self.convert_to_uint8(self.__call__(jnp.stack(im, axis=0)))
+        return self.convert_to_uint8(self.__call__(np.stack(im, axis=0)))
 
     @abstractmethod
     def __call__(self, im):
@@ -340,11 +336,11 @@ def img_to_3channel(img, channel_map=None):
         assert channel_map.shape == (3, len(img))
 
     # filter out masked and bad values
-    img_ = jnp.where(jnp.isfinite(img_), img_, 0)
+    img_ = np.where(np.isfinite(img_), img_, 0)
 
     # map channels onto RGB channels
     _, ny, nx = img_.shape
-    rgb = jnp.dot(channel_map, img_.reshape(num_channels, -1)).reshape(3, ny, nx)
+    rgb = np.dot(channel_map, img_.reshape(num_channels, -1)).reshape(3, ny, nx)
 
     return rgb
 
@@ -377,7 +373,7 @@ def img_to_rgb(img, channel_map=None, norm=None, mask=None):
         norm = LinearPercentileNorm(im3)
     rgb = norm.make_rgb_image(*im3)
     if mask is not None:
-        rgb = jnp.dstack([rgb, ~mask * 255])
+        rgb = np.dstack([rgb, ~mask * 255])
     return rgb
 
 
@@ -454,18 +450,18 @@ def observation(
     if add_peaks is not None and len(add_peaks):
         if isinstance(add_peaks[0], astropy.coordinates.SkyCoord):
             centers = [observation.frame.get_pixel(coord) for coord in add_peaks]
-        elif isinstance(add_peaks[0], SourceFootprint):
+        elif isinstance(add_peaks[0], HierarchicalFootprint):
             centers = [ fp.center for fp in add_peaks ]
     else:
         centers = []
 
     if add_footprints is not None and len(add_footprints):
         shape = observation.frame.bbox.spatial.shape
-        num_scales = len(jnp.unique(jnp.asarray([ sfp.scale for sfp in add_footprints ])))
-        footprint_map = jnp.zeros(shape)
+        num_scales = len(np.unique(np.asarray([ sfp.scale for sfp in add_footprints ])))
+        footprint_map = np.zeros(shape)
         for sfp in add_footprints:
             footprint_map += insert_into(
-                jnp.zeros(shape), 1 / num_scales * sfp.footprint, sfp.bbox
+                np.zeros(shape), 1 / num_scales * sfp.footprint, sfp.bbox
             )
 
     for row in range(rows):
@@ -610,7 +606,7 @@ def cut_square_box(arr, center, size):
     return square_box
 
 
-@jax.grad
+# @jax.grad
 def neural_grad(galaxy, src):
     """Calculate the gradient of the neural network"""
     parameters = src.get_parameters(return_info=True)
@@ -819,8 +815,8 @@ def sources(
                 center_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
             if add_boxes:
                 start, stop = src.bbox.spatial.start, src.bbox.spatial.stop
-                corners = jnp.array(
-                    [start, jnp.array((start[0], stop[1])), stop, jnp.array((stop[0], start[1]))]
+                corners = np.array(
+                    [start, np.array((start[0], stop[1])), stop, np.array((stop[0], start[1]))]
                 )
                 corners_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(corners))
 
@@ -1026,8 +1022,8 @@ def scene(
         for k, src in enumerate(scene.sources):
             if add_boxes:
                 start, stop = src.bbox.spatial.start, src.bbox.spatial.stop
-                corners = jnp.array(
-                    [start, jnp.array((start[0], stop[1])), stop, jnp.array((stop[0], start[1]))]
+                corners = np.array(
+                    [start, np.array((start[0], stop[1])), stop, np.array((stop[0], start[1]))]
                 )
                 if observation is not None:
                     corners_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(corners))

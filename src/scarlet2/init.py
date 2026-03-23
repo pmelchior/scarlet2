@@ -7,7 +7,8 @@ import astropy.units as u
 import jax.numpy as jnp
 
 from . import Scenery, measure
-from .bbox import Box
+from .bbox import Box, insert_into
+from .detect import get_detect_wavelets, hierarchical_footprints
 from .morphology import GaussianMorphology
 from .observation import Observation
 
@@ -452,3 +453,111 @@ def _sort_spectra(spectra, channels):
             spectrum.append(0)
     spectrum = jnp.array(spectrum)
     return spectrum
+
+def _footprints_to_sources(images, detect, footprints, scales):
+    _images = jnp.copy(images)
+    shape = images.shape[1:]
+    spec_box = Box(images.shape[:1])
+    res = []
+    for scale in sorted(scales, reverse=True): # largest to smallest scales
+        for fp in footprints:
+            if fp.scale == scale:
+                footprint_map = insert_into(jnp.zeros(shape), jnp.asarray(fp.footprint), fp.bbox)
+                source_detect = (detect[scale] * footprint_map)
+                # MLE of flux per band given the morphology from source_detect
+                spectrum = (_images * source_detect[None,:, :]).sum(axis=(-2,-1)) / jnp.sum(source_detect**2)
+                spectrum = jnp.maximum(spectrum, 0)
+                _images -= spectrum[:,None,None] * source_detect[None,:, :]
+                morph = source_detect[fp.bbox.slices]
+                factor = morph.sum() / morph.max()
+                morph = morph / factor
+                spectrum *= factor
+                res.append((fp.center, spectrum, morph, spec_box @ fp.bbox))
+    return res
+
+def hierarchical_sources(
+        obs,
+        scales=None,
+        detect=None,
+        footprints=None,
+        centers=None,
+        strict=False,
+        min_separation=0,
+        min_area=4,
+        thresh=0,
+):
+    """Initialize sources from a wavelet-based hierarchical footprint detection.
+
+    Computes a detection image from ``obs``, decomposes it into a hierarchy of
+    footprints across starlet scales, and returns one ``(center, spectrum,
+    morphology, bbox)`` tuple per footprint, suitable for constructing
+    :class:`~scarlet2.Source` objects.
+
+    Spectra and morphologies are initialized from the wavelet detection image
+    at each source's scale, with a least-squares flux estimate that
+    progressively subtracts brighter/larger sources before fitting fainter/
+    smaller ones (largest scale first).
+
+    Parameters
+    ----------
+    obs : :class:`~scarlet2.Observation`
+        The observation providing image data, per-pixel weights, and the
+        coordinate frame used to convert ``centers`` to pixel positions.
+    scales : list of int, optional
+        Starlet scales (indices into the coefficient array) to use for
+        detection.  Defaults to ``[1, 2, 3]``.
+    detect : ndarray, shape (max_scale+1, H, W), optional
+        Pre-computed masked starlet coefficients from
+        :func:`~scarlet2.detect.get_detect_wavelets`.  If ``None``, computed
+        from ``obs.data`` and ``obs.weights``.
+    footprints : list of :class:`~scarlet2.detect.HierarchicalFootprint`, optional
+        Pre-computed flat footprint list.  If ``None`` (or ``centers`` is
+        given), footprints are detected automatically.  Supplying this skips
+        detection entirely when ``centers`` is also ``None``.
+    centers : list of :class:`astropy.coordinates.SkyCoord`, optional
+        If given, only footprints that contain one of these sky positions are
+        returned.  Converted to pixel coordinates via ``obs.frame.get_pixel``.
+    strict : bool, optional
+        If ``True``, the coarse residual plane is pushed one scale higher so
+        that the selected ``scales`` are cleanly separated without bleed from
+        the largest-scale smooth background.  Default ``False``.
+    min_separation : float, optional
+        Minimum pixel separation between peaks within a footprint.
+        Passed to :func:`~scarlet2.detect.hierarchical_footprints`.
+    min_area : int, optional
+        Minimum number of pixels a footprint must contain to be kept.
+        Passed to :func:`~scarlet2.detect.hierarchical_footprints`.
+    thresh : float, optional
+        Detection threshold; pixels must strictly exceed this value.
+        Passed to :func:`~scarlet2.detect.hierarchical_footprints`.
+
+    Returns
+    -------
+    sources : list of tuple
+        One entry per detected footprint, each a
+        ``(center, spectrum, morphology, bbox)`` tuple where
+
+        - ``center`` — ``(y, x)`` peak position as a tuple of int
+        - ``spectrum`` — 1-D array of per-channel flux, shape ``(C,)``
+        - ``morphology`` — 2-D normalized intensity map clipped to the
+          footprint bounding box
+        - ``bbox`` — :class:`~scarlet2.bbox.Box` spanning channels and
+          the spatial footprint
+    """
+    scales = [1,2,3] if scales is None else scales
+    max_scale = max(scales)
+    if detect is None:
+        # for strict scale separation, need to push the "remaining" largest scale to larger than max_scale
+        detect = get_detect_wavelets(obs.data, 1/obs.weights, max_scale=max_scale+strict)
+    if footprints is None or centers is not None:
+        centers_ = obs.frame.get_pixel(centers) if centers is not None else None
+        footprints = hierarchical_footprints(
+            detect,
+            scales=scales,
+            flatten=True,
+            limit_to=centers_,
+            min_separation=min_separation,
+            min_area=min_area,
+            thresh=thresh,
+        )
+    return _footprints_to_sources(obs.data, detect, footprints, scales)
