@@ -254,8 +254,13 @@ def get_multiresolution_support(image, starlets, sigma, K=3, epsilon=1e-1, max_i
 
     Returns
     -------
-    M: array of int
+    M : array of int
         Mask with significant coefficients in `starlets` set to ``1``.
+    sigma_j : array, shape (scales+1,)
+        Converged per-scale noise estimate used for thresholding.  For the
+        ``"ground"`` branch this is the iteratively refined ``sigma_j``; for
+        ``"space"`` it is ``sigma * sigma_je`` (the product of the input sigma
+        and the per-scale noise factor derived from a noise realisation).
     """
     assert image_type in ("ground", "space")
 
@@ -297,6 +302,8 @@ def get_multiresolution_support(image, starlets, sigma, K=3, epsilon=1e-1, max_i
             if jnp.abs(sigma_i - last_sigma_i) / sigma_i < epsilon:
                 break
             last_sigma_i = sigma_i
+        # effective 1-sigma threshold level at each scale
+        sigma_j = sigma * sigma_je
     else:
         # Sigma to use for significance at each scale.
         # Initially we use the input `sigma`.
@@ -318,7 +325,7 @@ def get_multiresolution_support(image, starlets, sigma, K=3, epsilon=1e-1, max_i
             if jnp.all(jnp.abs(sigma_j[cut] - last_sigma_j[cut]) / sigma_j[cut] < epsilon):
                 break
             last_sigma_j = sigma_j
-    return M.astype(int)
+    return M.astype(int), sigma_j
 
 
 def get_scales(image_shape, scales=None):

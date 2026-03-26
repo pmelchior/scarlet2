@@ -566,7 +566,7 @@ def get_wavelets(images, variance, max_scale=3):
     coeffs = []
     for b, image in enumerate(images):
         _coeffs = np.asarray(starlet_transform(image, scales=max_scale))
-        M = get_multiresolution_support(image, _coeffs, sigma[b], K=3, epsilon=1e-1, max_iter=20)
+        M, _ = get_multiresolution_support(image, _coeffs, sigma[b], K=3, epsilon=1e-1, max_iter=20)
         coeffs.append(M * _coeffs)
     return np.array(coeffs)
 
@@ -592,6 +592,9 @@ def get_detect_wavelets(images, variance, max_scale=3, K=3):
     -------
     coeffs : ndarray, shape (max_scale+1, height, width)
         Masked starlet coefficients of the summed detection image.
+    sigma_j : ndarray, shape (max_scale+1,)
+        Per-scale noise estimate used for thresholding, as returned by
+        :func:`~scarlet2.wavelets.get_multiresolution_support`.
     """
     images = np.asarray(images)
     variance = np.asarray(variance)
@@ -600,8 +603,8 @@ def get_detect_wavelets(images, variance, max_scale=3, K=3):
     detect = np.sum(images * weights[:,None,None], axis=0) / np.sum(weights)
     sigma = np.sqrt(1/weights.sum())
     _coeffs = np.asarray(starlet_transform(detect, scales=max_scale))
-    M = get_multiresolution_support(detect, _coeffs, sigma, K=K, epsilon=1e-1, max_iter=20)
-    return M * _coeffs
+    M, sigma_j = get_multiresolution_support(detect, _coeffs, sigma, K=K, epsilon=1e-1, max_iter=20)
+    return M * _coeffs, np.asarray(sigma_j)
 
 
 def get_blend_trees(detect, scales=None, min_separation=0, min_area=4, thresh=0):
@@ -734,7 +737,7 @@ class HierarchicalFootprint:
     children: List["HierarchicalFootprint"] = field(default_factory=list)
 
 
-def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, min_separation=0, min_area=4, thresh=0):
+def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, sigma_scales=None, K=3, min_separation=0, min_area=4, thresh=0):
     """Decompose a detection image into a hierarchy of :class:`HierarchicalFootprint` objects.
 
     Starting from the largest starlet scale and working down to the smallest scale,
@@ -761,6 +764,15 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, m
     limit_to : list of (y, x) tuples, optional
         If given, only footprints that contain at least one of these pixel
         positions are returned.
+    sigma_scales : array-like, shape (max_scale+1,), optional
+        Per-scale noise estimate from :func:`~scarlet2.detect.get_detect_wavelets`.
+        When provided, each footprint's bounding box is grown using an
+        SNR-based exponential-profile formula so that the box captures the
+        full extent of the source down to the detection threshold.
+    K : float, optional
+        Detection threshold multiplier used when ``sigma_scales`` is given.
+        Must match the value passed to :func:`~scarlet2.detect.get_detect_wavelets`.
+        Default ``3``.
     min_separation : float, optional
         Minimum pixel separation between peaks within a footprint.
     min_area : int, optional
@@ -788,6 +800,35 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, m
         min_area=min_area,
         thresh=thresh,
     )
+
+    def _snr_bbox(fp, scale):
+        """Bounding box grown to the SNR-predicted extent of an exponential profile.
+
+        At scale ``j`` the B-spline kernel half-support is ``2*2^j`` pixels.
+        For a profile I(r) = I0*exp(-r/h) the radius at which the profile
+        drops to the K*sigma threshold is h*ln(S), where S = I0/(K*sigma_j).
+        Normalising so that S=K gives the minimum half-size 2*2^j, the full
+        formula is ``half_size = 2*2^j * ln(S) / ln(K)``.  The result is
+        unioned with the tight footprint bbox so the box never shrinks.
+        """
+        bbox = Box.from_bounds(*fp.bounds)
+        if sigma_scales is None:
+            return bbox
+        sigma = float(sigma_scales[scale])
+        if sigma <= 0:
+            return bbox
+        w_peak = fp.peaks[0].flux
+        S = w_peak / (K * sigma)
+        if S <= 1:
+            return bbox
+        min_half = 2 * (2 ** scale)
+        half_size = int(np.ceil(min_half * np.log(S) / np.log(K)))
+        peak = fp.peaks[0]
+        snr_box = Box(
+            (2 * half_size + 1, 2 * half_size + 1),
+            origin=(peak.y - half_size, peak.x - half_size),
+        )
+        return bbox | snr_box
 
     def peak_in_footprint(y, x, fp):
         """True if pixel (y, x) lies inside the boolean mask of Footprint fp."""
@@ -908,9 +949,17 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, m
     if flatten:
         sources = list(all_nodes(sources))
 
-    # clean up list: only use mask array of footprint; empty child lists to avoid duplication when flat
+    # clean up list: pad footprint mask to match the (possibly enlarged) bbox,
+    # then replace the Footprint object with the plain boolean array.
     for i in range(len(sources)):
-        sources[i].footprint = sources[i].footprint.footprint
+        fp_obj = sources[i].footprint          # still a Footprint at this point
+        enlarged_bbox = _snr_bbox(fp_obj, sources[i].scale)
+        tight_bbox = Box.from_bounds(*fp_obj.bounds)
+        padded = np.zeros(enlarged_bbox.shape, dtype=bool)
+        enlarged_slices, tight_slices = overlap_slices(enlarged_bbox, tight_bbox)
+        padded[enlarged_slices] = fp_obj.footprint[tight_slices]
+        sources[i].bbox = enlarged_bbox
+        sources[i].footprint = padded
         if flatten:
             sources[i].children = []
 

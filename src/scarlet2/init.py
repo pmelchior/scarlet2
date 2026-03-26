@@ -490,6 +490,7 @@ def hierarchical_sources(
     footprints=None,
     centers=None,
     strict=False,
+    K=3,
     min_separation=0,
     min_area=4,
     thresh=0,
@@ -529,6 +530,10 @@ def hierarchical_sources(
         If ``True``, the coarse residual plane is pushed one scale higher so
         that the selected ``scales`` are cleanly separated without bleed from
         the largest-scale smooth background.  Default ``False``.
+    K : float, optional
+        Detection threshold multiplier: coefficients with
+        ``|w| > K * sigma_j`` are considered significant.  Also used for the
+        SNR-based bounding box extension.  Default ``3``.
     min_separation : float, optional
         Minimum pixel separation between peaks within a footprint.
         Passed to :func:`~scarlet2.detect.hierarchical_footprints`.
@@ -554,9 +559,10 @@ def hierarchical_sources(
     """
     scales = [1,2,3] if scales is None else scales
     max_scale = max(scales)
+    sigma_j = None
     if detect is None:
         # for strict scale separation, need to push the "remaining" largest scale to larger than max_scale
-        detect = get_detect_wavelets(obs.data, 1/obs.weights, max_scale=max_scale+strict)
+        detect, sigma_j = get_detect_wavelets(obs.data, 1/obs.weights, max_scale=max_scale+strict, K=K)
     if footprints is None or centers is not None:
         centers_ = obs.frame.get_pixel(centers) if centers is not None else None
         footprints = hierarchical_footprints(
@@ -564,6 +570,8 @@ def hierarchical_sources(
             scales=scales,
             flatten=True,
             limit_to=centers_,
+            sigma_scales=sigma_j,
+            K=K,
             min_separation=min_separation,
             min_area=min_area,
             thresh=thresh,
