@@ -452,6 +452,8 @@ def observation(
             centers = [observation.frame.get_pixel(coord) for coord in add_peaks]
         elif isinstance(add_peaks[0], HierarchicalFootprint):
             centers = [ fp.center for fp in add_peaks ]
+        else:
+            centers = add_peaks
     else:
         centers = []
 

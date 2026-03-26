@@ -472,19 +472,27 @@ def _footprints_to_sources(images, detect, footprints, scales):
                 factor = morph.sum() / morph.max()
                 morph = morph / factor
                 spectrum *= factor
-                res.append((fp.center, spectrum, morph, spec_box @ fp.bbox))
+
+                # grow bbox if smaller than the kernel support at this scale
+                min_half = 2 * (2**fp.scale)
+                bbox = fp.bbox
+                delta = tuple(max(0, min_half - bbox.shape[d] // 2) for d in range(bbox.D))
+                bbox.grow(delta)
+
+                res.append((fp.center, spectrum, morph, spec_box @ bbox))
     return res
 
+
 def hierarchical_sources(
-        obs,
-        scales=None,
-        detect=None,
-        footprints=None,
-        centers=None,
-        strict=False,
-        min_separation=0,
-        min_area=4,
-        thresh=0,
+    obs,
+    scales=None,
+    detect=None,
+    footprints=None,
+    centers=None,
+    strict=False,
+    min_separation=0,
+    min_area=4,
+    thresh=0,
 ):
     """Initialize sources from a wavelet-based hierarchical footprint detection.
 

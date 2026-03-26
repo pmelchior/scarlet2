@@ -571,7 +571,7 @@ def get_wavelets(images, variance, max_scale=3):
     return np.array(coeffs)
 
 
-def get_detect_wavelets(images, variance, max_scale=3):
+def get_detect_wavelets(images, variance, max_scale=3, K=3):
     """Get starlet coefficients of a detection image for source finding.
 
     The detection image is inverse varianced weighted sum of `images` across all bands.
@@ -582,6 +582,11 @@ def get_detect_wavelets(images, variance, max_scale=3):
     variance : array-like, shape (bands, height, width)
     max_scale : int
         Number of wavelet scales.
+    K: float
+        The multiple of the coefficient scatter to calculate significance.
+        Coefficients `w` with `|w| > K*sigma_j`, where `sigma_j` is
+        the standard deviation at the jth scale, are considered significant.
+
 
     Returns
     -------
@@ -595,7 +600,7 @@ def get_detect_wavelets(images, variance, max_scale=3):
     detect = np.sum(images * weights[:,None,None], axis=0) / np.sum(weights)
     sigma = np.sqrt(1/weights.sum())
     _coeffs = np.asarray(starlet_transform(detect, scales=max_scale))
-    M = get_multiresolution_support(detect, _coeffs, sigma, K=3, epsilon=1e-1, max_iter=20)
+    M = get_multiresolution_support(detect, _coeffs, sigma, K=K, epsilon=1e-1, max_iter=20)
     return M * _coeffs
 
 

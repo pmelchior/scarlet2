@@ -259,6 +259,23 @@ def get_multiresolution_support(image, starlets, sigma, K=3, epsilon=1e-1, max_i
     """
     assert image_type in ("ground", "space")
 
+    ny, nx = starlets.shape[-2:]
+    n_scales = len(starlets)
+
+    # Per-scale interior masks: exclude the 4*2^j-pixel border at scale j.
+    # The 2nd-generation bspline convolution is applied twice per scale, so
+    # boundary influence reaches 4*2^j pixels inward.  Excluding these pixels
+    # from sigma estimation prevents inflated edge coefficients from biasing
+    # the per-scale noise threshold, while still allowing the threshold to be
+    # applied (and sources detected) all the way to the image edge.
+    def _interior(j):
+        b = min(4 * (2 ** j), ny // 4, nx // 4)
+        row_ok = (jnp.arange(ny) >= b) & (jnp.arange(ny) < ny - b)
+        col_ok = (jnp.arange(nx) >= b) & (jnp.arange(nx) < nx - b)
+        return row_ok[:, None] & col_ok[None, :]
+
+    interior = jnp.stack([_interior(j) for j in range(n_scales)])
+
     if image_type == "space":
         if rng_key is None:
             rng_key = jax.random.PRNGKey(0)
@@ -273,7 +290,10 @@ def get_multiresolution_support(image, starlets, sigma, K=3, epsilon=1e-1, max_i
         for _ in range(max_iter):
             M = (jnp.abs(starlets) > K * sigma * sigma_je[:, None, None])
             S = jnp.sum(M, axis=0) == 0
-            sigma_i = jnp.std(noise * S)
+            mask_2d = S & interior[-1]
+            n = mask_2d.sum().clip(1)
+            mean = (noise * mask_2d).sum() / n
+            sigma_i = jnp.sqrt(((noise - mean) ** 2 * mask_2d).sum() / n)
             if jnp.abs(sigma_i - last_sigma_i) / sigma_i < epsilon:
                 break
             last_sigma_i = sigma_i
@@ -285,9 +305,12 @@ def get_multiresolution_support(image, starlets, sigma, K=3, epsilon=1e-1, max_i
         M = None
         for _ in range(max_iter):
             M = (jnp.abs(starlets) > K * sigma_j[:, None, None])
-            # Take the standard deviation of the current insignificant coeffs at each scale
-            S = ~M
-            sigma_j = jnp.std(starlets * S.astype(int), axis=(1, 2))
+            # Compute std only over insignificant interior pixels to avoid both
+            # boundary-convolution artifacts and bias from zeroing excluded pixels.
+            mask = (~M) & interior
+            n = mask.sum(axis=(1, 2)).clip(1)
+            mean = (starlets * mask).sum(axis=(1, 2)) / n
+            sigma_j = jnp.sqrt(((starlets - mean[:, None, None]) ** 2 * mask).sum(axis=(1, 2)) / n)
             # At lower scales all of the pixels may be significant,
             # so sigma is effectively zero. To avoid infinities we
             # only check the scales with non-zero sigma
