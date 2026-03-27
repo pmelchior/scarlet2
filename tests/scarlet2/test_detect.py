@@ -38,7 +38,7 @@ def _detect_coeffs(img, scales=3):
     """Return masked starlet coefficients for a 2-D image."""
     coeffs = np.asarray(starlet_transform(img, scales=scales))
     sigma = float(np.std(img[img > 0])) * 0.1
-    M = get_multiresolution_support(img, coeffs, sigma)
+    M, _ = get_multiresolution_support(img, coeffs, sigma)
     return M * coeffs
 
 

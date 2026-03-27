@@ -843,16 +843,13 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, s
             yield node
             yield from all_nodes(node.children)
 
-    def refine(node, parent_fp, idx):
+    def refine(parent, idx):
         """Refine node.center and attach children, then recurse one scale finer.
 
         Parameters
         ----------
-        node : HierarchicalFootprint
+        parent : HierarchicalFootprint
             The source being refined.
-        parent_fp : Footprint
-            The Footprint at node's detection scale, used to decide whether a
-            newly found peak belongs to this source (child) or is unrelated.
         idx : int
             The index of the wavelet scale to query for refinement.
         """
@@ -860,37 +857,38 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, s
             return
         scale = scales[idx]
 
-        # Footprints overlapping node's bbox at this scale, excluding regions
+        # Footprints overlapping parent's bbox at this scale, excluding regions
         # already claimed by previously added children.
-        child_bboxes = [c.bbox for c in node.children]
+        parent_fp = parent.footprint
+        child_bboxes = [c.bbox for c in parent.children]
         overlapping = [
-            fp for fp in (box.footprint for box in trees[idx].query(node.bbox))
+            fp for fp in (box.footprint for box in trees[idx].query(parent.bbox))
             if not any(cb.contains((fp.peaks[0].y, fp.peaks[0].x)) for cb in child_bboxes)
         ]
 
         if not overlapping:
-            refine(node, parent_fp, idx - 1)
+            refine(parent, idx - 1)
             return
 
-        # Primary: the fine-scale footprint that contains the parent's
-        # current center.  Its peak is the refined position of this source.
-        cy, cx = node.center
+        # Primary: the fine-scale footprint that contains the parent's current center
+        cy, cx = parent.center
         primary_fp = next(
             (fp for fp in overlapping if peak_in_footprint(cy, cx, fp)), None
         )
-        if primary_fp is not None:
-            # if there are multiple peaks in fp, use the closest to the current node center
-            closest = np.argmin([
-                (p.y - node.center[0])**2 + (p.x - node.center[1])**2
-                for p in primary_fp.peaks
-            ])
-            node.center = (primary_fp.peaks[closest].y, primary_fp.peaks[closest].x)
 
-        # Children: all other overlapping footprints whose peak lies inside
-        # the parent's footprint mask.
         for fp in overlapping:
+            # Use the primary peak as the refined position of the parent
             if fp is primary_fp:
+                # if there are multiple peaks in fp, use the closest to the current parent center
+                closest = np.argmin([
+                    (p.y - parent.center[0])**2 + (p.x - parent.center[1])**2
+                    for p in primary_fp.peaks
+                ])
+                parent.center = (primary_fp.peaks[closest].y, primary_fp.peaks[closest].x)
                 continue
+
+            # Children: all other overlapping footprints whose peak lies inside
+            # the parent's footprint mask.
             peak = fp.peaks[0]
             if peak_in_footprint(peak.y, peak.x, parent_fp):
                 child = HierarchicalFootprint(
@@ -899,12 +897,12 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, s
                     footprint=fp,
                     scale=scale,
                 )
-                refine(child, fp, idx - 1)
-                node.children.append(child)
+                refine(child, idx - 1)
+                parent.children.append(child)
 
-        # Continue refining this node; newly added children are now in
+        # Continue refining this parent; newly added children are now in
         # child_bboxes and will be filtered out in the recursive call.
-        refine(node, parent_fp, idx - 1)
+        refine(parent, idx - 1)
 
     # --- top-down pass: seed from the largest selected scale ----------------
     idx = len(scales) - 1
@@ -916,7 +914,7 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, s
             footprint=fp,
             scale=scales[idx],
         )
-        refine(node, fp, idx - 1)
+        refine(node, idx - 1)
         sources.append(node)
 
     # --- orphan sweep: promote finer-scale footprints with no parent --------
@@ -931,7 +929,7 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, s
                     footprint=fp,
                     scale=scales[idx],
                 )
-                refine(node, fp, idx - 1)
+                refine(node, idx - 1)
                 sources.append(node)
 
     # --- limit_to filter: keep only footprints containing a given sky position -
