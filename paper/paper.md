@@ -16,10 +16,10 @@ authors:
     affiliation: 1 # (Multiple affiliations must be quoted)
   - name: Charlotte Ward
     orcid: 0000-0002-4557-6682
-    affiliation: 1
+    affiliation: "1,2"
   - name: Benjamin Remy
     orcid: 0000-0002-0978-5612
-    affiliation: 1
+    affiliation: "1,3"
   - name: Matt L. Sampson
     orcid: 0000-0001-5748-5393
     affiliation: 1
@@ -31,6 +31,12 @@ affiliations:
   - name: Princeton University, United States
     index: 1
     ror: 00hx57361
+  - name: Pennsylvania State University
+    index: 2
+    ror: 04p491231
+  - name: University of Chicago
+    index: 3
+    ror: 024mw5h28
 
 date: 25 July 2025
 
