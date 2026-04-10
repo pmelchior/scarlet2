@@ -885,6 +885,19 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, s
                     for p in primary_fp.peaks
                 ])
                 parent.center = (primary_fp.peaks[closest].y, primary_fp.peaks[closest].x)
+                # union bbox and footprint mask with the primary fp at this finer scale
+                primary_bbox = Box.from_bounds(*primary_fp.bounds)
+                parent_bbox = Box.from_bounds(*parent_fp.bounds)
+                union_bbox = parent_bbox | primary_bbox
+                union_mask = np.zeros(union_bbox.shape, dtype=bool)
+                p_slices, pp_slices = overlap_slices(union_bbox, parent_bbox)
+                union_mask[p_slices] |= parent_fp.footprint[pp_slices]
+                q_slices, qp_slices = overlap_slices(union_bbox, primary_bbox)
+                union_mask[q_slices] |= primary_fp.footprint[qp_slices]
+                new_fp = Footprint(union_mask, parent_fp.peaks, union_bbox.bounds)
+                parent.footprint = new_fp
+                parent.bbox = union_bbox
+                parent_fp = new_fp
                 continue
 
             # Children: all other overlapping footprints whose peak lies inside
