@@ -184,7 +184,7 @@ def _get_patch_peaks(image, min_separation, y0=0, x0=0):
     return peaks
 
 
-def footprints(image, min_separation, min_area, thresh=0):
+def footprints(image, min_separation=0, min_area=9, thresh=0):
     """Detect footprints and their peaks in an image.
 
     Iterates over every pixel, flood-fills each connected region of pixels
@@ -195,9 +195,9 @@ def footprints(image, min_separation, min_area, thresh=0):
     ----------
     image : 2D array-like
         The image to detect sources in.  Accepts NumPy or JAX arrays.
-    min_separation : float
+    min_separation : float, optional
         Minimum pixel separation between peaks within a footprint.
-    min_area : int
+    min_area : int, optional
         Minimum number of pixels a footprint must contain to be kept.
     thresh : float, optional
         Detection threshold; pixels must strictly exceed this value.
@@ -607,7 +607,7 @@ def get_detect_wavelets(images, variance, max_scale=3, K=3):
     return M * _coeffs, np.asarray(sigma_j)
 
 
-def get_blend_trees(detect, scales=None, min_separation=0, min_area=4, thresh=0):
+def get_blend_trees(detect, scales=None, min_separation=0, min_area=9, thresh=0):
     """Build a :class:`QuadTreeRegion` for each wavelet scale in ``detect``.
 
     Parameters
@@ -653,7 +653,7 @@ def get_blend_trees(detect, scales=None, min_separation=0, min_area=4, thresh=0)
     return trees, all_footprints
 
 
-def get_blend_structures(detect, scales=None, min_separation=0, min_area=4, thresh=0):
+def get_blend_structures(detect, scales=None, min_separation=0, min_area=9, thresh=0):
     """Build :class:`SingleScaleStructure` objects for the third wavelet scale.
 
     Each structure at the largest scale is linked to all overlapping footprints at
@@ -737,7 +737,7 @@ class HierarchicalFootprint:
     children: List["HierarchicalFootprint"] = field(default_factory=list)
 
 
-def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, sigma_scales=None, K=3, min_separation=0, min_area=4, thresh=0):
+def hierarchical_footprints(detect, flatten=True, scales=None, limit_to=None, sigma_scales=None, K=3, min_separation=0, min_area=9, thresh=0):
     """Decompose a detection image into a hierarchy of :class:`HierarchicalFootprint` objects.
 
     Starting from the largest starlet scale and working down to the smallest scale,
@@ -804,14 +804,16 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, s
     def _snr_bbox(fp, scale):
         """Bounding box grown to the SNR-predicted extent of an exponential profile.
 
-        At scale ``j`` the B-spline kernel half-support is ``2*2^j`` pixels.
-        For a profile I(r) = I0*exp(-r/h) the radius at which the profile
-        drops to the K*sigma threshold is h*ln(S), where S = I0/(K*sigma_j).
-        Normalising so that S=K gives the minimum half-size 2*2^j, the full
-        formula is ``half_size = 2*2^j * ln(S) / ln(K)``.  The result is
-        unioned with the tight footprint bbox so the box never shrinks.
+        For a profile I(r) = I0*exp(-r/h), the footprint boundary lies at the
+        detection threshold K*sigma_j, so h = r_foot / ln(S) where
+        S = I0/(K*sigma_j) and r_foot is the mean distance from the peak to the
+        edge of the footprint bbox.  The box is grown to the radius
+        where the profile drops to the noise level (1*sigma_j):
+        ``half_size = r_foot * ln(S*K) / ln(S)``.
+        The result is unioned with the tight footprint bbox so the box never shrinks.
         """
         bbox = Box.from_bounds(*fp.bounds)
+        outer_box = Box(detect.shape[1:])
         if sigma_scales is None:
             return bbox
         sigma = float(sigma_scales[scale])
@@ -821,14 +823,15 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, s
         S = w_peak / (K * sigma)
         if S <= 1:
             return bbox
-        min_half = 2 * (2 ** scale)
-        half_size = int(np.ceil(min_half * np.log(S) / np.log(K)))
         peak = fp.peaks[0]
+        (y0, y1), (x0, x1) = fp.bounds
+        r_foot = np.mean([peak.y - y0, y1 - peak.y, peak.x - x0, x1 - peak.x])
+        half_size = int(np.ceil(r_foot * np.log(S * K) / np.log(S)))
         snr_box = Box(
             (2 * half_size + 1, 2 * half_size + 1),
             origin=(peak.y - half_size, peak.x - half_size),
         )
-        return bbox | snr_box
+        return (bbox | snr_box) & outer_box
 
     def peak_in_footprint(y, x, fp):
         """True if pixel (y, x) lies inside the boolean mask of Footprint fp."""
@@ -841,7 +844,8 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, s
         """Yield every SceneSource in the tree rooted at each node in node_list."""
         for node in node_list:
             yield node
-            yield from all_nodes(node.children)
+            if node is not None:
+                yield from all_nodes(node.children)
 
     def refine(parent, idx):
         """Refine node.center and attach children, then recurse one scale finer.
@@ -945,31 +949,42 @@ def hierarchical_footprints(detect, flatten=False, scales=None, limit_to=None, s
                 refine(node, idx - 1)
                 sources.append(node)
 
-    # --- limit_to filter: keep only footprints containing a given sky position -
-    if limit_to is not None:
-        def _contains_any(node):
-            """True if node's footprint contains any limit_to pixel, or a kept child does."""
-            for py, px in limit_to:
-                if peak_in_footprint(int(py), int(px), node.footprint):
-                    return True
-            node.children = [c for c in node.children if _contains_any(c)]
-            return len(node.children) > 0
-
-        sources = [s for s in sources if _contains_any(s)]
-
+    # --- flatten list: children are listed separately -
     if flatten:
         sources = list(all_nodes(sources))
+
+    # --- limit_to filter: keep only footprints containing a given sky position -
+    if limit_to is not None:
+        def _find_source(i, py, px):
+            found = [s for s in sources if peak_in_footprint(int(py), int(px), s.footprint)]
+            if len(found) == 0:
+                return None
+            elif len(found) == 1:
+                return found[0]
+            else:
+                # multiple footprints at same location: find nearest
+                closest = np.argmin(
+                    [(py - s.center[0]) ** 2 + (px - s.center[1]) ** 2 for s in found]
+                )
+                return found[closest]
+        sources = [_find_source(i, py, px) for i, (py, px) in enumerate(limit_to)]
+
 
     # clean up list: pad footprint mask to match the (possibly enlarged) bbox,
     # then replace the Footprint object with the plain boolean array.
     for i in range(len(sources)):
-        fp_obj = sources[i].footprint          # still a Footprint at this point
+        # if limit_to is used, we can get None for non-detections, and we can have
+        # the several limit_to centers point to the same detection.
+        # in either case: don't postprocess them (again)
+        if sources[i] is None or not isinstance(sources[i].footprint, Footprint):
+            continue
+        fp_obj = sources[i].footprint # still a Footprint at this point
         enlarged_bbox = _snr_bbox(fp_obj, sources[i].scale)
         tight_bbox = Box.from_bounds(*fp_obj.bounds)
         padded = np.zeros(enlarged_bbox.shape, dtype=bool)
         enlarged_slices, tight_slices = overlap_slices(enlarged_bbox, tight_bbox)
         padded[enlarged_slices] = fp_obj.footprint[tight_slices]
-        sources[i].bbox = enlarged_bbox
+        sources[i].bbox = enlarged_bbox # now only numpy array of footprint
         sources[i].footprint = padded
         if flatten:
             sources[i].children = []

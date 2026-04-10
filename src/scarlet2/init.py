@@ -485,14 +485,14 @@ def _footprints_to_sources(images, detect, footprints, scales):
 
 def hierarchical_sources(
     obs,
-    scales=None,
+    scales=[1,2,3],
     detect=None,
     footprints=None,
     centers=None,
     strict=False,
     K=3,
     min_separation=0,
-    min_area=4,
+    min_area=9,
     thresh=0,
 ):
     """Initialize sources from a wavelet-based hierarchical footprint detection.
@@ -513,8 +513,7 @@ def hierarchical_sources(
         The observation providing image data, per-pixel weights, and the
         coordinate frame used to convert ``centers`` to pixel positions.
     scales : list of int, optional
-        Starlet scales (indices into the coefficient array) to use for
-        detection.  Defaults to ``[1, 2, 3]``.
+        Starlet scales (indices into the coefficient array) to use for detection.
     detect : ndarray, shape (max_scale+1, H, W), optional
         Pre-computed masked starlet coefficients from
         :func:`~scarlet2.detect.get_detect_wavelets`.  If ``None``, computed
@@ -557,12 +556,12 @@ def hierarchical_sources(
         - ``bbox`` — :class:`~scarlet2.bbox.Box` spanning channels and
           the spatial footprint
     """
-    scales = [1,2,3] if scales is None else scales
-    max_scale = max(scales)
-    sigma_j = None
+    scales = sorted(scales)
+    # for strict scale separation, need to push the "remaining" largest scale to one larger than max_scale
+    max_scale = max(scales)+strict
+    sigma = None
     if detect is None:
-        # for strict scale separation, need to push the "remaining" largest scale to larger than max_scale
-        detect, sigma_j = get_detect_wavelets(obs.data, 1/obs.weights, max_scale=max_scale+strict, K=K)
+        detect, sigma = get_detect_wavelets(obs.data, 1/obs.weights, max_scale=max_scale, K=K)
     if footprints is None or centers is not None:
         centers_ = obs.frame.get_pixel(centers) if centers is not None else None
         footprints = hierarchical_footprints(
@@ -570,7 +569,7 @@ def hierarchical_sources(
             scales=scales,
             flatten=True,
             limit_to=centers_,
-            sigma_scales=sigma_j,
+            sigma_scales=sigma,
             K=K,
             min_separation=min_separation,
             min_area=min_area,

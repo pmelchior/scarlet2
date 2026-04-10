@@ -448,23 +448,24 @@ def observation(
 
     extent = observation.frame.bbox.get_extent()
     if add_peaks is not None and len(add_peaks):
-        if isinstance(add_peaks[0], astropy.coordinates.SkyCoord):
-            centers = [observation.frame.get_pixel(coord) for coord in add_peaks]
-        elif isinstance(add_peaks[0], HierarchicalFootprint):
-            centers = [ fp.center for fp in add_peaks ]
-        else:
-            centers = add_peaks
+        centers = []
+        for _ in add_peaks:
+            if isinstance(_, astropy.coordinates.SkyCoord):
+                centers.append(observation.frame.get_pixel(_))
+            elif isinstance(_, HierarchicalFootprint):
+                centers.append(_.center)
+            else:
+                centers.append(_)
     else:
         centers = []
 
     if add_footprints is not None and len(add_footprints):
         shape = observation.frame.bbox.spatial.shape
-        num_scales = len(np.unique(np.asarray([ sfp.scale for sfp in add_footprints ])))
+        num_scales = len(np.unique(np.asarray([sfp.scale for sfp in add_footprints if sfp is not None])))
         footprint_map = np.zeros(shape)
         for sfp in add_footprints:
-            footprint_map += insert_into(
-                np.zeros(shape), 1 / num_scales * sfp.footprint, sfp.bbox
-            )
+            if sfp is not None:
+                footprint_map += insert_into(np.zeros(shape), 1 / num_scales * sfp.footprint, sfp.bbox)
 
     for row in range(rows):
         if split_channels:
@@ -499,7 +500,8 @@ def observation(
 
         if add_peaks is not None:
             for k, center in enumerate(centers):
-                ax[row, panel].text(*center[::-1], k, **label_kwargs)
+                if center is not None:
+                    ax[row, panel].text(*center[::-1], k, **label_kwargs)
 
         if add_footprints is not None:
             ax[row, panel].imshow(footprint_map, cmap="grey", alpha=0.3, extent=extent, origin="lower")
