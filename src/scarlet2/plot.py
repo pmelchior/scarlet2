@@ -16,7 +16,7 @@ from .renderer import ChannelRenderer
 
 def channels_to_rgb(channels):
     """Get the linear mapping of multiple channels to RGB channels
-    The mapping created here assumes the the channels are ordered in wavelength
+    The mapping created here assumes that the channels are ordered in wavelength
     direction, starting with the shortest wavelength. The mapping seeks to produce
     a relatively even weights for across all channels. It does not consider e.g.
     signal-to-noise variations across channels or human perception.
@@ -95,7 +95,7 @@ class Norm(ABC):
     """Base class to normalize the color values of RGB images"""
 
     def __init__(self):
-        self._uint8Max = float(np.iinfo(np.uint8).max)
+        self._uint8Max = np.iinfo(np.uint8).max
 
     def get_intensity(self, im):
         """Compute total intensity image"""
@@ -107,7 +107,7 @@ class Norm(ABC):
 
     def convert_to_uint8(self, im):
         """Convert three-channel image to RGB image with uint8 dtype"""
-        im_clipped = self.clip(im, 0, 1)
+        im_clipped = self.clip(np.nan_to_num(im, nan=0.0), 0, 1)
         uint_im = (im_clipped * self._uint8Max).astype("uint8")
         im_flipped = uint_im.transpose().swapaxes(0, 1)  # 3 x Ny x Nx -> Ny x Nx x 3
         return im_flipped
@@ -210,7 +210,7 @@ class AsinhNorm(Norm):
 
             # arcsinh scaling from Lupton+(2004)
             f = np.arcsinh(i_ / self.beta)  # no need to normalize, done below
-            rgb = img / (intensity / f)[None, :, :]
+            rgb = np.where(intensity[None, :, :] > 0, img / (intensity / f)[None, :, :], 0)
 
             # keep rgb between 0 and 1 (with an allowance of self.vibrance)
             rgb = rgb / self._rgb_max
