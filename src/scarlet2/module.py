@@ -442,7 +442,7 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
                     context={
                         "name": name,
                         "constraint": param.constraint,
-                        "feasible": is_feasible,
+                        "infeasible_at": jnp.argwhere(~is_feasible),
                     },
                 )
             )
