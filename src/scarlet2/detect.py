@@ -737,7 +737,7 @@ class HierarchicalFootprint:
     children: List["HierarchicalFootprint"] = field(default_factory=list)
 
 
-def hierarchical_footprints(detect, flatten=True, scales=None, limit_to=None, sigma_scales=None, K=3, min_separation=0, min_area=9, thresh=0):
+def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sigma_scales=None, K=3, min_separation=0, min_area=9, thresh=0):
     """Decompose a detection image into a hierarchy of :class:`HierarchicalFootprint` objects.
 
     Starting from the largest starlet scale and working down to the smallest scale,
@@ -761,7 +761,7 @@ def hierarchical_footprints(detect, flatten=True, scales=None, limit_to=None, si
     scales : list of int, optional
         Indices into ``detect`` specifying which planes to use.  If ``None``
         (default) all planes are used.
-    limit_to : list of (y, x) tuples, optional
+    catalog : list of (y, x) tuples, optional
         If given, only footprints that contain at least one of these pixel
         positions are returned.
     sigma_scales : array-like, shape (max_scale+1,), optional
@@ -953,10 +953,10 @@ def hierarchical_footprints(detect, flatten=True, scales=None, limit_to=None, si
     if flatten:
         sources = list(all_nodes(sources))
 
-    # --- limit_to filter: keep only footprints containing a given sky position -
-    if limit_to is not None:
+    # --- catalog filter: keep only footprints containing a given sky position -
+    if catalog is not None:
         def _find_source(i, py, px):
-            found = [s for s in sources if peak_in_footprint(int(py), int(px), s.footprint)]
+            found = [j for j, s in enumerate(sources) if peak_in_footprint(int(py), int(px), s.footprint)]
             if len(found) == 0:
                 return None
             elif len(found) == 1:
@@ -964,11 +964,25 @@ def hierarchical_footprints(detect, flatten=True, scales=None, limit_to=None, si
             else:
                 # multiple footprints at same location: find nearest
                 closest = np.argmin(
-                    [(py - s.center[0]) ** 2 + (px - s.center[1]) ** 2 for s in found]
+                    [(py - sources[j].center[0]) ** 2 + (px - sources[j].center[1]) ** 2 for j in found]
                 )
                 return found[closest]
-        sources = [_find_source(i, py, px) for i, (py, px) in enumerate(limit_to)]
+        # find (closest) source for every catalog center
+        matches = np.array([_find_source(i, py, px) for i, (py, px) in enumerate(catalog)])
 
+        # are sources that are found by multiple catalog centers
+        # if so, remove the match with the fainter *center* (???)
+        for j in range(len(sources)):
+            found = np.argwhere(matches == j)
+            if len(found) > 1:
+                centers = catalog[found]
+                # How to determine the brightness at the center location?
+                # Should this be done jointly with the closest matches from _find_source?
+                # And what about footprints with multiple peaks?
+
+
+
+        sources = [sources[j] if j is not None else None for j in matches ]
 
     # clean up list: pad footprint mask to match the (possibly enlarged) bbox,
     # then replace the Footprint object with the plain boolean array.

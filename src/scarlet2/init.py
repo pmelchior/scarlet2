@@ -454,21 +454,21 @@ def _sort_spectra(spectra, channels):
     spectrum = jnp.array(spectrum)
     return spectrum
 
-def _footprints_to_sources(images, detect, footprints, scales):
+def _footprints_to_sources(images, detect, footprints, scales, centers):
     _images = jnp.copy(images)
     shape = images.shape[1:]
     spec_box = Box(images.shape[:1])
-    res = []
+    res = [None, ] * len(footprints)
     for scale in sorted(scales, reverse=True): # largest to smallest scales
-        for fp in footprints:
-            if fp.scale == scale:
+        for i, fp in enumerate(footprints):
+            if fp is not None and fp.scale == scale:
                 footprint_map = insert_into(jnp.zeros(shape), jnp.asarray(fp.footprint), fp.bbox)
                 source_detect = (detect[scale] * footprint_map)
                 # MLE of flux per band given the morphology from source_detect
                 spectrum = (_images * source_detect[None,:, :]).sum(axis=(-2,-1)) / jnp.sum(source_detect**2)
                 spectrum = jnp.maximum(spectrum, 0)
                 _images -= spectrum[:,None,None] * source_detect[None,:, :]
-                morph = source_detect[fp.bbox.slices]
+                morph = jnp.maximum(source_detect[fp.bbox.slices], 0)
                 factor = morph.sum() / morph.max()
                 morph = morph / factor
                 spectrum *= factor
@@ -478,8 +478,17 @@ def _footprints_to_sources(images, detect, footprints, scales):
                 bbox = fp.bbox
                 delta = tuple(max(0, min_half - bbox.shape[d] // 2) for d in range(bbox.D))
                 bbox.grow(delta)
+                res[i] = (fp.center, spectrum, morph, spec_box @ bbox)
 
-                res.append((fp.center, spectrum, morph, spec_box @ bbox))
+    # sweep for centers with non-detections: initialize them as compact sources
+    if centers is not None:
+        for i, center in enumerate(centers):
+            if footprints[i] is None:
+                pixel = center.astype(int)
+                spectrum = _images[:, pixel[0], pixel[1]]
+                morph = compact_morphology()
+                bbox = None
+                res[i] = (center, spectrum, morph, bbox)
     return res
 
 
@@ -488,8 +497,8 @@ def hierarchical_sources(
     scales=[1,2,3],
     detect=None,
     footprints=None,
-    centers=None,
-    strict=False,
+    catalog=None,
+    strict=True,
     K=3,
     min_separation=0,
     min_area=9,
@@ -522,7 +531,7 @@ def hierarchical_sources(
         Pre-computed flat footprint list.  If ``None`` (or ``centers`` is
         given), footprints are detected automatically.  Supplying this skips
         detection entirely when ``centers`` is also ``None``.
-    centers : list of :class:`astropy.coordinates.SkyCoord`, optional
+    catalog : list of :class:`astropy.coordinates.SkyCoord`, optional
         If given, only footprints that contain one of these sky positions are
         returned.  Converted to pixel coordinates via ``obs.frame.get_pixel``.
     strict : bool, optional
@@ -562,17 +571,18 @@ def hierarchical_sources(
     sigma = None
     if detect is None:
         detect, sigma = get_detect_wavelets(obs.data, 1/obs.weights, max_scale=max_scale, K=K)
-    if footprints is None or centers is not None:
-        centers_ = obs.frame.get_pixel(centers) if centers is not None else None
+
+    catalog_ = obs.frame.get_pixel(catalog) if catalog is not None else None
+    if footprints is None or centers_ is not None:
         footprints = hierarchical_footprints(
             detect,
             scales=scales,
             flatten=True,
-            limit_to=centers_,
+            catalog=catalog_,
             sigma_scales=sigma,
             K=K,
             min_separation=min_separation,
             min_area=min_area,
             thresh=thresh,
         )
-    return _footprints_to_sources(obs.data, detect, footprints, scales)
+    return _footprints_to_sources(obs.data, detect, footprints, scales, catalog_)
