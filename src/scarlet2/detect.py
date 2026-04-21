@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import List, Tuple
 
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 from .bbox import Box, overlap_slices
 from .wavelets import get_multiresolution_support, starlet_transform
@@ -752,6 +753,21 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
     top-level source.  This catches compact sources that are below the noise at
     the largest scale but significant at finer scales.
 
+    If ``catalog`` is provided, the detected sources are matched to the catalog
+    positions via a global bipartite assignment (Hungarian algorithm).  The cost
+    of assigning catalog entry ``i`` to source ``j`` is the squared distance from
+    the catalog position to the nearest peak of source ``j``, restricted to cases
+    where the catalog position falls inside source ``j``'s footprint mask.
+    Catalog entries with no containing footprint are returned as ``None``.
+
+    If ``sigma_scales`` is provided, each footprint's bounding box is grown beyond
+    the detection threshold to the noise level.  Assuming an exponential profile
+    I(r) = I0*exp(-r/h), the scale length h is estimated from the footprint size
+    as h = r_foot / ln(S), where r_foot is the distance from the peak to the
+    farthest edge of the footprint bounding box and S = I0 / (K*sigma_j).  The
+    box is grown to the radius where the profile reaches the noise level (1*sigma_j):
+    half_size = r_foot * ln(S*K) / ln(S).
+
     Parameters
     ----------
     detect : ndarray, shape (scales+1, H, W)
@@ -762,13 +778,14 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
         Indices into ``detect`` specifying which planes to use.  If ``None``
         (default) all planes are used.
     catalog : list of (y, x) tuples, optional
-        If given, only footprints that contain at least one of these pixel
-        positions are returned.
+        If given, the output is catalog-indexed: one entry per catalog position,
+        matched to the best overlapping detected source, or ``None`` if undetected.
+        Matching is a global optimal assignment — each source is assigned to at
+        most one catalog entry.
     sigma_scales : array-like, shape (max_scale+1,), optional
         Per-scale noise estimate from :func:`~scarlet2.detect.get_detect_wavelets`.
-        When provided, each footprint's bounding box is grown using an
-        SNR-based exponential-profile formula so that the box captures the
-        full extent of the source down to the detection threshold.
+        When provided, each footprint's bounding box is grown to the noise level
+        using the SNR-based exponential-profile formula described above.
     K : float, optional
         Detection threshold multiplier used when ``sigma_scales`` is given.
         Must match the value passed to :func:`~scarlet2.detect.get_detect_wavelets`.
@@ -782,10 +799,13 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
 
     Returns
     -------
-    sources : list of HierarchicalFootprint
-        Top-level sources, each potentially carrying a tree of children.
-        Sources detected only at finer scales appear as additional top-level
-        entries with their ``scale`` set accordingly.
+    sources : list of HierarchicalFootprint or None
+        When ``catalog`` is ``None``: top-level sources, each potentially carrying
+        a tree of children.  Sources detected only at finer scales appear as
+        additional top-level entries with their ``scale`` set accordingly.
+        When ``catalog`` is given: catalog-length list where each entry is the
+        matched :class:`HierarchicalFootprint`, or ``None`` if no source was
+        detected at that catalog position.
     """
     if scales is None:
         scales = scale_indices = list(range(len(detect)))
@@ -955,34 +975,28 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
 
     # --- catalog filter: keep only footprints containing a given sky position -
     if catalog is not None:
-        def _find_source(i, py, px):
-            found = [j for j, s in enumerate(sources) if peak_in_footprint(int(py), int(px), s.footprint)]
-            if len(found) == 0:
-                return None
-            elif len(found) == 1:
-                return found[0]
-            else:
-                # multiple footprints at same location: find nearest
-                closest = np.argmin(
-                    [(py - sources[j].center[0]) ** 2 + (px - sources[j].center[1]) ** 2 for j in found]
-                )
-                return found[closest]
-        # find (closest) source for every catalog center
-        matches = np.array([_find_source(i, py, px) for i, (py, px) in enumerate(catalog)])
+        # Build cost matrix: rows = catalog entries, cols = detected sources.
+        # Cost is squared distance from catalog position to nearest source peak,
+        # restricted to cases where the catalog position falls inside the footprint.
+        # np.inf marks invalid (position outside footprint) pairs.
+        _no_match = 1e18
+        cost = np.full((len(catalog), len(sources)), _no_match)
+        for i, (py, px) in enumerate(catalog):
+            for j, s in enumerate(sources):
+                if peak_in_footprint(int(py), int(px), s.footprint):
+                    cost[i, j] = min(
+                        (py - p.y) ** 2 + (px - p.x) ** 2
+                        for p in s.footprint.peaks
+                    )
 
-        # are sources that are found by multiple catalog centers
-        # if so, remove the match with the fainter *center* (???)
-        for j in range(len(sources)):
-            found = np.argwhere(matches == j)
-            if len(found) > 1:
-                centers = catalog[found]
-                # How to determine the brightness at the center location?
-                # Should this be done jointly with the closest matches from _find_source?
-                # And what about footprints with multiple peaks?
+        # Solve the global assignment problem; pairs with sentinel cost are unmatched.
+        row_ind, col_ind = linear_sum_assignment(cost)
+        matches = [None] * len(catalog)
+        for i, j in zip(row_ind, col_ind):
+            if cost[i, j] < _no_match:
+                matches[i] = j
 
-
-
-        sources = [sources[j] if j is not None else None for j in matches ]
+        sources = [sources[j] if j is not None else None for j in matches]
 
     # clean up list: pad footprint mask to match the (possibly enlarged) bbox,
     # then replace the Footprint object with the plain boolean array.
