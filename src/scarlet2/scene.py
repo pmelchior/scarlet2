@@ -8,6 +8,23 @@ from .module import Module
 from .validation_utils import print_validation_results
 
 
+class SourceList(list):
+    """List subclass for :py:attr:`~scarlet2.Scene.sources`.
+
+    Overrides ``__setitem__`` so that direct assignment (e.g.
+    ``scene.sources[0] = Source(...)``) works correctly.  Because
+    :py:class:`~scarlet2.Source.__init__` always appends the new source to the
+    list, a plain ``sources[0] = Source(...)`` would leave the source registered
+    twice.  This subclass detects that the source was just appended and moves
+    it to the requested index instead.
+    """
+
+    def __setitem__(self, index, value):
+        if self[-1] is value:
+            self.pop()
+        super().__setitem__(index, value)
+
+
 class Scene(Module):
     """Model of the celestial scene
 
@@ -50,7 +67,7 @@ class Scene(Module):
         :py:class:`~scarlet2.Scenery`, :py:class:`~scarlet2.Source`
         """
         self.frame = frame
-        self.sources = list()
+        self.sources = SourceList()
 
     def __call__(self):
         """What to run when the scene is called"""

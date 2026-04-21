@@ -98,6 +98,7 @@ class DustComponent(Component):
         return jnp.exp(-super().__call__())
 
 
+
 class Source(Component):
     """Source model
 
@@ -147,12 +148,14 @@ class Source(Component):
 
         # add this source to the active scene
         try:
-            Scenery.scene.sources.append(self)
-
+            sources = Scenery.scene.sources
         except AttributeError:
             print("Source can only be created within the context of a Scene")
             print("Use 'with Scene(frame) as scene: Source(...)'")
             raise
+
+        sources.append(self)
+
 
     def add_component(self, component, op):
         """Add `component` to this source
