@@ -453,7 +453,7 @@ def observation(
             if isinstance(_, astropy.coordinates.SkyCoord):
                 centers.append(observation.frame.get_pixel(_))
             elif isinstance(_, HierarchicalFootprint):
-                centers.append(_.center)
+                centers.append((_.peak.y, _.peak.x))
             else:
                 centers.append(_)
     else:

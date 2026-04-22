@@ -24,10 +24,10 @@ class Box:
         origin: tuple, optional
             Start coordinate (in 2D: lower-left corner) of the array in model frame
         """
-        self.shape = tuple(shape)
+        self.shape = tuple(int(s) for s in shape)
         if origin is None:
             origin = (0,) * len(shape)
-        self.origin = tuple(origin)
+        self.origin = tuple(int(o) for o in origin)
 
     @staticmethod
     def from_bounds(*bounds):

@@ -8,15 +8,13 @@ Uses NumPy rather than JAX because detection involves dynamic data structures
 compatible with JAX's JIT.  Both NumPy and JAX arrays are accepted as inputs.
 """
 
+import heapq
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
-import heapq
-
 import numpy as np
-from scipy.ndimage import binary_fill_holes, find_objects, label as ndimage_label
-
-
+from scipy.ndimage import binary_fill_holes, find_objects
+from scipy.ndimage import label as ndimage_label
 from scipy.optimize import linear_sum_assignment
 
 from .bbox import Box, overlap_slices
@@ -169,7 +167,7 @@ def footprints(image, min_separation=0, min_area=9, thresh=0):
         return []
 
     _footprints = []
-    for slices, label in zip(find_objects(labeled), range(1, n_labels + 1)):
+    for slices, label in zip(find_objects(labeled), range(1, n_labels + 1), strict=False):
         sy, sx = slices
         sub_fp = labeled[sy, sx] == label
         if sub_fp.sum() < min_area:
@@ -239,6 +237,7 @@ def footprint_iou(source1, source2):
     iou : float
         IoU in ``[0, 1]``.  Returns ``0`` if the bounding boxes do not overlap.
     """
+
     def _mask(source):
         fp = source.footprint
         return fp.footprint if isinstance(fp, Footprint) else fp
@@ -546,7 +545,7 @@ def get_wavelets(images, variance, max_scale=3):
     return np.array(coeffs)
 
 
-def get_detect_wavelets(images, variance, max_scale=3, K=3):
+def get_detect_wavelets(images, variance, max_scale=3, K=3, image_type="ground"):
     """Get starlet coefficients of a detection image for source finding.
 
     The detection image is inverse varianced weighted sum of `images` across all bands.
@@ -561,24 +560,30 @@ def get_detect_wavelets(images, variance, max_scale=3, K=3):
         The multiple of the coefficient scatter to calculate significance.
         Coefficients `w` with `|w| > K*sigma_j`, where `sigma_j` is
         the standard deviation at the jth scale, are considered significant.
-
+    image_type: str
+        The type of image that is being used.
+        This should be ``"ground"`` for ground based images with wide PSFs or
+        ``"space"`` for images from space-based telescopes with a narrow PSF.
 
     Returns
     -------
     coeffs : ndarray, shape (max_scale+1, height, width)
         Masked starlet coefficients of the summed detection image.
     sigma_j : ndarray, shape (max_scale+1,)
-        Per-scale noise estimate used for thresholding, as returned by
-        :func:`~scarlet2.wavelets.get_multiresolution_support`.
+        Per-scale noise estimate used for thresholding.
+
+    See Also
+    --------
+    :func:`~scarlet2.wavelets.get_multiresolution_support`
     """
     images = np.asarray(images)
     variance = np.asarray(variance)
-    sigma = np.median(np.sqrt(variance), axis=(-2,-1))
-    weights = 1/sigma**2 # inverse variance weighting, per band
-    detect = np.sum(images * weights[:,None,None], axis=0) / np.sum(weights)
-    sigma = np.sqrt(1/weights.sum())
+    sigma = np.median(np.sqrt(variance), axis=(-2, -1))
+    weights = 1 / sigma**2  # inverse variance weighting, per band
+    detect = np.sum(images * weights[:, None, None], axis=0) / np.sum(weights)
+    sigma = np.sqrt(1 / weights.sum())
     _coeffs = np.asarray(starlet_transform(detect, scales=max_scale))
-    M, sigma_j = get_multiresolution_support(detect, _coeffs, sigma, K=K, epsilon=1e-1, max_iter=20)
+    M, sigma_j = get_multiresolution_support(detect, _coeffs, sigma, K=K, image_type=image_type)
     return np.asarray(M) * _coeffs, np.asarray(sigma_j)
 
 
@@ -622,8 +627,7 @@ def get_blend_trees(detect, scales=None, min_separation=0, min_area=9, thresh=0)
         all_footprints.append(_footprints)
 
     trees = [
-        QuadTreeRegion(Box(detect.shape[-2:]), capacity=10).add_footprints(fps)
-        for fps in all_footprints
+        QuadTreeRegion(Box(detect.shape[-2:]), capacity=10).add_footprints(fps) for fps in all_footprints
     ]
     return trees, all_footprints
 
@@ -669,12 +673,12 @@ def get_blend_structures(detect, scales=None, min_separation=0, min_area=9, thre
         all_footprints.append(_footprints)
 
     # start with the footprints at the largest selected scale
-    structures = [ SingleScaleStructure(scales[-1], fp) for fp in all_footprints[-1] ]
+    structures = [SingleScaleStructure(scales[-1], fp) for fp in all_footprints[-1]]
     # add trees connecting to smaller selected scales
     box = Box(detect.shape[-2:])
     scale_trees = {
         scale: QuadTreeRegion(box, capacity=10).add_footprints(fps)
-        for scale, fps in zip(scales[:-1], all_footprints[:-1])
+        for scale, fps in zip(scales[:-1], all_footprints[:-1], strict=False)
     }
     for i in range(len(structures)):
         for scale, tree in scale_trees.items():
@@ -785,7 +789,7 @@ class HierarchicalFootprint:
 
     Attributes
     ----------
-    center : tuple of int
+    peak : tuple of int
         ``(y, x)`` peak position, refined to the finest scale reached.
     bbox : Box
         Bounding box at the scale this source was first detected.
@@ -797,21 +801,33 @@ class HierarchicalFootprint:
         Sources whose peaks lie inside this source's footprint and are
         spatially inconsistent with this source's primary peak.
     """
-    center: Tuple[int, int]
+
+    peak: Tuple[int, int]
     bbox: Box
     footprint: np.ndarray
     scale: int
     children: List["HierarchicalFootprint"] = field(default_factory=list)
 
 
-def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sigma_scales=None, K=3, split_peaks=True, min_separation=0, min_area=9, thresh=0):
+def hierarchical_footprints(
+    detect,
+    flatten=True,
+    scales=None,
+    catalog=None,
+    sigma_scales=None,
+    K=3,
+    split_peaks=True,
+    min_separation=0,
+    min_area=9,
+    thresh=0,
+):
     """Decompose a detection image into a hierarchy of :class:`HierarchicalFootprint` objects.
 
     Iterates from the largest starlet scale to the smallest.  At each scale,
     every detected footprint is matched to the best-overlapping source already
     registered from larger scales (measured by IoU).  If the registered source's
-    center lies inside the new footprint, it is a *primary* match: the source
-    center is refined and its footprint is grown to the union.  Otherwise the new
+    peak lies inside the new footprint, it is a *primary* match: the source
+    peak is refined and its footprint is grown to the union.  Otherwise, the new
     footprint becomes a *child* of the best-matching source.  Footprints with no
     overlap with any registered source are promoted to new top-level sources.
 
@@ -881,6 +897,7 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
         matched :class:`HierarchicalFootprint`, or ``None`` if no source was
         detected at that catalog position.
     """
+
     def snr_bbox(fp, scale):
         """Bounding box grown to the SNR-predicted extent of an exponential profile.
 
@@ -894,8 +911,15 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
         """
         bbox = Box.from_bounds(*fp.bounds)
         outer_box = Box(detect.shape[1:])
+
+        # grow bbox if smaller than the kernel support at this scale
+        min_half = 2 * (2**scale)
+        delta = tuple(max(0, min_half - bbox.shape[d] // 2) for d in range(bbox.D))
+        bbox.grow(delta)
+
         if sigma_scales is None:
-            return bbox
+            return bbox & outer_box
+
         sigma = float(sigma_scales[scale])
         if sigma <= 0:
             return bbox
@@ -928,19 +952,17 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
                 yield from all_nodes(node.children)
 
     def peaks2children(fp, scale):
-        """Return children for additional peaks in ``fp`` using watershed sub-footprints.
-        """
+        """Return children for additional peaks in ``fp`` using watershed sub-footprints."""
         children = []
         for sub_fp in split_footprint(fp, detect[scale], min_area=min_area)[1:]:
             child = HierarchicalFootprint(
-                center=(sub_fp.peaks[0].y, sub_fp.peaks[0].x),
+                peak=sub_fp.peaks[0],
                 bbox=Box.from_bounds(*sub_fp.bounds),
                 footprint=sub_fp,
                 scale=scale,
             )
             children.append(child)
         return children
-
 
     if scales is None:
         scales = scale_indices = list(range(len(detect)))
@@ -963,7 +985,7 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
         # are non-overlapping and carry exactly one peak.
         all_footprints = [
             [sub for fp in fps for sub in split_footprint(fp, detect[s], min_area=min_area)]
-            for s, fps in zip(scales, all_footprints)
+            for s, fps in zip(scales, all_footprints, strict=False)
         ]
 
     # --- initial hierarchy at largest scale: additional peaks become children -
@@ -971,9 +993,9 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
     idx = -1
     for fp in all_footprints[idx]:
         node = HierarchicalFootprint(
-            center=(fp.peaks[0].y, fp.peaks[0].x),
+            peak=fp.peaks[0],
             bbox=Box.from_bounds(*fp.bounds),
-            footprint=fp,
+            footprint=fp,  # store entire Footprint temporarily, clean up later
             scale=scales[idx],
             children=peaks2children(fp, scales[idx]),
         )
@@ -986,19 +1008,20 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
         for fp in all_footprints[idx]:
             peak = fp.peaks[0]
             node = HierarchicalFootprint(
-                center=(peak.y, peak.x),
+                peak=peak,
                 bbox=Box.from_bounds(*fp.bounds),
-                footprint=fp,
+                footprint=fp,  # store entire Footprint temporarily, clean up later
                 scale=scales[idx],
                 children=peaks2children(fp, scales[idx]),
             )
 
             # new fps are either matches to an existing source, to one of their children, or an orphan
             overlapping = [
-                i for i, rfp in enumerate(registered_nodes)
+                i
+                for i, rfp in enumerate(registered_nodes)
                 if peak_in_footprint(peak.y, peak.x, rfp.footprint)
             ]
-            if len(overlapping) == 0: # orphan: add to sources
+            if len(overlapping) == 0:  # orphan: add to sources
                 sources.append(node)
             else:
                 # determine best match: intersection over union
@@ -1008,9 +1031,8 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
 
                 # if peak of parent is in footprint of new fp: primary match
                 # use fp center to refine parent center and update footprint with union
-                cy, cx = parent.center
-                if peak_in_footprint(cy, cx, fp):
-                    parent.center = node.center
+                if peak_in_footprint(parent.peak.y, parent.peak.x, fp):
+                    parent.peak.y, parent.peak.x = node.peak.y, node.peak.x
                     # union bbox and footprint mask with the primary fp at this finer scale
                     primary_bbox = Box.from_bounds(*fp.bounds)
                     parent_bbox = Box.from_bounds(*parent.footprint.bounds)
@@ -1041,15 +1063,12 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
         for i, (py, px) in enumerate(catalog):
             for j, s in enumerate(sources):
                 if peak_in_footprint(int(py), int(px), s.footprint):
-                    cost[i, j] = min(
-                        (py - p.y) ** 2 + (px - p.x) ** 2
-                        for p in s.footprint.peaks
-                    )
+                    cost[i, j] = min((py - p.y) ** 2 + (px - p.x) ** 2 for p in s.footprint.peaks)
 
         # Solve the global assignment problem; pairs with sentinel cost are unmatched.
         row_ind, col_ind = linear_sum_assignment(cost)
         matches = [None] * len(catalog)
-        for i, j in zip(row_ind, col_ind):
+        for i, j in zip(row_ind, col_ind, strict=False):
             if cost[i, j] < _no_match:
                 matches[i] = j
 
@@ -1063,13 +1082,13 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
         # in either case: don't postprocess them (again)
         if sources[i] is None or not isinstance(sources[i].footprint, Footprint):
             continue
-        fp_obj = sources[i].footprint # still a Footprint at this point
+        fp_obj = sources[i].footprint  # still a Footprint at this point
         enlarged_bbox = snr_bbox(fp_obj, sources[i].scale)
         tight_bbox = Box.from_bounds(*fp_obj.bounds)
         padded = np.zeros(enlarged_bbox.shape, dtype=bool)
         enlarged_slices, tight_slices = overlap_slices(enlarged_bbox, tight_bbox)
         padded[enlarged_slices] = fp_obj.footprint[tight_slices]
-        sources[i].bbox = enlarged_bbox # now only numpy array of footprint
+        sources[i].bbox = enlarged_bbox  # now only numpy array of footprint
         sources[i].footprint = padded
         if flatten:
             sources[i].children = []

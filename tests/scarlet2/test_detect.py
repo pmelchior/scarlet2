@@ -3,20 +3,18 @@
 # ruff: noqa: D103
 
 import numpy as np
-import pytest
 
 from scarlet2.bbox import Box
 from scarlet2.detect import (
     Footprint,
-    Peak,
     HierarchicalFootprint,
+    Peak,
     box_intersect,
-    hierarchical_footprints,
     footprint_intersect,
     footprints,
+    hierarchical_footprints,
 )
 from scarlet2.wavelets import get_multiresolution_support, starlet_transform
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -153,9 +151,9 @@ def test_build_source_list_single_source():
     sources = hierarchical_footprints(detect)
 
     assert len(sources) >= 1
-    centers = [(s.center[0], s.center[1]) for s in sources]
+    peaks = [(s.peak.y, s.peak.x) for s in sources]
     # the dominant peak should be close to (20, 20)
-    assert any(abs(cy - 20) <= 3 and abs(cx - 20) <= 3 for cy, cx in centers)
+    assert any(abs(py - 20) <= 3 and abs(px - 20) <= 3 for py, px in peaks)
 
 
 def test_build_source_list_two_blobs():
@@ -176,7 +174,8 @@ def test_build_source_list_returns_scene_source():
 
     assert all(isinstance(s, HierarchicalFootprint) for s in sources)
     for s in sources:
-        assert isinstance(s.center, tuple) and len(s.center) == 2
+        assert isinstance(s.peak, Peak)
+        assert isinstance(s.footprint, np.ndarray)
         assert isinstance(s.scale, int)
         assert isinstance(s.children, list)
 
@@ -192,8 +191,8 @@ def test_build_source_list_orphan_promoted():
     detect = _detect_coeffs(img)
     all_sources = hierarchical_footprints(detect, flatten=True)
 
-    all_centers = [(s.center[0], s.center[1]) for s in all_sources]
-    assert any(abs(cy - 38) <= 3 and abs(cx - 38) <= 3 for cy, cx in all_centers)
+    peaks = [(s.peak.y, s.peak.x) for s in all_sources]
+    assert any(abs(py - 38) <= 3 and abs(px - 38) <= 3 for py, px in peaks)
 
 
 def test_build_source_list_flat_list():

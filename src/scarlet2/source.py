@@ -23,13 +23,13 @@ class Component(Module):
     """
 
     center: jnp.ndarray
-    """Center position, in pixel coordinates of the model frame"""
+    """Center position, in sky coordinates or pixel coordinates of the model frame"""
     spectrum: (jnp.array, Spectrum)
     """Spectrum model"""
     morphology: (jnp.array, Morphology)
     """Morphology model"""
     bbox: Box
-    """Bounding box of the model, in pixel coordinates of the model frame"""
+    """Bounding box of the model, in sky coordinates or pixel coordinates of the model frame"""
 
     def __init__(self, center, spectrum, morphology, bbox=None):
         """
@@ -98,7 +98,6 @@ class DustComponent(Component):
         return jnp.exp(-super().__call__())
 
 
-
 class Source(Component):
     """Source model
 
@@ -115,14 +114,13 @@ class Source(Component):
         Parameters
         ----------
         center: array, :py:class:`astropy.coordinates.SkyCoord`
-            Center position. If given as astropy sky coordinate, it will be
-            transformed with the WCS of the model frame.
+            Center position in sky coordinates or pixel coordinates of the model frame.
         spectrum: array, :py:class:`~scarlet2.Spectrum`
             The spectrum of the source.
         morphology: array, :py:class:`~scarlet2.Morphology`
             The morphology of the source.
         bbox: :py:class:`~scarlet2.Box`, optional
-            Bounding box of the component in pixel coordinates of the model frame.
+            Bounding box of the component in sky coordinates or pixel coordinates of the model frame.
 
         Examples
         --------
@@ -155,7 +153,6 @@ class Source(Component):
             raise
 
         sources.append(self)
-
 
     def add_component(self, component, op):
         """Add `component` to this source

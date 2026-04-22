@@ -215,7 +215,9 @@ def starlet_reconstruction(starlets, generation=2, convolve2d=None, scales=None)
     return c
 
 
-def get_multiresolution_support(image, starlets, sigma, K=3, epsilon=1e-1, max_iter=20, image_type="ground", rng_key=None):
+def get_multiresolution_support(
+    image, starlets, sigma, K=3, epsilon=1e-1, max_iter=20, image_type="ground", rng_key=None
+):
     """Calculate the multi-resolution support for a dictionary of starlet coefficients.
 
     This is different for ground and space based telescopes.
@@ -274,7 +276,7 @@ def get_multiresolution_support(image, starlets, sigma, K=3, epsilon=1e-1, max_i
     # the per-scale noise threshold, while still allowing the threshold to be
     # applied (and sources detected) all the way to the image edge.
     def _interior(j):
-        b = min(4 * (2 ** j), ny // 4, nx // 4)
+        b = min(4 * (2**j), ny // 4, nx // 4)
         row_ok = (jnp.arange(ny) >= b) & (jnp.arange(ny) < ny - b)
         col_ok = (jnp.arange(nx) >= b) & (jnp.arange(nx) < nx - b)
         return row_ok[:, None] & col_ok[None, :]
@@ -286,14 +288,14 @@ def get_multiresolution_support(image, starlets, sigma, K=3, epsilon=1e-1, max_i
             rng_key = jax.random.PRNGKey(0)
         # Calculate sigma_je, the standard deviation at each scale due to gaussian noise
         noise_img = jax.random.normal(rng_key, shape=image.shape)
-        noise_starlet = starlet_transform(noise_img, scales=get_scales(image.shape), generation=1)
+        noise_starlet = starlet_transform(noise_img, scales=n_scales - 1, generation=1)
         sigma_je = jnp.array([jnp.std(star) for star in noise_starlet])
         noise = image - starlets[-1]
 
         last_sigma_i = sigma
         M = None
         for _ in range(max_iter):
-            M = (jnp.abs(starlets) > K * sigma * sigma_je[:, None, None])
+            M = jnp.abs(starlets) > K * sigma * sigma_je[:, None, None]
             S = jnp.sum(M, axis=0) == 0
             mask_2d = S & interior[-1]
             n = mask_2d.sum().clip(1)
@@ -311,7 +313,7 @@ def get_multiresolution_support(image, starlets, sigma, K=3, epsilon=1e-1, max_i
         last_sigma_j = sigma_j
         M = None
         for _ in range(max_iter):
-            M = (jnp.abs(starlets) > K * sigma_j[:, None, None])
+            M = jnp.abs(starlets) > K * sigma_j[:, None, None]
             # Compute std only over insignificant interior pixels to avoid both
             # boundary-convolution artifacts and bias from zeroing excluded pixels.
             mask = (~M) & interior

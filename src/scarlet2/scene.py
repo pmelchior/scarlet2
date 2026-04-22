@@ -25,6 +25,13 @@ class SourceList(list):
         super().__setitem__(index, value)
 
 
+jax.tree_util.register_pytree_node(
+    SourceList,
+    lambda sl: (list(sl), None),  # flatten: children=items, aux=None
+    lambda aux, children: SourceList(children),  # unflatten
+)
+
+
 class Scene(Module):
     """Model of the celestial scene
 

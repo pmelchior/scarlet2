@@ -454,52 +454,58 @@ def _sort_spectra(spectra, channels):
     spectrum = jnp.array(spectrum)
     return spectrum
 
-def _footprints_to_sources(images, detect, footprints, scales, centers):
-    _images = jnp.copy(images)
-    shape = images.shape[1:]
-    spec_box = Box(images.shape[:1])
-    res = [None, ] * len(footprints)
-    for scale in sorted(scales, reverse=True): # largest to smallest scales
+
+def _footprints_to_sources(obs, detect, footprints, scales, catalog):
+    _images = jnp.copy(obs.data)
+    shape = obs.frame.bbox.spatial.shape
+    spec_box = Box(shape=(obs.frame.C,))
+    res = [
+        None,
+    ] * len(footprints)
+    for scale in sorted(scales, reverse=True):  # largest to smallest scales
         for i, fp in enumerate(footprints):
             if fp is not None and fp.scale == scale:
                 footprint_map = insert_into(jnp.zeros(shape), jnp.asarray(fp.footprint), fp.bbox)
-                source_detect = (detect[scale] * footprint_map)
+                source_detect = detect[scale] * footprint_map
                 # MLE of flux per band given the morphology from source_detect
-                spectrum = (_images * source_detect[None,:, :]).sum(axis=(-2,-1)) / jnp.sum(source_detect**2)
+                spectrum = (_images * source_detect[None, :, :]).sum(axis=(-2, -1)) / jnp.sum(
+                    source_detect**2
+                )
                 spectrum = jnp.maximum(spectrum, 0)
-                _images -= spectrum[:,None,None] * source_detect[None,:, :]
+                _images -= spectrum[:, None, None] * source_detect[None, :, :]
                 morph = jnp.maximum(source_detect[fp.bbox.slices], 0)
                 factor = morph.sum() / morph.max()
                 morph = morph / factor
                 spectrum *= factor
 
-                # grow bbox if smaller than the kernel support at this scale
-                min_half = 2 * (2**fp.scale)
-                bbox = fp.bbox
-                delta = tuple(max(0, min_half - bbox.shape[d] // 2) for d in range(bbox.D))
-                bbox.grow(delta)
-                res[i] = (fp.center, spectrum, morph, spec_box @ bbox)
+                # convert peak and box center to RA/Dec
+                peak = obs.frame.get_sky_coord((fp.peak.y, fp.peak.x))
+                center = obs.frame.get_sky_coord(fp.bbox.center)
+                res[i] = (peak, center, spectrum, morph)
 
     # sweep for centers with non-detections: initialize them as compact sources
-    if centers is not None:
-        for i, center in enumerate(centers):
+    if catalog is not None:
+        for i, center in enumerate(catalog):
             if footprints[i] is None:
                 pixel = center.astype(int)
                 spectrum = _images[:, pixel[0], pixel[1]]
                 morph = compact_morphology()
-                bbox = None
-                res[i] = (center, spectrum, morph, bbox)
+                center = obs.frame.get_sky_coord(center)
+                peak = center
+                res[i] = (peak, center, spectrum, morph)
     return res
 
 
 def hierarchical_sources(
     obs,
-    scales=[1,2,3],
+    scales=[1, 2, 3],
     detect=None,
     footprints=None,
     catalog=None,
     strict=True,
     K=3,
+    split_peaks=True,
+    image_type="ground",
     min_separation=0,
     min_area=9,
     thresh=0,
@@ -542,38 +548,48 @@ def hierarchical_sources(
         Detection threshold multiplier: coefficients with
         ``|w| > K * sigma_j`` are considered significant.  Also used for the
         SNR-based bounding box extension.  Default ``3``.
+    split_peaks : bool, optional
+        If ``True`` (default), footprints with multiple peaks are split into separate sources
+        using a watershed algorithm. Otherwise, additional peaks become children of the
+        originating footprint,  which retains the full footprint area, i.e. the children overlap.
+        Splitting peaks allows to reduce the overlap of mostly independent sources.
+    image_type: str
+        The type of image that is being used.
+        This should be ``"ground"`` for ground based images with wide PSFs or
+        ``"space"`` for images from space-based telescopes with a narrow PSF.
     min_separation : float, optional
         Minimum pixel separation between peaks within a footprint.
-        Passed to :func:`~scarlet2.detect.hierarchical_footprints`.
     min_area : int, optional
         Minimum number of pixels a footprint must contain to be kept.
-        Passed to :func:`~scarlet2.detect.hierarchical_footprints`.
     thresh : float, optional
         Detection threshold; pixels must strictly exceed this value.
-        Passed to :func:`~scarlet2.detect.hierarchical_footprints`.
 
     Returns
     -------
     sources : list of tuple
         One entry per detected footprint, each a
-        ``(center, spectrum, morphology, bbox)`` tuple where
+        ``(peak, center, spectrum, morphology)`` tuple where
 
-        - ``center`` — ``(y, x)`` peak position as a tuple of int
-        - ``spectrum`` — 1-D array of per-channel flux, shape ``(C,)``
-        - ``morphology`` — 2-D normalized intensity map clipped to the
-          footprint bounding box
-        - ``bbox`` — :class:`~scarlet2.bbox.Box` spanning channels and
-          the spatial footprint
+        - ``peak``: sky position of detected peak
+        - ``center``:  sky position of the center of the bounding box
+        - ``spectrum``: 1-D array of per-channel flux, shape ``(C,)``
+        - ``morphology``: 2-D normalized intensity map clipped to the footprint bounding box
+
+    See Also
+    --------
+    :func:`~scarlet2.wavelets.get_detect_wavelets`, :func:`~scarlet2.detect.hierarchical_footprints`
     """
     scales = sorted(scales)
     # for strict scale separation, need to push the "remaining" largest scale to one larger than max_scale
-    max_scale = max(scales)+strict
+    max_scale = max(scales) + strict
     sigma = None
     if detect is None:
-        detect, sigma = get_detect_wavelets(obs.data, 1/obs.weights, max_scale=max_scale, K=K)
+        detect, sigma = get_detect_wavelets(
+            obs.data, 1 / obs.weights, max_scale=max_scale, K=K, image_type=image_type
+        )
 
     catalog_ = obs.frame.get_pixel(catalog) if catalog is not None else None
-    if footprints is None or centers_ is not None:
+    if footprints is None or catalog_ is not None:
         footprints = hierarchical_footprints(
             detect,
             scales=scales,
@@ -581,8 +597,9 @@ def hierarchical_sources(
             catalog=catalog_,
             sigma_scales=sigma,
             K=K,
+            split_peaks=split_peaks,
             min_separation=min_separation,
             min_area=min_area,
             thresh=thresh,
         )
-    return _footprints_to_sources(obs.data, detect, footprints, scales, catalog_)
+    return _footprints_to_sources(obs, detect, footprints, scales, catalog_)
