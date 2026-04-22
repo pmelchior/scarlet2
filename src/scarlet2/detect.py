@@ -283,6 +283,33 @@ def footprint_intersect(footprint1, box1, footprint2, box2):
     return np.sum(footprint1[slices1] * footprint2[slices2]) > 0
 
 
+def footprint_iou(source1, source2):
+    """Compute intersection over union (IoU) between two source footprints.
+
+    Parameters
+    ----------
+    source1, source2 : :class:`HierarchicalFootprint`
+        Sources with a `.bbox` (:class:`~scarlet2.bbox.Box`) and `.footprint`
+        (boolean ndarray sized to that bbox).
+
+    Returns
+    -------
+    iou : float
+        IoU in ``[0, 1]``.  Returns ``0`` if the bounding boxes do not overlap.
+    """
+    def _mask(source):
+        fp = source.footprint
+        return fp.footprint if isinstance(fp, Footprint) else fp
+
+    if not box_intersect(source1.bbox, source2.bbox):
+        return 0.0
+    slices1, slices2 = overlap_slices(source1.bbox, source2.bbox)
+    mask1, mask2 = _mask(source1), _mask(source2)
+    intersection = int(np.sum(mask1[slices1] & mask2[slices2]))
+    union = int(np.sum(mask1)) + int(np.sum(mask2)) - intersection
+    return float(intersection / union) if union > 0 else 0.0
+
+
 # ---------------------------------------------------------------------------
 # QuadTree
 # ---------------------------------------------------------------------------
@@ -835,20 +862,20 @@ class HierarchicalFootprint:
     children: List["HierarchicalFootprint"] = field(default_factory=list)
 
 
-def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sigma_scales=None, K=3, min_separation=0, min_area=9, thresh=0):
+def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sigma_scales=None, K=3, split_peaks=True, min_separation=0, min_area=9, thresh=0):
     """Decompose a detection image into a hierarchy of :class:`HierarchicalFootprint` objects.
 
-    Starting from the largest starlet scale and working down to the smallest scale,
-    each source is refined by finding the fine-scale footprint that contains its
-    current center — that footprint's peak becomes the new center.  Any other
-    overlapping fine-scale footprints whose peak lies inside the parent's footprint
-    mask become child footprints.  Children are excluded from the parent's subsequent
-    refinement steps to prevent double-counting.
+    Iterates from the largest starlet scale to the smallest.  At each scale,
+    every detected footprint is matched to the best-overlapping source already
+    registered from larger scales (measured by IoU).  If the registered source's
+    center lies inside the new footprint, it is a *primary* match: the source
+    center is refined and its footprint is grown to the union.  Otherwise the new
+    footprint becomes a *child* of the best-matching source.  Footprints with no
+    overlap with any registered source are promoted to new top-level sources.
 
-    After the top-down pass, a sweep over every finer scale promotes any footprint
-    whose primary peak is not already covered by an existing source to a new
-    top-level source.  This catches compact sources that are below the noise at
-    the largest scale but significant at finer scales.
+    When ``split_peaks`` is ``True`` (default), footprints that contain more than
+    one peak are split into separate sources by using a watershed algorithm.
+    Otherwise, additional peaks become children of the originating footprint.
 
     If ``catalog`` is provided, the detected sources are matched to the catalog
     positions via a global bipartite assignment (Hungarian algorithm).  The cost
@@ -860,9 +887,9 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
     If ``sigma_scales`` is provided, each footprint's bounding box is grown beyond
     the detection threshold to the noise level.  Assuming an exponential profile
     I(r) = I0*exp(-r/h), the scale length h is estimated from the footprint size
-    as h = r_foot / ln(S), where r_foot is the distance from the peak to the
-    farthest edge of the footprint bounding box and S = I0 / (K*sigma_j).  The
-    box is grown to the radius where the profile reaches the noise level (1*sigma_j):
+    as h = r_foot / ln(S), where r_foot is the mean distance from the peak to the
+    edge of the footprint bounding box and S = I0 / (K*sigma_j).  The box is grown
+    to the radius where the profile reaches the noise level (1*sigma_j):
     half_size = r_foot * ln(S*K) / ln(S).
 
     Parameters
@@ -870,7 +897,8 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
     detect : ndarray, shape (scales+1, H, W)
         Masked starlet coefficients from :func:`get_detect_wavelets`.
     flatten : bool, optional
-        Whether to flatten the source list.
+        Whether to flatten the source list so that children appear as independent
+        entries.  Default ``True``.
     scales : list of int, optional
         Indices into ``detect`` specifying which planes to use.  If ``None``
         (default) all planes are used.
@@ -887,10 +915,17 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
         Detection threshold multiplier used when ``sigma_scales`` is given.
         Must match the value passed to :func:`~scarlet2.detect.get_detect_wavelets`.
         Default ``3``.
+    split_peaks : bool, optional
+        If ``True`` (default), footprints with multiple peaks are split into separate sources
+        using a watershed algorithm. Otherwise, additional peaks become children of the
+        originating footprint,  which retains the full footprint area, i.e. the children overlap.
+        Splitting peaks allows to reduce the overlap of mostly independent sources.
     min_separation : float, optional
         Minimum pixel separation between peaks within a footprint.
     min_area : int, optional
-        Minimum number of pixels a footprint must contain to be kept.
+        Minimum number of pixels a footprint must contain to be kept.  Also used
+        as the minimum area for watershed sub-footprints when ``split_peaks`` is
+        ``True``.
     thresh : float, optional
         Detection threshold; pixels must strictly exceed this value.
 
@@ -904,32 +939,7 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
         matched :class:`HierarchicalFootprint`, or ``None`` if no source was
         detected at that catalog position.
     """
-    if scales is None:
-        scales = scale_indices = list(range(len(detect)))
-    else:
-        scales = sorted(scales)
-        scale_indices = list(range(len(scales)))
-
-    trees, all_footprints = get_blend_trees(
-        detect,
-        scales=scales,
-        min_separation=min_separation,
-        min_area=min_area,
-        thresh=thresh,
-    )
-
-    # Split multi-peak footprints at each scale using watershed segmentation.
-    # every footprint then only has one peak
-    all_footprints = [
-        [sub for fp in fps for sub in split_footprint(fp, detect[s], min_area=min_area)]
-        for s, fps in zip(scales, all_footprints)
-    ]
-    trees = [
-        QuadTreeRegion(Box(detect.shape[-2:]), capacity=10).add_footprints(fps)
-        for fps in all_footprints
-    ]
-
-    def _snr_bbox(fp, scale):
+    def snr_bbox(fp, scale):
         """Bounding box grown to the SNR-predicted extent of an exponential profile.
 
         For a profile I(r) = I0*exp(-r/h), the footprint boundary lies at the
@@ -975,102 +985,104 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
             if node is not None:
                 yield from all_nodes(node.children)
 
-    def refine(parent, idx):
-        """Refine node.center and attach children, then recurse one scale finer.
-
-        Parameters
-        ----------
-        parent : HierarchicalFootprint
-            The source being refined.
-        idx : int
-            The index of the wavelet scale to query for refinement.
+    def peaks2children(fp, scale):
+        """Return children for additional peaks in ``fp`` using watershed sub-footprints.
         """
-        if idx < 0 or idx >= len(scales):
-            return
-        scale = scales[idx]
+        children = []
+        for sub_fp in split_footprint(fp, detect[scale], min_area=min_area)[1:]:
+            child = HierarchicalFootprint(
+                center=(sub_fp.peaks[0].y, sub_fp.peaks[0].x),
+                bbox=Box.from_bounds(*sub_fp.bounds),
+                footprint=sub_fp,
+                scale=scale,
+            )
+            children.append(child)
+        return children
 
-        # Footprints overlapping parent's bbox at this scale, excluding regions
-        # already claimed by previously added children.
-        parent_fp = parent.footprint
-        child_bboxes = [c.bbox for c in parent.children]
-        overlapping = [
-            fp for fp in (box.footprint for box in trees[idx].query(parent.bbox))
-            if not any(cb.contains((fp.peaks[0].y, fp.peaks[0].x)) for cb in child_bboxes)
+
+    if scales is None:
+        scales = scale_indices = list(range(len(detect)))
+    else:
+        scales = sorted(scales)
+        scale_indices = list(range(len(scales)))
+
+    all_footprints = [
+        footprints(
+            detect[s],
+            min_separation=min_separation,
+            min_area=min_area,
+            thresh=thresh,
+        )
+        for s in scales
+    ]
+
+    if split_peaks:
+        # Pre-split multi-peak footprints so that all footprints at each scale
+        # are non-overlapping and carry exactly one peak.
+        all_footprints = [
+            [sub for fp in fps for sub in split_footprint(fp, detect[s], min_area=min_area)]
+            for s, fps in zip(scales, all_footprints)
         ]
 
-        if not overlapping:
-            refine(parent, idx - 1)
-            return
-
-        # Primary: the fine-scale footprint that contains the parent's current center
-        cy, cx = parent.center
-        primary_fp = next(
-            (fp for fp in overlapping if peak_in_footprint(cy, cx, fp)), None
-        )
-
-        for fp in overlapping:
-            # Use the primary peak as the refined position of the parent
-            if fp is primary_fp:
-                parent.center = (primary_fp.peaks[0].y, primary_fp.peaks[0].x)
-                # union bbox and footprint mask with the primary fp at this finer scale
-                primary_bbox = Box.from_bounds(*primary_fp.bounds)
-                parent_bbox = Box.from_bounds(*parent_fp.bounds)
-                union_bbox = parent_bbox | primary_bbox
-                union_mask = np.zeros(union_bbox.shape, dtype=bool)
-                p_slices, pp_slices = overlap_slices(union_bbox, parent_bbox)
-                union_mask[p_slices] |= parent_fp.footprint[pp_slices]
-                q_slices, qp_slices = overlap_slices(union_bbox, primary_bbox)
-                union_mask[q_slices] |= primary_fp.footprint[qp_slices]
-                new_fp = Footprint(union_mask, parent_fp.peaks, union_bbox.bounds)
-                parent.footprint = new_fp
-                parent.bbox = union_bbox
-                parent_fp = new_fp
-                continue
-
-            # Children: all other overlapping footprints whose peak lies inside
-            # the parent's footprint mask.
-            peak = fp.peaks[0]
-            if peak_in_footprint(peak.y, peak.x, parent_fp):
-                child = HierarchicalFootprint(
-                    center=(peak.y, peak.x),
-                    bbox=Box.from_bounds(*fp.bounds),
-                    footprint=fp,
-                    scale=scale,
-                )
-                refine(child, idx - 1)
-                parent.children.append(child)
-
-        # Continue refining this parent; newly added children are now in
-        # child_bboxes and will be filtered out in the recursive call.
-        refine(parent, idx - 1)
-
-    # --- top-down pass: seed from the largest selected scale ----------------
-    idx = len(scales) - 1
+    # --- initial hierarchy at largest scale: additional peaks become children -
     sources = []
-    for fp in all_footprints[-1]:
+    idx = -1
+    for fp in all_footprints[idx]:
         node = HierarchicalFootprint(
             center=(fp.peaks[0].y, fp.peaks[0].x),
             bbox=Box.from_bounds(*fp.bounds),
             footprint=fp,
             scale=scales[idx],
+            children=peaks2children(fp, scales[idx]),
         )
-        refine(node, idx - 1)
         sources.append(node)
 
-    # --- orphan sweep: promote finer-scale footprints with no parent --------
+    # --- link smaller scale footprints to larger scale footprints -
     for idx in scale_indices[:-1][::-1]:  # exclude largest scale, 2nd largest to smallest
-        registered_footprints = [n.footprint for n in all_nodes(sources)]
+        registered_nodes = list(all_nodes(sources))
+
         for fp in all_footprints[idx]:
             peak = fp.peaks[0]
-            if not any(peak_in_footprint(peak.y, peak.x, fp) for fp in registered_footprints):
-                node = HierarchicalFootprint(
-                    center=(peak.y, peak.x),
-                    bbox=Box.from_bounds(*fp.bounds),
-                    footprint=fp,
-                    scale=scales[idx],
-                )
-                refine(node, idx - 1)
+            node = HierarchicalFootprint(
+                center=(peak.y, peak.x),
+                bbox=Box.from_bounds(*fp.bounds),
+                footprint=fp,
+                scale=scales[idx],
+                children=peaks2children(fp, scales[idx]),
+            )
+
+            # new fps are either matches to an existing source, to one of their children, or an orphan
+            overlapping = [
+                i for i, rfp in enumerate(registered_nodes)
+                if peak_in_footprint(peak.y, peak.x, rfp.footprint)
+            ]
+            if len(overlapping) == 0: # orphan: add to sources
                 sources.append(node)
+            else:
+                # determine best match: intersection over union
+                overlap = {i: footprint_iou(node, registered_nodes[i]) for i in overlapping}
+                max_i = max(overlap, key=overlap.get)
+                parent = registered_nodes[max_i]
+
+                # if peak of parent is in footprint of new fp: primary match
+                # use fp center to refine parent center and update footprint with union
+                cy, cx = parent.center
+                if peak_in_footprint(cy, cx, fp):
+                    parent.center = node.center
+                    # union bbox and footprint mask with the primary fp at this finer scale
+                    primary_bbox = Box.from_bounds(*fp.bounds)
+                    parent_bbox = Box.from_bounds(*parent.footprint.bounds)
+                    union_bbox = parent_bbox | primary_bbox
+                    union_mask = np.zeros(union_bbox.shape, dtype=bool)
+                    p_slices, pp_slices = overlap_slices(union_bbox, parent_bbox)
+                    union_mask[p_slices] |= parent.footprint.footprint[pp_slices]
+                    q_slices, qp_slices = overlap_slices(union_bbox, primary_bbox)
+                    union_mask[q_slices] |= fp.footprint[qp_slices]
+                    parent.footprint = Footprint(union_mask, parent.footprint.peaks, union_bbox.bounds)
+                    parent.bbox = union_bbox
+                # if not: new child
+                else:
+                    parent.children.append(node)
 
     # --- flatten list: children are listed separately -
     if flatten:
@@ -1110,7 +1122,7 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
         if sources[i] is None or not isinstance(sources[i].footprint, Footprint):
             continue
         fp_obj = sources[i].footprint # still a Footprint at this point
-        enlarged_bbox = _snr_bbox(fp_obj, sources[i].scale)
+        enlarged_bbox = snr_bbox(fp_obj, sources[i].scale)
         tight_bbox = Box.from_bounds(*fp_obj.bounds)
         padded = np.zeros(enlarged_bbox.shape, dtype=bool)
         enlarged_slices, tight_slices = overlap_slices(enlarged_bbox, tight_bbox)
