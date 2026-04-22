@@ -13,7 +13,12 @@ compatible with JAX's JIT.  Both NumPy and JAX arrays are accepted as inputs.
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
+import heapq
+
 import numpy as np
+from scipy.ndimage import binary_fill_holes
+
+
 from scipy.optimize import linear_sum_assignment
 
 from .bbox import Box, overlap_slices
@@ -709,6 +714,98 @@ def get_blend_structures(detect, scales=None, min_separation=0, min_area=9, thre
 
 
 # ---------------------------------------------------------------------------
+# Footprint splitting
+# ---------------------------------------------------------------------------
+
+
+def split_footprint(fp, image, min_area=0):
+    """Split a multi-peak :class:`Footprint` into single-peak sub-footprints.
+
+    Segments the footprint area by finding the saddle points between peaks using
+    a priority-queue flooding watershed.  The wavelet coefficient image at the
+    relevant scale is inverted so that peaks become low-cost basins; the watershed
+    floods outward from each peak seed simultaneously in order of increasing cost,
+    and region boundaries follow the intensity saddles between peaks.
+
+    Parameters
+    ----------
+    fp : Footprint
+        The footprint to split.  Returned unchanged (as a one-element list) if
+        it contains at most one peak.
+    image : 2D ndarray
+        Wavelet coefficient image at the scale of ``fp``.
+    min_area : int, optional
+        Minimum number of pixels a sub-footprint must contain to be kept.
+        Peaks whose watershed region is smaller than this are dropped.
+        Default is ``0`` (keep all).
+
+    Returns
+    -------
+    list of Footprint
+        One single-peak :class:`Footprint` per peak in ``fp`` that meets the
+        minimum area requirement.
+    """
+    if len(fp.peaks) <= 1:
+        return [fp]
+
+    (y0, y1), (x0, x1) = fp.bounds
+    mask = fp.footprint
+    sub_image = np.asarray(image[y0:y1, x0:x1], dtype=float)
+
+    # Cost: invert intensity so peaks are cheap; normalize to [0, 1].
+    vals = sub_image[mask]
+    vmin, vmax = vals.min(), vals.max()
+    if vmax > vmin:
+        cost = np.where(mask, (vmax - sub_image) / (vmax - vmin), 1.0)
+    else:
+        cost = np.where(mask, 0.0, 1.0)
+
+    # Priority-queue flooding watershed: expand from all seeds simultaneously
+    # in order of increasing pixel cost (decreasing intensity).  A flood can
+    # only reach a pixel through adjacent labeled pixels, so it cannot arc
+    # around another seed's region.
+    h, w = mask.shape
+    labels = np.zeros((h, w), dtype=np.int32)
+    heap = []
+    _nbrs = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+
+    for k, peak in enumerate(fp.peaks):
+        py, px = peak.y - y0, peak.x - x0
+        labels[py, px] = k + 1
+        for di, dj in _nbrs:
+            ni, nj = py + di, px + dj
+            if 0 <= ni < h and 0 <= nj < w and mask[ni, nj] and labels[ni, nj] == 0:
+                heapq.heappush(heap, (cost[ni, nj], ni, nj, k + 1))
+
+    while heap:
+        c, i, j, label = heapq.heappop(heap)
+        if labels[i, j] != 0:
+            continue
+        labels[i, j] = label
+        for di, dj in _nbrs:
+            ni, nj = i + di, j + dj
+            if 0 <= ni < h and 0 <= nj < w and mask[ni, nj] and labels[ni, nj] == 0:
+                heapq.heappush(heap, (cost[ni, nj], ni, nj, label))
+
+    sub_footprints = []
+    for k, peak in enumerate(fp.peaks):
+        raw_region = (labels == k + 1) & mask
+        if raw_region.sum() < min_area:
+            continue
+        region = binary_fill_holes(raw_region)
+        if not region.any():
+            continue
+        rows = np.where(region.any(axis=1))[0]
+        cols = np.where(region.any(axis=0))[0]
+        ry0, ry1 = int(rows[0]), int(rows[-1]) + 1
+        rx0, rx1 = int(cols[0]), int(cols[-1]) + 1
+        bounds = ((y0 + ry0, y0 + ry1), (x0 + rx0, x0 + rx1))
+        sub_footprints.append(Footprint(region[ry0:ry1, rx0:rx1], [peak], bounds))
+
+    return sub_footprints
+
+
+# ---------------------------------------------------------------------------
 # Hierarchical source list
 # ---------------------------------------------------------------------------
 
@@ -821,6 +918,17 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
         thresh=thresh,
     )
 
+    # Split multi-peak footprints at each scale using watershed segmentation.
+    # every footprint then only has one peak
+    all_footprints = [
+        [sub for fp in fps for sub in split_footprint(fp, detect[s], min_area=min_area)]
+        for s, fps in zip(scales, all_footprints)
+    ]
+    trees = [
+        QuadTreeRegion(Box(detect.shape[-2:]), capacity=10).add_footprints(fps)
+        for fps in all_footprints
+    ]
+
     def _snr_bbox(fp, scale):
         """Bounding box grown to the SNR-predicted extent of an exponential profile.
 
@@ -903,12 +1011,7 @@ def hierarchical_footprints(detect, flatten=True, scales=None, catalog=None, sig
         for fp in overlapping:
             # Use the primary peak as the refined position of the parent
             if fp is primary_fp:
-                # if there are multiple peaks in fp, use the closest to the current parent center
-                closest = np.argmin([
-                    (p.y - parent.center[0])**2 + (p.x - parent.center[1])**2
-                    for p in primary_fp.peaks
-                ])
-                parent.center = (primary_fp.peaks[closest].y, primary_fp.peaks[closest].x)
+                parent.center = (primary_fp.peaks[0].y, primary_fp.peaks[0].x)
                 # union bbox and footprint mask with the primary fp at this finer scale
                 primary_bbox = Box.from_bounds(*primary_fp.bounds)
                 parent_bbox = Box.from_bounds(*parent_fp.bounds)
