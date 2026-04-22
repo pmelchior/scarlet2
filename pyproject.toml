@@ -21,6 +21,7 @@ dependencies = [
     "jax",
     "astropy",
     "numpy",
+    "scipy",
     "matplotlib",
     "varname",
     "optax",

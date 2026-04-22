@@ -13,7 +13,6 @@ from scarlet2.detect import (
     box_intersect,
     hierarchical_footprints,
     footprint_intersect,
-    get_connected_pixels,
     footprints,
 )
 from scarlet2.wavelets import get_multiresolution_support, starlet_transform
@@ -45,33 +44,6 @@ def _detect_coeffs(img, scales=3):
 # ---------------------------------------------------------------------------
 # get_connected_pixels
 # ---------------------------------------------------------------------------
-
-
-def test_get_connected_pixels_basic():
-    img = np.zeros((10, 10))
-    img[3:6, 3:6] = 1.0
-    unchecked = np.ones((10, 10), dtype=bool)
-    footprint = np.zeros((10, 10), dtype=bool)
-    bounds = [[4, 5], [4, 5]]
-
-    get_connected_pixels(4, 4, img, unchecked, footprint, bounds, thresh=0)
-
-    assert footprint[3:6, 3:6].all()
-    assert not footprint[0, 0]
-    assert bounds[0] == [3, 6]
-    assert bounds[1] == [3, 6]
-
-
-def test_get_connected_pixels_thresh():
-    img = np.zeros((5, 5))
-    img[2, 2] = 0.5  # below thresh=1
-    unchecked = np.ones((5, 5), dtype=bool)
-    footprint = np.zeros((5, 5), dtype=bool)
-    bounds = [[2, 3], [2, 3]]
-
-    get_connected_pixels(2, 2, img, unchecked, footprint, bounds, thresh=1.0)
-
-    assert not footprint.any()
 
 
 # ---------------------------------------------------------------------------

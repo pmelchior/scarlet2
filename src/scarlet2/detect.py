@@ -1,9 +1,7 @@
 """Detection utilities: connected-pixel footprint extraction and peak finding.
 
-Low-level routines (``get_connected_pixels``, ``get_footprints``) are
-translated from scarlet v1's ``detect_pybind11.cc``.  Higher-level helpers
-(``get_wavelets``, ``QuadTreeRegion``, ``get_peaks``, …) are adapted from
-scarlet v1's ``detect.py``.
+Higher-level helpers (``get_wavelets``, ``QuadTreeRegion``, ``get_peaks``, …)
+are adapted from scarlet v1's ``detect.py``.
 
 Uses NumPy rather than JAX because detection involves dynamic data structures
 (variable-length peak lists, irregularly shaped footprints) that are not
@@ -16,7 +14,7 @@ from typing import List, Tuple
 import heapq
 
 import numpy as np
-from scipy.ndimage import binary_fill_holes
+from scipy.ndimage import binary_fill_holes, find_objects, label as ndimage_label
 
 
 from scipy.optimize import linear_sum_assignment
@@ -69,57 +67,8 @@ class Footprint:
 
 
 # ---------------------------------------------------------------------------
-# Low-level detection (translated from detect_pybind11.cc)
+# Low-level detection
 # ---------------------------------------------------------------------------
-
-
-def get_connected_pixels(i, j, image, unchecked, footprint, bounds, thresh=0):
-    """Find all pixels 4-connected to ``(i, j)`` that exceed ``thresh``.
-
-    Uses an iterative flood-fill to avoid Python's recursion limit on large
-    images.  Modifies ``unchecked``, ``footprint``, and ``bounds`` in-place.
-
-    Parameters
-    ----------
-    i, j : int
-        Seed pixel coordinates (row, column).
-    image : 2D ndarray
-        The image to search.
-    unchecked : 2D boolean ndarray
-        Tracks unvisited pixels; updated in-place.
-    footprint : 2D boolean ndarray
-        Accumulates the footprint mask; updated in-place.
-    bounds : list of two [min, max] pairs
-        Bounding box ``[[y_min, y_max], [x_min, x_max]]`` with exclusive end
-        coordinates; updated in-place.
-    thresh : float, optional
-        Pixels must strictly exceed this value to join the footprint.
-    """
-    height, width = image.shape
-    stack = [(i, j)]
-    while stack:
-        ci, cj = stack.pop()
-        if not unchecked[ci, cj]:
-            continue
-        unchecked[ci, cj] = False
-        if image[ci, cj] > thresh:
-            footprint[ci, cj] = True
-            if ci < bounds[0][0]:
-                bounds[0][0] = ci
-            if ci + 1 > bounds[0][1]:
-                bounds[0][1] = ci + 1
-            if cj < bounds[1][0]:
-                bounds[1][0] = cj
-            if cj + 1 > bounds[1][1]:
-                bounds[1][1] = cj + 1
-            if ci > 0:
-                stack.append((ci - 1, cj))
-            if ci < height - 1:
-                stack.append((ci + 1, cj))
-            if cj > 0:
-                stack.append((ci, cj - 1))
-            if cj < width - 1:
-                stack.append((ci, cj + 1))
 
 
 def _get_patch_peaks(image, min_separation, y0=0, x0=0):
@@ -193,9 +142,9 @@ def _get_patch_peaks(image, min_separation, y0=0, x0=0):
 def footprints(image, min_separation=0, min_area=9, thresh=0):
     """Detect footprints and their peaks in an image.
 
-    Iterates over every pixel, flood-fills each connected region of pixels
-    above ``thresh``, filters by minimum area, and locates peaks within each
-    footprint.
+    Thresholds the image at ``thresh``, labels 4-connected regions using
+    :func:`scipy.ndimage.label`, filters by minimum area, and locates peaks
+    within each footprint.
 
     Parameters
     ----------
@@ -215,29 +164,22 @@ def footprints(image, min_separation=0, min_area=9, thresh=0):
         bounding box), peak list, and bounding box in the full image.
     """
     image = np.asarray(image)
-    height, width = image.shape
-    _footprints = []
-    unchecked = np.ones((height, width), dtype=bool)
-    footprint = np.zeros((height, width), dtype=bool)
+    labeled, n_labels = ndimage_label(image > thresh)
+    if n_labels == 0:
+        return []
 
-    for i in range(height):
-        for j in range(width):
-            bounds = [[i, i + 1], [j, j + 1]]
-            get_connected_pixels(i, j, image, unchecked, footprint, bounds, thresh)
-            (y0, y1), (x0, x1) = bounds
-            sub_h = y1 - y0
-            sub_w = x1 - x0
-            if sub_h * sub_w > min_area:
-                sub_fp = footprint[y0:y1, x0:x1]
-                if sub_fp.sum() >= min_area:
-                    patch = image[y0:y1, x0:x1].copy()
-                    patch[~sub_fp] = 0
-                    peaks = _get_patch_peaks(patch, min_separation, y0=y0, x0=x0)
-                    if peaks:
-                        _footprints.append(
-                            Footprint(sub_fp.copy(), peaks, ((y0, y1), (x0, x1)))
-                        )
-            footprint[y0:y1, x0:x1] = False
+    _footprints = []
+    for slices, label in zip(find_objects(labeled), range(1, n_labels + 1)):
+        sy, sx = slices
+        sub_fp = labeled[sy, sx] == label
+        if sub_fp.sum() < min_area:
+            continue
+        y0, y1, x0, x1 = sy.start, sy.stop, sx.start, sx.stop
+        patch = image[y0:y1, x0:x1].copy()
+        patch[~sub_fp] = 0
+        peaks = _get_patch_peaks(patch, min_separation, y0=y0, x0=x0)
+        if peaks:
+            _footprints.append(Footprint(sub_fp, peaks, ((y0, y1), (x0, x1))))
 
     return _footprints
 
@@ -637,7 +579,7 @@ def get_detect_wavelets(images, variance, max_scale=3, K=3):
     sigma = np.sqrt(1/weights.sum())
     _coeffs = np.asarray(starlet_transform(detect, scales=max_scale))
     M, sigma_j = get_multiresolution_support(detect, _coeffs, sigma, K=K, epsilon=1e-1, max_iter=20)
-    return M * _coeffs, np.asarray(sigma_j)
+    return np.asarray(M) * _coeffs, np.asarray(sigma_j)
 
 
 def get_blend_trees(detect, scales=None, min_separation=0, min_area=9, thresh=0):
