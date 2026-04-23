@@ -12,6 +12,7 @@ import heapq
 from dataclasses import dataclass, field
 
 import numpy as np
+from equinox import tree_pformat
 from scipy.ndimage import binary_fill_holes, find_objects
 from scipy.ndimage import label as ndimage_label
 from scipy.optimize import linear_sum_assignment
@@ -61,6 +62,9 @@ class Footprint:
     footprint: np.ndarray
     peaks: list[Peak]
     bounds: tuple[tuple[int, int], tuple[int, int]]
+
+    def __repr__(self):
+        return tree_pformat(self)
 
 
 # ---------------------------------------------------------------------------
@@ -799,6 +803,9 @@ class HierarchicalFootprint:
     footprint: np.ndarray
     scale: int
     children: list["HierarchicalFootprint"] = field(default_factory=list)
+
+    def __repr__(self):
+        return tree_pformat(self)
 
 
 def hierarchical_footprints(

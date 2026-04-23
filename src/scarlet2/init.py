@@ -473,7 +473,7 @@ def _footprints_to_sources(obs, detect, footprints, scales, catalog):
                 spectrum = jnp.maximum(spectrum, 0)
                 _images -= spectrum[:, None, None] * source_detect[None, :, :]
                 morph = jnp.maximum(source_detect[fp.bbox.slices], 0)
-                factor = morph.sum() / morph.max()
+                factor = morph.max()
                 morph = morph / factor
                 spectrum *= factor
 
