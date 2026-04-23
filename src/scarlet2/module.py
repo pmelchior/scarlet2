@@ -31,6 +31,23 @@ class Module(eqx.Module):
         """Evaluate the model"""
         raise NotImplementedError
 
+    def replace(self, name, value):
+        """Replace member attribuge `name` with `value`
+
+        Parameters
+        ----------
+        name: str
+            Name of member to replace
+        value: any
+            Value to replace member with
+
+        Returns
+        -------
+        Module
+            The modified module.
+        """
+        return eqx.tree_at(lambda x: getattr(x, name), self, replace=value)
+
     @property
     def parameters(self):
         """Parameters defined for this module
