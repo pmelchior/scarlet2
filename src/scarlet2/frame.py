@@ -28,7 +28,7 @@ class Frame(Module):
     def __init__(self, bbox, psf=None, wcs=None, channels=None):
         self.bbox = bbox
         if isinstance(psf, (list, tuple, np.ndarray, jnp.ndarray)):
-            psf = jnp.asarray(psf).astype(float)
+            psf = jnp.asarray(psf, dtype=float)
             psf = ArrayPSF(psf)
         self.psf = psf
         if wcs is None:

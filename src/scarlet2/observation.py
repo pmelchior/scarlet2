@@ -39,12 +39,12 @@ class Observation(Module):
     """Name to describe the observation"""
 
     def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None, name=None):
-        self.data = jnp.asarray(data).astype(float)
+        self.data = jnp.asarray(data, dtype=float)
         if self.data.ndim == 2:
             # add a channel dimension if it is missing
             self.data = self.data[None, ...]
 
-        self.weights = jnp.asarray(weights).astype(float)
+        self.weights = jnp.asarray(weights, dtype=float)
         if self.weights is not None and self.weights.ndim == 2:
             # add a channel dimension if it is missing
             self.weights = self.weights[None, ...]
