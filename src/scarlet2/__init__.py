@@ -59,6 +59,7 @@ from .wavelets import Starlet
 # for * imports and docs
 __all__ = [
     "constraint",
+    "detect",
     "init",
     "measure",
     "plot",

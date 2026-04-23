@@ -525,6 +525,10 @@ def observation(
 # ------------------------------------------------------ #
 # include a routine to calculate the hallucination score #
 #  ----------------------------------------------------- #
+
+
+# ruff: noqa: F821
+# ignore jnp functions for outdated hallucination score
 def cut_square_box(arr, center, size):
     """
     Cut out a square box from a 2D array based on the center and size.

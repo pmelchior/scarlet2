@@ -10,7 +10,6 @@ compatible with JAX's JIT.  Both NumPy and JAX arrays are accepted as inputs.
 
 import heapq
 from dataclasses import dataclass, field
-from typing import List, Tuple
 
 import numpy as np
 from scipy.ndimage import binary_fill_holes, find_objects
@@ -60,8 +59,8 @@ class Footprint:
     """
 
     footprint: np.ndarray
-    peaks: List[Peak]
-    bounds: Tuple[Tuple[int, int], Tuple[int, int]]
+    peaks: list[Peak]
+    bounds: tuple[tuple[int, int], tuple[int, int]]
 
 
 # ---------------------------------------------------------------------------
@@ -192,11 +191,14 @@ def box_intersect(box1, box2):
 
     Parameters
     ----------
-    box1, box2 : Box
+    box1: Box
+        First box
+    box2: Box
+        Second box
 
     Returns
     -------
-    overlap : bool
+    bool
     """
     overlap = box1 & box2
     return overlap.shape[0] != 0 and overlap.shape[1] != 0
@@ -287,7 +289,6 @@ class QuadTreeRegion:
         self.capacity = capacity
         self.depth = depth
         self.detect = detect
-        self.debug = detect is not None
 
     def footprint_image(self, bbox=None):
         """Return a 2-D image of all footprint masks in the tree.
@@ -350,10 +351,11 @@ class QuadTreeRegion:
         Parameters
         ----------
         footprints : list of Footprint
+            Footprints to add bounding boxes for.
 
         Returns
         -------
-        self : QuadTreeRegion
+        self
         """
         for fp in footprints:
             box = Box.from_bounds(*fp.bounds)
@@ -363,21 +365,12 @@ class QuadTreeRegion:
 
     def split(self):
         """Sub-divide this region into four quadrants."""
-        import matplotlib.pyplot as plt
 
         height, width = self.bbox.shape
         h2 = height // 2
         w2 = width // 2
         h3 = height - h2
         w3 = width - w2
-
-        if self.debug:
-            fig, ax = plt.subplots()
-            ax.imshow(self.detect[2], cmap="Greys")
-            ax.set_title(self.depth)
-            draw_box(self.bbox, ax, "r")
-            for box in self.boxes:
-                draw_box(box, ax, "b")
 
         origin = self.bbox.origin
         self.sub_regions = [
@@ -463,6 +456,7 @@ class SingleScaleStructure:
         scale : int
             Wavelet scale of the primary footprint.
         footprint : Footprint
+            The footprint at the primary scale.
         """
         self.scale = scale
         self.footprint = footprint
@@ -476,7 +470,9 @@ class SingleScaleStructure:
         Parameters
         ----------
         scale : int
+            The wavelet scale of this structure.
         footprint : Footprint
+            The footprint at the primary scale.
         """
         if scale not in self.peaks:
             self.peaks[scale] = []
@@ -490,7 +486,9 @@ class SingleScaleStructure:
         Parameters
         ----------
         scale : int
+            The wavelet scale of this structure.
         tree : QuadTreeRegion
+            The tree at this scale.
 
         Returns
         -------
@@ -545,15 +543,17 @@ def get_wavelets(images, variance, max_scale=3):
     return np.array(coeffs)
 
 
-def get_detect_wavelets(images, variance, max_scale=3, K=3, image_type="ground"):
+def get_detect_wavelets(image, variance, max_scale=3, K=3, image_type="ground"):
     """Get starlet coefficients of a detection image for source finding.
 
     The detection image is inverse varianced weighted sum of `images` across all bands.
 
     Parameters
     ----------
-    images : array-like, shape (bands, height, width)
+    image : array-like, shape (bands, height, width)
+        Image to run multi-scale detection on.
     variance : array-like, shape (bands, height, width)
+        Variance for every pixel in `image`.
     max_scale : int
         Number of wavelet scales.
     K: float
@@ -576,11 +576,11 @@ def get_detect_wavelets(images, variance, max_scale=3, K=3, image_type="ground")
     --------
     :func:`~scarlet2.wavelets.get_multiresolution_support`
     """
-    images = np.asarray(images)
+    image = np.asarray(image)
     variance = np.asarray(variance)
     sigma = np.median(np.sqrt(variance), axis=(-2, -1))
     weights = 1 / sigma**2  # inverse variance weighting, per band
-    detect = np.sum(images * weights[:, None, None], axis=0) / np.sum(weights)
+    detect = np.sum(image * weights[:, None, None], axis=0) / np.sum(weights)
     sigma = np.sqrt(1 / weights.sum())
     _coeffs = np.asarray(starlet_transform(detect, scales=max_scale))
     M, sigma_j = get_multiresolution_support(detect, _coeffs, sigma, K=K, image_type=image_type)
@@ -611,11 +611,7 @@ def get_blend_trees(detect, scales=None, min_separation=0, min_area=9, thresh=0)
     all_footprints : list of list of Footprint
         Raw footprints at each selected scale (same ordering as ``trees``).
     """
-    if scales is None:
-        scales = list(range(len(detect)))
-    else:
-        scales = sorted(scales)
-
+    scales = list(range(len(detect))) if scales is None else sorted(scales)
     all_footprints = []
     for s in scales:
         _footprints = footprints(
@@ -657,11 +653,7 @@ def get_blend_structures(detect, scales=None, min_separation=0, min_area=9, thre
     structures : list of SingleScaleStructure
         Structures at largest scale with peaks from smaller scales attached.
     """
-    if scales is None:
-        scales = list(range(len(detect)))
-    else:
-        scales = sorted(scales)
-
+    scales = list(range(len(detect))) if scales is None else sorted(scales)
     all_footprints = []
     for s in scales:
         _footprints = footprints(
@@ -802,11 +794,11 @@ class HierarchicalFootprint:
         spatially inconsistent with this source's primary peak.
     """
 
-    peak: Tuple[int, int]
+    peak: tuple[int, int]
     bbox: Box
     footprint: np.ndarray
     scale: int
-    children: List["HierarchicalFootprint"] = field(default_factory=list)
+    children: list["HierarchicalFootprint"] = field(default_factory=list)
 
 
 def hierarchical_footprints(

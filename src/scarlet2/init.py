@@ -456,17 +456,11 @@ def _sort_spectra(spectra, channels):
 
 
 def _footprints_to_sources(obs, detect, footprints, scales, catalog):
-    try:
-        frame = Scenery.scene.frame
-    except AttributeError:
-        print("Attributes defined in sky coordinates can only be created within the context of a Scene")
-        print("Use 'with Scene(frame) as scene: (...)'")
-        raise
-
     _images = jnp.copy(obs.data)
     shape = obs.frame.bbox.spatial.shape
-    spec_box = Box(shape=(obs.frame.C,))
-    res = [ None,] * len(footprints)
+    res = [
+        None,
+    ] * len(footprints)
     for scale in sorted(scales, reverse=True):  # largest to smallest scales
         for i, fp in enumerate(footprints):
             if fp is not None and fp.scale == scale:
@@ -503,7 +497,7 @@ def _footprints_to_sources(obs, detect, footprints, scales, catalog):
 
 def hierarchical_sources(
     obs,
-    scales=[1, 2, 3],
+    scales=None,
     detect=None,
     footprints=None,
     catalog=None,
@@ -533,7 +527,7 @@ def hierarchical_sources(
         The observation providing image data, per-pixel weights, and the
         coordinate frame used to convert ``centers`` to pixel positions.
     scales : list of int, optional
-        Starlet scales (indices into the coefficient array) to use for detection.
+        Starlet scales (indices into the coefficient array, default `[1,2,3]`) to use for detection.
     detect : ndarray, shape (max_scale+1, H, W), optional
         Pre-computed masked starlet coefficients from
         :func:`~scarlet2.detect.get_detect_wavelets`.  If ``None``, computed
@@ -584,7 +578,7 @@ def hierarchical_sources(
     --------
     :func:`~scarlet2.wavelets.get_detect_wavelets`, :func:`~scarlet2.detect.hierarchical_footprints`
     """
-    scales = sorted(scales)
+    scales = [1, 2, 3] if scales is None else sorted(scales)
     # for strict scale separation, need to push the "remaining" largest scale to one larger than max_scale
     max_scale = max(scales) + strict
     sigma = None
