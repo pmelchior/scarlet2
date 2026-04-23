@@ -1,7 +1,7 @@
 
 [project]
 name = "scarlet2"
-license = {file = "LICENSE"}
+license-files = ["LICENSE"]
 readme = "README.md"
 authors = [
     { name = "Peter Melchior", email = "peter.m.melchior@gmail.com" }
@@ -18,7 +18,7 @@ dynamic = ["version"]
 requires-python = ">=3.10"
 dependencies = [
     "equinox",
-    "jax",
+    "jax<=0.9.2", # numpyro breaks with jax0.10: https://github.com/pyro-ppl/numpyro/issues/2174
     "astropy",
     "numpy",
     "scipy",
