@@ -456,12 +456,17 @@ def _sort_spectra(spectra, channels):
 
 
 def _footprints_to_sources(obs, detect, footprints, scales, catalog):
+    try:
+        frame = Scenery.scene.frame
+    except AttributeError:
+        print("Attributes defined in sky coordinates can only be created within the context of a Scene")
+        print("Use 'with Scene(frame) as scene: (...)'")
+        raise
+
     _images = jnp.copy(obs.data)
     shape = obs.frame.bbox.spatial.shape
     spec_box = Box(shape=(obs.frame.C,))
-    res = [
-        None,
-    ] * len(footprints)
+    res = [ None,] * len(footprints)
     for scale in sorted(scales, reverse=True):  # largest to smallest scales
         for i, fp in enumerate(footprints):
             if fp is not None and fp.scale == scale:
@@ -483,15 +488,15 @@ def _footprints_to_sources(obs, detect, footprints, scales, catalog):
                 center = obs.frame.get_sky_coord(fp.bbox.center)
                 res[i] = (peak, center, spectrum, morph)
 
-    # sweep for centers with non-detections: initialize them as compact sources
+    # sweep for catalog sources with non-detections: initialize them as compact sources
     if catalog is not None:
-        for i, center in enumerate(catalog):
+        for i, peak in enumerate(catalog):
             if footprints[i] is None:
-                pixel = center.astype(int)
-                spectrum = _images[:, pixel[0], pixel[1]]
+                pixel = peak.astype(int)
+                spectrum = jnp.asarray(_images[:, pixel[0], pixel[1]])
                 morph = compact_morphology()
-                center = obs.frame.get_sky_coord(center)
-                peak = center
+                peak = obs.frame.get_sky_coord(peak)
+                center = peak
                 res[i] = (peak, center, spectrum, morph)
     return res
 
