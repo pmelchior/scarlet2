@@ -16,79 +16,48 @@ from .renderer import ChannelRenderer
 
 
 def channels_to_rgb(channels):
-    """Get the linear mapping of multiple channels to RGB channels
-    The mapping created here assumes that the channels are ordered in wavelength
-    direction, starting with the shortest wavelength. The mapping seeks to produce
-    a relatively even weights for across all channels. It does not consider e.g.
-    signal-to-noise variations across channels or human perception.
+    """Get the linear mapping of multiple channels to RGB channels.
+
+    Channels are assumed to be ordered by wavelength, shortest first.
+
+    Each channel i is treated as occupying the unit interval ``[i, i+1]`` in
+    spectral-index space ``[0, N]``.  That space is divided into three equal
+    contiguous bands allocated to B, G, and R::
+
+        Blue:  [0,     N/3]
+        Green: [N/3,  2N/3]
+        Red:   [2N/3,   N]
+
+    The weight of channel i in each RGB output is the fractional overlap of
+    ``[i, i+1]`` with the corresponding band.  By construction:
+
+    * Column sums equal 1 — 100% of each input channel's intensity reaches
+      the display (photon conservation).
+    * Row sums all equal N/3 — every RGB output channel receives the same
+      total weight (doubly balanced).
 
     Parameters
     ----------
-    channels: int in range(0,7)
-        Number of channels
+    channels: int
+        Number of channels (any positive integer).
 
     Returns
     -------
     array
-     (3, channels) to map onto RGB
+        Shape ``(3, channels)`` mapping input channels onto RGB.
     """
-    assert channels in range(0, 8), f"No mapping has been implemented for more than {channels} channels"
+    assert channels >= 1, "channels must be a positive integer"
 
     channel_map = np.zeros((3, channels))
     if channels == 1:
-        channel_map[0, 0] = channel_map[1, 0] = channel_map[2, 0] = 1
-    elif channels == 2:
-        channel_map[0, 1] = 0.667
-        channel_map[1, 1] = 0.333
-        channel_map[1, 0] = 0.333
-        channel_map[2, 0] = 0.667
-        channel_map /= 0.667
-    elif channels == 3:
-        channel_map[0, 2] = 1
-        channel_map[1, 1] = 1
-        channel_map[2, 0] = 1
-    elif channels == 4:
-        channel_map[0, 3] = 1
-        channel_map[0, 2] = 0.333
-        channel_map[1, 2] = 0.667
-        channel_map[1, 1] = 0.667
-        channel_map[2, 1] = 0.333
-        channel_map[2, 0] = 1
-        channel_map /= 1.333
-    elif channels == 5:
-        channel_map[0, 4] = 1
-        channel_map[0, 3] = 0.667
-        channel_map[1, 3] = 0.333
-        channel_map[1, 2] = 1
-        channel_map[1, 1] = 0.333
-        channel_map[2, 1] = 0.667
-        channel_map[2, 0] = 1
-        channel_map /= 1.667
-    elif channels == 6:
-        channel_map[0, 5] = 1
-        channel_map[0, 4] = 0.667
-        channel_map[0, 3] = 0.333
-        channel_map[1, 4] = 0.333
-        channel_map[1, 3] = 0.667
-        channel_map[1, 2] = 0.667
-        channel_map[1, 1] = 0.333
-        channel_map[2, 2] = 0.333
-        channel_map[2, 1] = 0.667
-        channel_map[2, 0] = 1
-        channel_map /= 2
-    elif channels == 7:
-        channel_map[:, 6] = 2 / 3.0
-        channel_map[0, 5] = 1
-        channel_map[0, 4] = 0.667
-        channel_map[0, 3] = 0.333
-        channel_map[1, 4] = 0.333
-        channel_map[1, 3] = 0.667
-        channel_map[1, 2] = 0.667
-        channel_map[1, 1] = 0.333
-        channel_map[2, 2] = 0.333
-        channel_map[2, 1] = 0.667
-        channel_map[2, 0] = 1
-        channel_map /= 2
+        channel_map[:, 0] = 1 / 3
+    else:
+        s = channels / 3  # width of each RGB band in spectral-index units
+        for i in range(channels):
+            lo, hi = float(i), float(i + 1)
+            channel_map[2, i] = max(0.0, min(hi, s) - lo)  # B: [0, s]
+            channel_map[1, i] = max(0.0, min(hi, 2 * s) - max(lo, s))  # G: [s, 2s]
+            channel_map[0, i] = max(0.0, min(hi, 3 * s) - max(lo, 2 * s))  # R: [2s, 3s]
     return channel_map
 
 
