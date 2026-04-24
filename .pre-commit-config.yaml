@@ -21,7 +21,7 @@ repos:
         exclude: ^docs/pre_executed
         stages: [pre-commit]
         language: system
-        entry: jupyter nbconvert --clear-output || exit 0
+        entry: bash -c 'jupyter nbconvert --clear-output "$@" || true' --
     # Prevents committing directly branches named 'main' and 'master'.
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0

@@ -1,6 +1,7 @@
 """Plotting functions"""
 
 from abc import ABC, abstractmethod
+from warnings import warn
 
 import astropy
 import matplotlib.animation as animation
@@ -387,6 +388,8 @@ def observation(
     show_psf=False,
     add_peaks=None,
     add_footprints=None,
+    add_labels=False,
+    sky_coords=None,
     split_channels=False,
     fig_kwargs=None,
     title_kwargs=None,
@@ -408,10 +411,16 @@ def observation(
     show_psf: bool, optional
         Whether to plot a panel with the PSF model of `observation` centered in
         the middle
-    add_peaks: (None, List[astropy.SkyCoords], List[SourceFootprints]), optional
+    add_peaks: (None, list[astropy.SkyCoords], list[SourceFootprints]), optional
         Whether to plot a text label with the running number for each of the listed coordinates
-    add_footprints: (None, List[SourceFootprints]), optional
+    add_footprints: (None, list[SourceFootprints]), optional
         Whether to plot the footprints as semi-transparent layer over the image
+    add_labels: bool, optional
+        Whether source IDs are shown at the location of `sky_coords`.
+        Deprecated: use `add_peaks` instead!
+    sky_coords: list[astropy.SkyCoords], optional
+        Coordinates to plot source IDs.
+        Deprecated: use `add_peaks` instead!
     split_channels: bool, optional
         Whether to split the observation into separate channels
     fig_kwargs: dict, optional
@@ -432,6 +441,14 @@ def observation(
         title_kwargs = {}
     if label_kwargs is None:
         label_kwargs = {"color": "w", "ha": "center", "va": "center"}
+
+    if add_labels or sky_coords is not None:
+        warn(
+            "`add_labels` and `sky_coords` are deprecated, use `add_peaks=ra_dec` instead!",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        add_peaks = sky_coords
 
     if show_psf:
         assert observation.frame.psf is not None, "show_psf requires observation.frame.psf to be set"
