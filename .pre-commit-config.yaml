@@ -11,17 +11,15 @@ repos:
         description: Compare current template version against latest
         verbose: true
     # Clear output from jupyter notebooks so that only the input cells are committed.
-    # Avoid reporting error when this hook is triggered
-  - repo: local
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.9.1
     hooks:
-      - id: jupyter-nb-clear-output
+      - id: nbstripout
         name: Clear output from Jupyter notebooks
         description: Clear output from Jupyter notebooks.
         files: \.ipynb$
         exclude: ^docs/pre_executed
-        stages: [pre-commit]
-        language: system
-        entry: bash -c 'jupyter nbconvert --clear-output "$@" || true' --
+        args: [--extra-keys, "metadata.colab metadata.kernelspec cell.metadata.id cell.metadata.executionInfo cell.metadata.execution"]
     # Prevents committing directly branches named 'main' and 'master'.
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0

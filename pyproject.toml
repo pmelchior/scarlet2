@@ -50,6 +50,7 @@ dev = [
     "pytest-cov", # Used to report total code coverage
     "pytest-mock", # Used to mock objects in tests
     "ruff", # Used for static linting of files
+    "nbstripout", # cleans jupyter notebooks as automated git hook
 ]
 
 [build-system]
