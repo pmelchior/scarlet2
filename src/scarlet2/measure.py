@@ -2,8 +2,9 @@
 
 import copy
 
-import numpy as jnp
-import numpy.ma as ma
+import jax.numpy as jnp
+import numpy as np
+from scipy.optimize import nnls
 
 from .frame import get_affine, get_scale_angle_flip_shift
 from .source import Component
@@ -133,12 +134,10 @@ def snr(component, observations):
     # flatten in channel direction because it may not have all C channels; concatenate
     # do same thing for noise variance
     for obs in observations:
-        noise_rms = 1 / jnp.sqrt(ma.masked_equal(obs.weights, 0))
-        ma.set_fill_value(noise_rms, jnp.inf)
+        noise_var = jnp.where(obs.weights > 0, 1.0 / obs.weights, jnp.inf)
         model_ = obs.render(model)
         m.append(model_.reshape(-1))
         w.append((model_ / (model_.sum(axis=(-2, -1))[:, None, None])).reshape(-1))
-        noise_var = noise_rms**2
         var.append(noise_var.reshape(-1))
     m = jnp.concatenate(m)
     w = jnp.concatenate(w)
@@ -205,8 +204,7 @@ class Moments(dict):
                 else:
                     center = jnp.asarray(center)
                     # centroid wrt given center
-                    self._centroid[0] -= center[0] * self[0, 0]
-                    self._centroid[1] -= center[1] * self[0, 0]
+                    self._centroid -= center[:, None] * self[0, 0][None, :]
                     self[1, 0] -= center[0] * self[0, 0]
                     self[0, 1] -= center[1] * self[0, 0]
                 if model.ndim == 3 and center[0].ndim == 1:
@@ -441,6 +439,12 @@ class Moments(dict):
         self
         """
 
+        # astropy Quantities need explicit unit conversion; jnp trig doesn't have numpy's ufunc hooks
+        if hasattr(phi, "to"):
+            import astropy.units as u
+
+            phi = phi.to(u.rad).value
+
         mu_p = {}
         for n in range(self.N + 1):
             for j in range(n + 1):
@@ -554,7 +558,7 @@ def forced_photometry(scene, obs):
     """Computes the spectra of every source in the scene to match the observations
 
     Computes the best-fit amplitude of the rendered model of all components in every
-    channel of every observation as a linear inverse problem.
+    channel of every observation as a non-negative least squares problem.
 
     If sources/sources components in `scene` have non-flat spectra, the output of this function is
     the correction factor that needs to be applied to those spectra to best match each channel of `obs`.
@@ -572,11 +576,13 @@ def forced_photometry(scene, obs):
         Array of the spectra, in the order of the sources in the scene
     """
 
-    # extract multi-channel model for every source
+    # extract model for every source, assumes all sources are single components
     models = []
+    flat_spectrum = jnp.ones(scene.frame.C)
     for i, src in enumerate(scene.sources):
-        # evaluate the model for any source so that fit includes it even if its spectrum is not updated
-        model = scene.evaluate_source(src)  # assumes all sources are single components
+        # need to enforce flat unit spectrum
+        src_ = src.replace("spectrum", flat_spectrum)
+        model = scene.evaluate_source(src_)
 
         # check for models with identical initializations, see scarlet repo issue #282
         # if duplicate: raise ValueError
@@ -611,12 +617,17 @@ def forced_photometry(scene, obs):
         # so we check if *most* of the flux is from pixels with non-zero weight
         nonzero = jnp.sum(mw, axis=1) / jnp.sum(m, axis=1) / jnp.mean(w) > 0.1
         nonzero = jnp.flatnonzero(nonzero)
+        sqrt_w = jnp.sqrt(w)
         if len(nonzero) == num_models:
-            covar = jnp.linalg.inv(mw @ m.T)
-            spectra = spectra.at[:, c].set(covar @ m @ (im * w))
+            A = np.array((m * sqrt_w[None, :]).T)
+            b = np.array(im * sqrt_w)
+            result, _ = nnls(A, b)
+            spectra = spectra.at[:, c].set(result)
         else:
-            covar = jnp.linalg.inv(mw[nonzero] @ m[nonzero].T)
-            spectra = spectra.at[nonzero, c].set(covar @ m[nonzero] @ (im * w))
+            A = np.array((m[nonzero] * sqrt_w[None, :]).T)
+            b = np.array(im * sqrt_w)
+            result, _ = nnls(A, b)
+            spectra = spectra.at[nonzero, c].set(result)
 
     return spectra
 
