@@ -1,14 +1,19 @@
 """Helper methods to initialize sources"""
 
 import operator
+import warnings
+from dataclasses import dataclass
 from functools import reduce
 
+import astropy
 import astropy.units as u
 import jax.numpy as jnp
+from equinox import tree_pformat
 
 from . import Scenery, measure
 from .bbox import Box, insert_into
-from .detect import get_detect_wavelets, hierarchical_footprints
+from .detect import HierarchicalFootprint, get_detect_wavelets, hierarchical_footprints
+from .frame import get_relative_jacobian_shift
 from .morphology import GaussianMorphology
 from .observation import Observation
 
@@ -455,7 +460,60 @@ def _sort_spectra(spectra, channels):
     return spectrum
 
 
+@dataclass
+class HierarchicalSourceInfo:
+    """Information for initializing a hierarchical source.
+
+    Attributes
+    ----------
+    peak: astropy.coordinates.SkyCoord
+        Sky position of detected peak
+    center: astropy.coordinates.SkyCoord
+        Sky position of the center of the bounding box
+    spectrum: jnp.array
+        1-D array of per-channel flux, shape ``(model.frame.C,)``
+    morphology: jnp.array
+        2-D intensity map, clipped to the footprint bounding box, normalized to maximum of 1
+    footprint: HierarchicalFootprint
+        The footprint from :func:`~scarlet2.detect.hierarchical_footprints`
+    """
+
+    peak: astropy.coordinates.SkyCoord
+    center: astropy.coordinates.SkyCoord
+    spectrum: jnp.array
+    morphology: jnp.array
+    footprint: HierarchicalFootprint
+
+    def __repr__(self):
+        return tree_pformat(self)
+
+
 def _footprints_to_sources(obs, detect, footprints, scales, catalog):
+    try:
+        frame = Scenery.scene.frame
+    except AttributeError:
+        print("Attributes defined in sky coordinates can only be created within the context of a Scene")
+        print("Use 'with Scene(frame) as scene: (...)'")
+        raise
+
+    # we need a proper renderer to determine placement in the model frame
+    obs.check_set_renderer(frame)
+    # spatial differences
+    jac, shift = get_relative_jacobian_shift(frame, obs.frame)
+    if not jnp.allclose(jnp.linalg.det(jac), 1) or not jnp.allclose(shift, shift.astype(int)):
+        warnings.warn(
+            "hierarchical_sources does not support resampling. Align `obs` first!",
+            stacklevel=2,
+        )
+    # map between frame and obs channels: assumes clean 1-to-1 mapping
+    if frame.channels != obs.frame.channels:
+        frame_channels = list(frame.channels)
+        obs_channels = list(obs.frame.channels)
+        obs_idx = {c: i for i, c in enumerate(obs_channels)}
+        channel_map = {i: obs_idx[c] for i, c in enumerate(frame_channels) if c in obs_idx}
+        frame_channels = jnp.asarray(list(channel_map.keys()))
+        obs_channels = jnp.asarray(list(channel_map.values()))
+
     _images = jnp.copy(obs.data)
     shape = obs.frame.bbox.spatial.shape
     res = [
@@ -466,13 +524,15 @@ def _footprints_to_sources(obs, detect, footprints, scales, catalog):
             if fp is not None and fp.scale == scale:
                 footprint_map = insert_into(jnp.zeros(shape), jnp.asarray(fp.footprint), fp.bbox)
                 source_detect = detect[scale] * footprint_map
-                # MLE of flux per band given the morphology from source_detect
+                # spectrum: MLE of flux per band given the morphology from source_detect
                 spectrum = (_images * source_detect[None, :, :]).sum(axis=(-2, -1)) / jnp.sum(
                     source_detect**2
                 )
                 spectrum = jnp.maximum(spectrum, 0)
                 _images -= spectrum[:, None, None] * source_detect[None, :, :]
+                # morph: detection image at detection scale within the footprint
                 morph = jnp.maximum(source_detect[fp.bbox.slices], 0)
+                # max normalization
                 factor = morph.max()
                 morph = morph / factor
                 spectrum *= factor
@@ -480,7 +540,10 @@ def _footprints_to_sources(obs, detect, footprints, scales, catalog):
                 # convert peak and box center to RA/Dec
                 peak = obs.frame.get_sky_coord((fp.peak.y, fp.peak.x))
                 center = obs.frame.get_sky_coord(fp.bbox.center)
-                res[i] = (peak, center, spectrum, morph)
+                # ensure correct placement of observed spectrum in model_frame
+                if frame.channels != obs.frame.channels:
+                    spectrum = jnp.zeros(frame.C).at[frame_channels].set(spectrum[obs_channels])
+                res[i] = HierarchicalSourceInfo(peak, center, spectrum, morph, fp)
 
     # sweep for catalog sources with non-detections: initialize them as compact sources
     if catalog is not None:
@@ -488,10 +551,13 @@ def _footprints_to_sources(obs, detect, footprints, scales, catalog):
             if footprints[i] is None:
                 pixel = peak.astype(int)
                 spectrum = jnp.asarray(_images[:, pixel[0], pixel[1]])
+                spectrum = jnp.maximum(spectrum, 0)
+                if frame.channels != obs.frame.channels:
+                    spectrum = jnp.zeros(frame.C).at[frame_channels].set(spectrum[obs_channels])
                 morph = compact_morphology()
                 peak = obs.frame.get_sky_coord(peak)
                 center = peak
-                res[i] = (peak, center, spectrum, morph)
+                res[i] = HierarchicalSourceInfo(peak, center, spectrum, morph, footprints[i])
     return res
 
 
@@ -565,14 +631,8 @@ def hierarchical_sources(
 
     Returns
     -------
-    sources : list of tuple
+    sources : list[HierarchicalSourceInfo]
         One entry per detected footprint, each a
-        ``(peak, center, spectrum, morphology)`` tuple where
-
-        - ``peak``: sky position of detected peak
-        - ``center``:  sky position of the center of the bounding box
-        - ``spectrum``: 1-D array of per-channel flux, shape ``(C,)``
-        - ``morphology``: 2-D normalized intensity map clipped to the footprint bounding box
 
     See Also
     --------

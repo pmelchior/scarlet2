@@ -459,7 +459,6 @@ def get_relative_jacobian_shift(frame_in, frame_out):
     center_model_in_obs = frame_out.get_pixel(frame_in.get_sky_coord(center_model))
     center_obs = jnp.array(frame_out.bbox.spatial.center)
     shift = center_obs - center_model_in_obs
-    shift = tuple(c.item() for c in shift)  # avoid tracing
     return jacobian, shift
 
 

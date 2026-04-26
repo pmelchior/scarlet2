@@ -1,7 +1,7 @@
-"""Detection utilities: connected-pixel footprint extraction and peak finding.
+"""Detection methods
 
 Higher-level helpers (``get_wavelets``, ``QuadTreeRegion``, ``get_peaks``, …)
-are adapted from scarlet v1's ``detect.py``.
+are adapted from scarlet1's ``detect.py``.
 
 Uses NumPy rather than JAX because detection involves dynamic data structures
 (variable-length peak lists, irregularly shaped footprints) that are not
