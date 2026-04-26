@@ -23,15 +23,15 @@ class Component(Module):
     """
 
     center: jnp.ndarray
-    """Center position, in pixel coordinates of the model frame"""
+    """Center position, in sky coordinates or pixel coordinates of the model frame"""
     spectrum: (jnp.array, Spectrum)
     """Spectrum model"""
     morphology: (jnp.array, Morphology)
     """Morphology model"""
     bbox: Box
-    """Bounding box of the model, in pixel coordinates of the model frame"""
+    """Bounding box of the model, in sky coordinates or pixel coordinates of the model frame"""
 
-    def __init__(self, center, spectrum, morphology):
+    def __init__(self, center, spectrum, morphology, bbox=None):
         """
         Parameters
         ----------
@@ -42,6 +42,8 @@ class Component(Module):
             The spectrum of the component.
         morphology: :py:class:`~scarlet2.Morphology`
             The morphology of the component.
+        bbox: :py:class:`~scarlet2.Box`, optional
+            Bounding box of the component in pixel coordinates of the model frame.
 
         Examples
         --------
@@ -64,10 +66,12 @@ class Component(Module):
         self.morphology = _to_pixels(frame, morphology)
 
         # define box with integer pixel coordinates to place the component
-        box = Box(spectrum.shape)
-        box2d = Box(morphology.shape)
-        box2d.set_center(self.center.astype(int))
-        self.bbox = box @ box2d
+        if bbox is None:
+            box = Box(spectrum.shape)
+            box2d = Box(morphology.shape)
+            box2d.set_center(self.center.astype(int))
+            bbox = box @ box2d
+        self.bbox = bbox
 
     def __call__(self):
         """What to run when Component is called"""
@@ -105,17 +109,18 @@ class Source(Component):
     component_ops: list
     """List of operators to combine `components` for the final model"""
 
-    def __init__(self, center, spectrum, morphology):
+    def __init__(self, center, spectrum, morphology, bbox=None):
         """
         Parameters
         ----------
         center: array, :py:class:`astropy.coordinates.SkyCoord`
-            Center position. If given as astropy sky coordinate, it will be
-            transformed with the WCS of the model frame.
+            Center position in sky coordinates or pixel coordinates of the model frame.
         spectrum: array, :py:class:`~scarlet2.Spectrum`
             The spectrum of the source.
         morphology: array, :py:class:`~scarlet2.Morphology`
             The morphology of the source.
+        bbox: :py:class:`~scarlet2.Box`, optional
+            Bounding box of the component in sky coordinates or pixel coordinates of the model frame.
 
         Examples
         --------
@@ -134,19 +139,20 @@ class Source(Component):
         >>>    source *= DustComponent(center, dust_spectrum, dust_morphology)
         """
         # set the base component
-        super().__init__(center, spectrum, morphology)
+        super().__init__(center, spectrum, morphology, bbox=bbox)
         # create the empty component list
         self.components = list()
         self.component_ops = list()
 
         # add this source to the active scene
         try:
-            Scenery.scene.sources.append(self)
-
+            sources = Scenery.scene.sources
         except AttributeError:
             print("Source can only be created within the context of a Scene")
             print("Use 'with Scene(frame) as scene: Source(...)'")
             raise
+
+        sources.append(self)
 
     def add_component(self, component, op):
         """Add `component` to this source

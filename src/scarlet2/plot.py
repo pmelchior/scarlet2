@@ -1,95 +1,63 @@
 """Plotting functions"""
 
 from abc import ABC, abstractmethod
+from warnings import warn
 
-import jax
-import jax.numpy as jnp
-import jax.random as random
+import astropy
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
-from jax import grad, jit, jvp
 from matplotlib.patches import Polygon
 
 from . import measure
 from .bbox import Box, insert_into
+from .detect import HierarchicalFootprint
 from .renderer import ChannelRenderer
 
 
 def channels_to_rgb(channels):
-    """Get the linear mapping of multiple channels to RGB channels
-    The mapping created here assumes the the channels are ordered in wavelength
-    direction, starting with the shortest wavelength. The mapping seeks to produce
-    a relatively even weights for across all channels. It does not consider e.g.
-    signal-to-noise variations across channels or human perception.
+    """Get the linear mapping of multiple channels to RGB channels.
+
+    Channels are assumed to be ordered by wavelength, shortest first.
+
+    Each channel i is treated as occupying the unit interval ``[i, i+1]`` in
+    spectral-index space ``[0, N]``.  That space is divided into three equal
+    contiguous bands allocated to B, G, and R::
+
+        Blue:  [0,     N/3]
+        Green: [N/3,  2N/3]
+        Red:   [2N/3,   N]
+
+    The weight of channel i in each RGB output is the fractional overlap of
+    ``[i, i+1]`` with the corresponding band.  By construction:
+
+    * Column sums equal 1 — 100% of each input channel's intensity reaches
+      the display (photon conservation).
+    * Row sums all equal N/3 — every RGB output channel receives the same
+      total weight (doubly balanced).
 
     Parameters
     ----------
-    channels: int in range(0,7)
-        Number of channels
+    channels: int
+        Number of channels (any positive integer).
 
     Returns
     -------
     array
-     (3, channels) to map onto RGB
+        Shape ``(3, channels)`` mapping input channels onto RGB.
     """
-    assert channels in range(0, 8), f"No mapping has been implemented for more than {channels} channels"
+    assert channels >= 1, "channels must be a positive integer"
 
     channel_map = np.zeros((3, channels))
     if channels == 1:
-        channel_map[0, 0] = channel_map[1, 0] = channel_map[2, 0] = 1
-    elif channels == 2:
-        channel_map[0, 1] = 0.667
-        channel_map[1, 1] = 0.333
-        channel_map[1, 0] = 0.333
-        channel_map[2, 0] = 0.667
-        channel_map /= 0.667
-    elif channels == 3:
-        channel_map[0, 2] = 1
-        channel_map[1, 1] = 1
-        channel_map[2, 0] = 1
-    elif channels == 4:
-        channel_map[0, 3] = 1
-        channel_map[0, 2] = 0.333
-        channel_map[1, 2] = 0.667
-        channel_map[1, 1] = 0.667
-        channel_map[2, 1] = 0.333
-        channel_map[2, 0] = 1
-        channel_map /= 1.333
-    elif channels == 5:
-        channel_map[0, 4] = 1
-        channel_map[0, 3] = 0.667
-        channel_map[1, 3] = 0.333
-        channel_map[1, 2] = 1
-        channel_map[1, 1] = 0.333
-        channel_map[2, 1] = 0.667
-        channel_map[2, 0] = 1
-        channel_map /= 1.667
-    elif channels == 6:
-        channel_map[0, 5] = 1
-        channel_map[0, 4] = 0.667
-        channel_map[0, 3] = 0.333
-        channel_map[1, 4] = 0.333
-        channel_map[1, 3] = 0.667
-        channel_map[1, 2] = 0.667
-        channel_map[1, 1] = 0.333
-        channel_map[2, 2] = 0.333
-        channel_map[2, 1] = 0.667
-        channel_map[2, 0] = 1
-        channel_map /= 2
-    elif channels == 7:
-        channel_map[:, 6] = 2 / 3.0
-        channel_map[0, 5] = 1
-        channel_map[0, 4] = 0.667
-        channel_map[0, 3] = 0.333
-        channel_map[1, 4] = 0.333
-        channel_map[1, 3] = 0.667
-        channel_map[1, 2] = 0.667
-        channel_map[1, 1] = 0.333
-        channel_map[2, 2] = 0.333
-        channel_map[2, 1] = 0.667
-        channel_map[2, 0] = 1
-        channel_map /= 2
+        channel_map[:, 0] = 1 / 3
+    else:
+        s = channels / 3  # width of each RGB band in spectral-index units
+        for i in range(channels):
+            lo, hi = float(i), float(i + 1)
+            channel_map[2, i] = max(0.0, min(hi, s) - lo)  # B: [0, s]
+            channel_map[1, i] = max(0.0, min(hi, 2 * s) - max(lo, s))  # G: [s, 2s]
+            channel_map[0, i] = max(0.0, min(hi, 3 * s) - max(lo, 2 * s))  # R: [2s, 3s]
     return channel_map
 
 
@@ -97,19 +65,19 @@ class Norm(ABC):
     """Base class to normalize the color values of RGB images"""
 
     def __init__(self):
-        self._uint8Max = float(np.iinfo(np.uint8).max)
+        self._uint8Max = np.iinfo(np.uint8).max
 
     def get_intensity(self, im):
         """Compute total intensity image"""
-        return jnp.maximum(0, im).sum(axis=0)
+        return np.maximum(0, im).sum(axis=0)
 
     def clip(self, im, min_value, max_value):
         """Clip image between min_value and max_value"""
-        return jnp.maximum(0, jnp.minimum(im - min_value, max_value - min_value))
+        return np.maximum(0, np.minimum(im - min_value, max_value - min_value))
 
     def convert_to_uint8(self, im):
         """Convert three-channel image to RGB image with uint8 dtype"""
-        im_clipped = self.clip(im, 0, 1)
+        im_clipped = self.clip(np.nan_to_num(im, nan=0.0), 0, 1)
         uint_im = (im_clipped * self._uint8Max).astype("uint8")
         im_flipped = uint_im.transpose().swapaxes(0, 1)  # 3 x Ny x Nx -> Ny x Nx x 3
         return im_flipped
@@ -117,7 +85,7 @@ class Norm(ABC):
     def make_rgb_image(self, *im):
         """Compute RGB image from three-channel image"""
         # backwards compatible to astropy Mapping Call
-        return self.convert_to_uint8(self.__call__(jnp.stack(im, axis=0)))
+        return self.convert_to_uint8(self.__call__(np.stack(im, axis=0)))
 
     @abstractmethod
     def __call__(self, im):
@@ -212,7 +180,7 @@ class AsinhNorm(Norm):
 
             # arcsinh scaling from Lupton+(2004)
             f = np.arcsinh(i_ / self.beta)  # no need to normalize, done below
-            rgb = img / (intensity / f)[None, :, :]
+            rgb = np.where(intensity[None, :, :] > 0, img / (intensity / f)[None, :, :], 0)
 
             # keep rgb between 0 and 1 (with an allowance of self.vibrance)
             rgb = rgb / self._rgb_max
@@ -338,11 +306,11 @@ def img_to_3channel(img, channel_map=None):
         assert channel_map.shape == (3, len(img))
 
     # filter out masked and bad values
-    img_ = jnp.where(jnp.isfinite(img_), img_, 0)
+    img_ = np.where(np.isfinite(img_), img_, 0)
 
     # map channels onto RGB channels
     _, ny, nx = img_.shape
-    rgb = jnp.dot(channel_map, img_.reshape(num_channels, -1)).reshape(3, ny, nx)
+    rgb = np.dot(channel_map, img_.reshape(num_channels, -1)).reshape(3, ny, nx)
 
     return rgb
 
@@ -375,7 +343,7 @@ def img_to_rgb(img, channel_map=None, norm=None, mask=None):
         norm = LinearPercentileNorm(im3)
     rgb = norm.make_rgb_image(*im3)
     if mask is not None:
-        rgb = jnp.dstack([rgb, ~mask * 255])
+        rgb = np.dstack([rgb, ~mask * 255])
     return rgb
 
 
@@ -386,9 +354,11 @@ def observation(
     observation,
     norm=None,
     channel_map=None,
-    sky_coords=None,
     show_psf=False,
-    add_labels=True,
+    add_peaks=None,
+    add_footprints=None,
+    add_labels=False,
+    sky_coords=None,
     split_channels=False,
     fig_kwargs=None,
     title_kwargs=None,
@@ -407,15 +377,19 @@ def observation(
         Norm to scale the intensity of `observation` into RGB 0..256
     channel_map: array, optional
         Linear mapping from channels to RGB, dimensions (3, channels)
-    sky_coords: list, optional
-        2D coordinates (in pixel coordinates or sky coordinates).
-        If in sky coordinates, the Frame of `observation` needs to have a valid WCS.
     show_psf: bool, optional
         Whether to plot a panel with the PSF model of `observation` centered in
         the middle
+    add_peaks: (None, list[astropy.SkyCoords], list[SourceFootprints]), optional
+        Whether to plot a text label with the running number for each of the listed coordinates
+    add_footprints: (None, list[SourceFootprints]), optional
+        Whether to plot the footprints as semi-transparent layer over the image
     add_labels: bool, optional
-        Whether to plot a text label with the running number for each of the
-        sources in `sky_coords`
+        Whether source IDs are shown at the location of `sky_coords`.
+        Deprecated: use `add_peaks` instead!
+    sky_coords: list[astropy.SkyCoords], optional
+        Coordinates to plot source IDs.
+        Deprecated: use `add_peaks` instead!
     split_channels: bool, optional
         Whether to split the observation into separate channels
     fig_kwargs: dict, optional
@@ -437,6 +411,14 @@ def observation(
     if label_kwargs is None:
         label_kwargs = {"color": "w", "ha": "center", "va": "center"}
 
+    if add_labels or sky_coords is not None:
+        warn(
+            "`add_labels` and `sky_coords` are deprecated, use `add_peaks=ra_dec` instead!",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        add_peaks = sky_coords
+
     if show_psf:
         assert observation.frame.psf is not None, "show_psf requires observation.frame.psf to be set"
         psf_model = observation.frame.psf()
@@ -451,6 +433,25 @@ def observation(
         ax = (ax,)
 
     extent = observation.frame.bbox.get_extent()
+    if add_peaks is not None and len(add_peaks):
+        centers = []
+        for _ in add_peaks:
+            if isinstance(_, astropy.coordinates.SkyCoord):
+                centers.append(observation.frame.get_pixel(_))
+            elif isinstance(_, HierarchicalFootprint):
+                centers.append((_.peak.y, _.peak.x))
+            else:
+                centers.append(_)
+    else:
+        centers = []
+
+    if add_footprints is not None and len(add_footprints):
+        shape = observation.frame.bbox.spatial.shape
+        num_scales = len(np.unique(np.asarray([sfp.scale for sfp in add_footprints if sfp is not None])))
+        footprint_map = np.zeros(shape)
+        for sfp in add_footprints:
+            if sfp is not None:
+                footprint_map += insert_into(np.zeros(shape), 1 / num_scales * sfp.footprint, sfp.bbox)
 
     for row in range(rows):
         if split_channels:
@@ -483,10 +484,13 @@ def observation(
         )
         ax[row, panel].set_title(f"Observation {name}", **title_kwargs)
 
-        if add_labels and sky_coords is not None:
-            for k, center in enumerate(sky_coords):
-                center_ = observation.frame.get_pixel(center)
-                ax[row, panel].text(*center_[::-1], k, **label_kwargs)
+        if add_peaks is not None:
+            for k, center in enumerate(centers):
+                if center is not None:
+                    ax[row, panel].text(*center[::-1], k, **label_kwargs)
+
+        if add_footprints is not None:
+            ax[row, panel].imshow(footprint_map, cmap="grey", alpha=0.3, extent=extent, origin="lower")
 
         if show_psf:
             panel = 1
@@ -507,6 +511,10 @@ def observation(
 # ------------------------------------------------------ #
 # include a routine to calculate the hallucination score #
 #  ----------------------------------------------------- #
+
+
+# ruff: noqa: F821
+# ignore jnp functions for outdated hallucination score
 def cut_square_box(arr, center, size):
     """
     Cut out a square box from a 2D array based on the center and size.
@@ -592,7 +600,7 @@ def cut_square_box(arr, center, size):
     return square_box
 
 
-@jax.grad
+# @jax.grad
 def neural_grad(galaxy, src):
     """Calculate the gradient of the neural network"""
     parameters = src.get_parameters(return_info=True)
@@ -801,8 +809,8 @@ def sources(
                 center_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(center)).flatten()
             if add_boxes:
                 start, stop = src.bbox.spatial.start, src.bbox.spatial.stop
-                corners = jnp.array(
-                    [start, jnp.array((start[0], stop[1])), stop, jnp.array((stop[0], start[1]))]
+                corners = np.array(
+                    [start, np.array((start[0], stop[1])), stop, np.array((stop[0], start[1]))]
                 )
                 corners_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(corners))
 
@@ -1008,8 +1016,8 @@ def scene(
         for k, src in enumerate(scene.sources):
             if add_boxes:
                 start, stop = src.bbox.spatial.start, src.bbox.spatial.stop
-                corners = jnp.array(
-                    [start, jnp.array((start[0], stop[1])), stop, jnp.array((stop[0], start[1]))]
+                corners = np.array(
+                    [start, np.array((start[0], stop[1])), stop, np.array((stop[0], start[1]))]
                 )
                 if observation is not None:
                     corners_obs = observation.frame.get_pixel(scene.frame.get_sky_coord(corners))
