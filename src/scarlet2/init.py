@@ -636,7 +636,7 @@ def hierarchical_sources(
 
     See Also
     --------
-    :func:`~scarlet2.wavelets.get_detect_wavelets`, :func:`~scarlet2.detect.hierarchical_footprints`
+    :func:`~scarlet2.detect.get_detect_wavelets`, :func:`~scarlet2.detect.hierarchical_footprints`
     """
     scales = [1, 2, 3] if scales is None else sorted(scales)
     # for strict scale separation, need to push the "remaining" largest scale to one larger than max_scale
