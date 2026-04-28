@@ -1,5 +1,5 @@
 ---
-title: 'scarlet2: Astronomical scene modeling in jax'
+title: 'scarlet2: Astronomical scene modeling in JAX'
 
 tags:
   - Python
@@ -20,7 +20,7 @@ authors:
   - name: Benjamin Remy
     orcid: 0000-0002-0978-5612
     affiliation: "1,3"
-  - name: Matt L. Sampson
+  - name: Matt L. Wiemann
     orcid: 0000-0001-5748-5393
     affiliation: 1
   - name: Jared Siegel
@@ -63,7 +63,7 @@ components.
 components, and each component is determined by a spectrum model and a morphology model, whose outer product
 represents the light
 emission in a sky region as a hyperspectral data cube (wavelength $\times$ height $\times$ width). `scarlet2` retains
-the object-oriented paradigm and many classes and functions from `scarlet`, but augments standard Python with the `jax`
+the object-oriented paradigm and many classes and functions from `scarlet`, but augments standard Python with the JAX 
 library [@jax2018github] and the `equinox` package [@kidger2021equinox] for automatic differentiation and
 just-in-time compilation.
 
