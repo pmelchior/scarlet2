@@ -31,10 +31,10 @@ affiliations:
   - name: Princeton University, United States
     index: 1
     ror: 00hx57361
-  - name: Pennsylvania State University
+  - name: Pennsylvania State University, United States
     index: 2
     ror: 04p491231
-  - name: University of Chicago
+  - name: University of Chicago, United States
     index: 3
     ror: 024mw5h28
 
@@ -64,27 +64,27 @@ components, and each component is determined by a spectrum model and a morpholog
 represents the light
 emission in a sky region as a hyperspectral data cube (wavelength $\times$ height $\times$ width). `scarlet2` retains
 the object-oriented paradigm and many classes and functions from `scarlet`, but augments standard Python with the JAX 
-library [@jax2018github] and the `equinox` package [@kidger2021equinox] for automatic differentiation and
+library [@jax2018github] and the Equinox package [@kidger2021equinox] for automatic differentiation and
 just-in-time compilation.
 
 `scarlet2` acts as a flexible, modular, and extendable modeling language for celestial sources that combines parametric
 and non-parametric models to describe complex scenarios such as multi-source blending, strong-lensing systems,
 supernovae and their host galaxies, etc. As a modeling language, `scarlet2` is agnostic about the optimization or
 inference method the user wants to employ, but it also provides methods to optimize the likelihood function or
-sample from the posterior, which utilize the `optax` package [@deepmind2020jax] or the `numpyro` inference
+sample from the posterior, which utilize the Optax package [@deepmind2020jax] or the NumPyro inference
 framework
 [@pyro-2019; @phan-2019], respectively. The likelihood of multiple
 observations (at different resolutions, wavelengths, or observing epochs) can be combined for a joint model of
-static and transient sources. To match the coordinates from different observations, `scarlet2` utilizes the `Astropy`
+static and transient sources. To match the coordinates from different observations, `scarlet2` utilizes the Astropy
 package [@astropy]. `scarlet2` can also interface with deep learning methods. Besides being natively portable
 to GPUs, parameters can be specified with neural networks as data-driven priors, which helps break the
 degeneracies that arise
 when multiple components are fit simultaneously [@sampson-2024].
 
 ![Scene with seven detected sources in multi-band images from the Hyper Suprime-Cam Subaru Strategic Program.
-Each source is modelled with a non-parametric spectrum and morphology (1st panel), the entire scene is then convolved
-with the telescope's point spread function (2nd panel) and compared to the observations (3rd panel).
-The residuals (4th panel) reveal the presence of previously undetected sources and source components (e.g. in the center of source
+Each source is modelled with a non-parametric spectrum and morphology (first panel), the entire scene is then convolved
+with the telescope's point spread function (second panel) and compared to the observations (third panel).
+The residuals (fourth panel) reveal the presence of previously undetected sources and source components (e.g. in the center of source
 #1).](scarlet2_model.png)
 
 To support the wide range of scientific studies that will be made with large sky surveys, `scarlet2` was designed with
@@ -101,9 +101,9 @@ the La Silla Schmidt Southern Survey.
 
 `GALFIT` [@galfit] implements parametric Sérsic model fitting in single-band, single-epoch data. The underlying algorithms are closed source and released only as precompiled binaries. 
 `GALAPAGOS` [@galapagos] provides wrappers around `GAFLIT` in the proprietary IDL programming language; `GALAPAGOS-2` [@galapagos2] added multi-band fitting capabilities. 
-`The Tractor` [@tractor] is implemented in python and allows modeling galaxies in multi-band imaging at different resolutions as well as posterior sampling, but remains limited to parametric source profiles. 
-`AstroPhot` [@astrophot] offers an astronomical modeling framework based on PyTorch [@pytorch], which 
-allows to optimize multiple sources with different parametric models to multiple images at different resolutions, and includes posterior sampling techniques.
+The Tractor [@tractor] is implemented in Python and allows modeling galaxies in multi-band imaging at different resolutions as well as posterior sampling, but remains limited to parametric source profiles. 
+AstroPhot [@astrophot] offers an astronomical modeling framework based on PyTorch [@pytorch], which 
+allows one to optimize multiple sources with different parametric models to multiple images at different resolutions, and includes posterior sampling techniques.
 None of the implementations above support fully non-parametric galaxy models or neural network priors.
 
 
@@ -116,6 +116,6 @@ particular from software engineers Max West, Drew Oldag, and Sean McGuire, in ad
 through the Python Project Template [@oldag-2024] and creating a user-focused recommendation and validation
 suite.
 
-In addition to dependencies mentioned earlier, `scarlet2` makes use of `numpy` [@numpy], `matplotlib` [@matplotlib], and `h5py` [@h5py]. 
+In addition to dependencies mentioned earlier, `scarlet2` makes use of NumPy [@numpy], Matplotlib [@matplotlib], and h5py [@h5py]. 
 
 # References
