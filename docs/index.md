@@ -82,3 +82,22 @@ method, including error estimates.
 If you have any of those, head over to our [github repo](https://github.com/pmelchior/scarlet2/) and create an issue.
 For other ways to contribute, check out
 our [contributing guide](https://github.com/pmelchior/scarlet2/blob/main/CONTRIBUTING.md).
+
+## Citation
+
+If you use this software, please cite the associated JOSS paper:
+
+```
+@article{scarlet2, 
+    author = {Melchior, Peter and Ward, Charlotte and Remy, Benjamin and Wiemann, Matt L. and Siegel, Jared}, 
+    title = {scarlet2: Astronomical scene modeling in JAX}, 
+    journal = {Journal of Open Source Software},
+    year = {2026}, 
+    volume = {11}, 
+    number = {120}, 
+    pages = {9646}, 
+    doi = {10.21105/joss.09646}, 
+    url = {https://doi.org/10.21105/joss.09646}, 
+    publisher = {The Open Journal} 
+}
+```

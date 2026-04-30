@@ -29,3 +29,22 @@ pip install git+https://github.com/pmelchior/scarlet2.git
 This will allow you to evaluate source models and compute likelihoods of observed data, so you can run your own
 optimizer/sampler. If you want a fully fledged library out of the box, you need to install `optax`, `numpyro`, and
 `h5py` as well.
+
+## Citation
+
+If you use this software, please cite the associated JOSS paper:
+
+```
+@article{scarlet2, 
+    author = {Melchior, Peter and Ward, Charlotte and Remy, Benjamin and Wiemann, Matt L. and Siegel, Jared}, 
+    title = {scarlet2: Astronomical scene modeling in JAX}, 
+    journal = {Journal of Open Source Software},
+    year = {2026}, 
+    volume = {11}, 
+    number = {120}, 
+    pages = {9646}, 
+    doi = {10.21105/joss.09646}, 
+    url = {https://doi.org/10.21105/joss.09646}, 
+    publisher = {The Open Journal} 
+}
+```

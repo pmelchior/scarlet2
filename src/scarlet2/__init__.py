@@ -36,6 +36,10 @@ try:
 except ImportError:
     __version__ = "0.0.0+unknown"
 
+from pathlib import Path
+
+__citation__ = __bibtex__ = (Path(__file__).parent / "citation.bib").read_text()
+
 from .bbox import Box
 from .frame import Frame
 from .infer import fit, sample
