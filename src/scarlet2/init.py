@@ -578,9 +578,8 @@ def hierarchical_sources(
     """Initialize sources from a wavelet-based hierarchical footprint detection.
 
     Computes a detection image from ``obs``, decomposes it into a hierarchy of
-    footprints across starlet scales, and returns one ``(center, spectrum,
-    morphology, bbox)`` tuple per footprint, suitable for constructing
-    :class:`~scarlet2.Source` objects.
+    footprints across starlet scales, and returns one :class:`HierarchicalSourceInfo`
+    per footprint, suitable for constructing :class:`~scarlet2.Source` objects.
 
     Spectra and morphologies are initialized from the wavelet detection image
     at each source's scale, with a least-squares flux estimate that
@@ -631,8 +630,9 @@ def hierarchical_sources(
 
     Returns
     -------
-    sources : list[HierarchicalSourceInfo]
-        One entry per detected footprint, each a
+    sources : list of :class:`HierarchicalSourceInfo`
+        One entry per detected footprint. Will create a "compact" source, i.e. a morphology array
+        from the model PSF for every location in `catalog` that is not detected as a footprint.
 
     See Also
     --------
