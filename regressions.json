@@ -1,1 +1,1 @@
-{"regressions": [["bbox_benchmarks.time_bbox_creation", "graphs/Cython/branch-HEAD/build/machine-gh-runner/packaging/python-3.12/bbox_benchmarks.time_bbox_creation.json", {"python": "3.12"}, null, 7.417763766142792e-06, 6.932140664961622e-06, [[null, 261, 6.932140664961622e-06, 7.417763766142792e-06]]]]}
+{"regressions": []}
