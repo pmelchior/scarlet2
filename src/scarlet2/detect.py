@@ -775,7 +775,120 @@ def split_footprint(fp, image, min_area=0):
 
 
 # ---------------------------------------------------------------------------
-# Hierarchical source list
+# Multiscale detections
+# ---------------------------------------------------------------------------
+
+
+def multiscale_footprints(
+    obs,
+    scales=None,
+    strict=True,
+    K=3,
+    split_peaks=True,
+    image_type="ground",
+    min_separation=0,
+    min_area=9,
+    thresh=0,
+    return_intermediates=False,
+):
+    """Detect footprints at multiple starlet scales from an observation.
+
+    Builds a detection image from the inverse-variance weighted sum of ``obs.data``,
+    computes its starlet decomposition, and detects connected footprints at each
+    requested scale.  Optionally splits footprints that contain more than one
+    peak into non-overlapping single-peak sub-footprints via a watershed algorithm.
+
+    Parameters
+    ----------
+    obs : :class:`~scarlet2.Observation`
+        The observation providing image data and per-pixel weights.
+    scales : list of int, optional
+        Starlet scale indices to detect on.  Default is ``[1, 2, 3]``.
+    strict : bool, optional
+        If ``True``, the coarse residual plane is pushed one scale higher so that
+        the selected ``scales`` are cleanly separated from the smooth background.
+        Default ``True``.
+    K : float, optional
+        Detection threshold multiplier: wavelet coefficients with
+        ``|w| > K * sigma_j`` are considered significant.  Default ``3``.
+    split_peaks : bool, optional
+        If ``True`` (default), footprints that contain more than one peak are
+        split into non-overlapping single-peak sub-footprints using a
+        priority-queue watershed.  If ``False``, multi-peak footprints are
+        returned intact.
+    image_type : str, optional
+        PSF width regime used when computing the multi-resolution support.
+        ``"ground"`` (default) for wide ground-based PSFs; ``"space"`` for
+        narrow space-based PSFs.
+    min_separation : float, optional
+        Minimum pixel distance between peaks within a footprint.  Dimmer peaks
+        closer than this to a brighter one are suppressed.  Default ``0``.
+    min_area : int, optional
+        Minimum number of pixels a footprint (or watershed sub-footprint) must
+        contain to be kept.  Default ``9``.
+    thresh : float, optional
+        Additional detection threshold; pixels must strictly exceed this value
+        to be included in a footprint.  Default ``0``.
+    return_intermediates : bool, optional
+        If ``True``, return a 4-tuple ``(detect, sigma, scales, all_footprints)``
+        that exposes the intermediate products.  Default ``False``.
+
+    Returns
+    -------
+    all_footprints : dict mapping int → list of :class:`Footprint`
+        Footprints at each requested scale, keyed by scale index.  When
+        ``split_peaks`` is ``True`` every footprint carries exactly one peak.
+    detect : ndarray, shape (max_scale+2, height, width)
+        Masked starlet coefficients of the detection image.
+        Only returned when ``return_intermediates`` is ``True``.
+    sigma : ndarray, shape (max_scale+2,)
+        Per-scale noise estimates used for thresholding.
+        Only returned when ``return_intermediates`` is ``True``.
+    scales : list of int
+        The sorted list of scales that were used.
+        Only returned when ``return_intermediates`` is ``True``.
+
+    See Also
+    --------
+    :func:`~scarlet2.detect.get_detect_wavelets` : builds the detection image.
+    :func:`~scarlet2.detect.split_footprint` : watershed splitting of multi-peak footprints.
+    :func:`~scarlet2.detect.hierarchical_footprints` : higher-level function that links
+        footprints across scales into a source hierarchy.
+    """
+    # default scales
+    scales = [1, 2, 3] if scales is None else sorted(scales)
+
+    # Compute detection image from obs
+    # for strict scale separation, need to push the "remaining" largest scale to one larger than max_scale
+    max_scale = max(scales) + strict
+    detect, sigma = get_detect_wavelets(
+        obs.data, 1 / obs.weights, max_scale=max_scale, K=K, image_type=image_type
+    )
+
+    all_footprints = {
+        s: footprints(
+            detect[s],
+            min_separation=min_separation,
+            min_area=min_area,
+            thresh=thresh,
+        )
+        for s in scales
+    }
+
+    if split_peaks:
+        # Pre-split multi-peak footprints so that all footprints at each scale
+        # are non-overlapping and carry exactly one peak.
+        all_footprints = {
+            s: [sub for fp in fps for sub in split_footprint(fp, detect[s], min_area=min_area)]
+            for s, fps in all_footprints.items()
+        }
+    if return_intermediates:
+        return detect, sigma, scales, all_footprints
+    return all_footprints
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical detections
 # ---------------------------------------------------------------------------
 
 
@@ -809,20 +922,23 @@ class HierarchicalFootprint:
 
 
 def hierarchical_footprints(
-    detect,
-    flatten=True,
+    obs,
     scales=None,
-    catalog=None,
-    sigma_scales=None,
+    strict=True,
     K=3,
     split_peaks=True,
+    image_type="ground",
     min_separation=0,
     min_area=9,
     thresh=0,
+    catalog=None,
+    flatten=True,
+    return_detect=False,
 ):
-    """Decompose a detection image into a hierarchy of :class:`HierarchicalFootprint` objects.
+    """Decompose an observed image into a list of :class:`HierarchicalFootprint` objects.
 
-    Iterates from the largest starlet scale to the smallest.  At each scale,
+    Creates a detection image from the inverse-variance weighted sum of `obs.data`,
+    then iterates from the largest starlet scale to the smallest.  At each scale,
     every detected footprint is matched to the best-overlapping source already
     registered from larger scales (measured by IoU).  If the registered source's
     peak lies inside the new footprint, it is a *primary* match: the source
@@ -841,33 +957,25 @@ def hierarchical_footprints(
     where the catalog position falls inside source ``j``'s footprint mask.
     Catalog entries with no containing footprint are returned as ``None``.
 
-    If ``sigma_scales`` is provided, each footprint's bounding box is grown beyond
-    the detection threshold to the noise level.  Assuming an exponential profile
-    I(r) = I0*exp(-r/h), the scale length h is estimated from the footprint size
-    as h = r_foot / ln(S), where r_foot is the mean distance from the peak to the
+    Each footprint's bounding box is grown beyond the detection threshold to the noise level.
+    Assuming an exponential profile I(r) = I0*exp(-r/h), the scale length h is estimated from the footprint
+    size as h = r_foot / ln(S), where r_foot is the mean distance from the peak to the
     edge of the footprint bounding box and S = I0 / (K*sigma_j).  The box is grown
     to the radius where the profile reaches the noise level (1*sigma_j):
     half_size = r_foot * ln(S*K) / ln(S).
 
     Parameters
     ----------
-    detect : ndarray, shape (scales+1, H, W)
-        Masked starlet coefficients from :func:`get_detect_wavelets`.
-    flatten : bool, optional
-        Whether to flatten the source list so that children appear as independent
-        entries.  Default ``True``.
+    obs : :class:`~scarlet2.Observation`
+        The observation providing image data, per-pixel weights, and the
+        coordinate frame used to convert ``centers`` to pixel positions.
     scales : list of int, optional
-        Indices into ``detect`` specifying which planes to use.  If ``None``
-        (default) all planes are used.
-    catalog : list of (y, x) tuples, optional
-        If given, the output is catalog-indexed: one entry per catalog position,
-        matched to the best overlapping detected source, or ``None`` if undetected.
-        Matching is a global optimal assignment — each source is assigned to at
-        most one catalog entry.
-    sigma_scales : array-like, shape (max_scale+1,), optional
-        Per-scale noise estimate from :func:`~scarlet2.detect.get_detect_wavelets`.
-        When provided, each footprint's bounding box is grown to the noise level
-        using the SNR-based exponential-profile formula described above.
+        Starlet scales (indices into the coefficient array, default `[1,2,3]`) to use for detection.
+    strict : bool, optional
+        If ``True``, the coarse residual plane is pushed one scale higher so
+        that the selected ``scales`` are cleanly separated without bleed from
+        the largest-scale smooth background.  Default ``False``.
+
     K : float, optional
         Detection threshold multiplier used when ``sigma_scales`` is given.
         Must match the value passed to :func:`~scarlet2.detect.get_detect_wavelets`.
@@ -877,6 +985,10 @@ def hierarchical_footprints(
         using a watershed algorithm. Otherwise, additional peaks become children of the
         originating footprint,  which retains the full footprint area, i.e. the children overlap.
         Splitting peaks allows to reduce the overlap of mostly independent sources.
+    image_type: str
+        The type of image that is being used.
+        This should be ``"ground"`` for ground based images with wide PSFs or
+        ``"space"`` for images from space-based telescopes with a narrow PSF.
     min_separation : float, optional
         Minimum pixel separation between peaks within a footprint.
     min_area : int, optional
@@ -885,6 +997,16 @@ def hierarchical_footprints(
         ``True``.
     thresh : float, optional
         Detection threshold; pixels must strictly exceed this value.
+    catalog : list of (y, x) tuples, optional
+        If given, the output is catalog-indexed: one entry per catalog position,
+        matched to the best overlapping detected source, or ``None`` if undetected.
+        Matching is a global optimal assignment — each source is assigned to at
+        most one catalog entry.
+    flatten : bool, optional
+        Whether to flatten the source list so that children appear as independent
+        entries.  Default ``True``.
+    return_detect: bool, optional
+        Whether to return the detection image. Default ``False``.
 
     Returns
     -------
@@ -897,7 +1019,21 @@ def hierarchical_footprints(
         detected at that catalog position.
     """
 
-    def snr_bbox(fp, scale):
+    # Get initial multiscale footprints
+    detect, sigma, scales, all_footprints = multiscale_footprints(
+        obs,
+        scales=scales,
+        strict=strict,
+        K=K,
+        min_separation=min_separation,
+        min_area=min_area,
+        thresh=thresh,
+        image_type=image_type,
+        split_peaks=split_peaks,
+        return_intermediates=True,
+    )
+
+    def snr_bbox(fp, scale, sigma):
         """Bounding box grown to the SNR-predicted extent of an exponential profile.
 
         For a profile I(r) = I0*exp(-r/h), the footprint boundary lies at the
@@ -916,12 +1052,9 @@ def hierarchical_footprints(
         delta = tuple(max(0, min_half - bbox.shape[d] // 2) for d in range(bbox.D))
         bbox.grow(delta)
 
-        if sigma_scales is None:
+        if sigma is None or sigma <= 0:
             return bbox & outer_box
 
-        sigma = float(sigma_scales[scale])
-        if sigma <= 0:
-            return bbox
         w_peak = fp.peaks[0].flux
         S = w_peak / (K * sigma)
         if S <= 1:
@@ -963,55 +1096,33 @@ def hierarchical_footprints(
             children.append(child)
         return children
 
-    if scales is None:
-        scales = scale_indices = list(range(len(detect)))
-    else:
-        scales = sorted(scales)
-        scale_indices = list(range(len(scales)))
-
-    all_footprints = [
-        footprints(
-            detect[s],
-            min_separation=min_separation,
-            min_area=min_area,
-            thresh=thresh,
-        )
-        for s in scales
-    ]
-
-    if split_peaks:
-        # Pre-split multi-peak footprints so that all footprints at each scale
-        # are non-overlapping and carry exactly one peak.
-        all_footprints = [
-            [sub for fp in fps for sub in split_footprint(fp, detect[s], min_area=min_area)]
-            for s, fps in zip(scales, all_footprints, strict=False)
-        ]
-
-    # --- initial hierarchy at largest scale: additional peaks become children -
+    # --- initialize hierarchy at largest scale: additional peaks become children -
     sources = []
-    idx = -1
-    for fp in all_footprints[idx]:
+    scale = max(all_footprints.keys())
+    for fp in all_footprints[scale]:
         node = HierarchicalFootprint(
             peak=fp.peaks[0],
             bbox=Box.from_bounds(*fp.bounds),
             footprint=fp,  # store entire Footprint temporarily, clean up later
-            scale=scales[idx],
-            children=peaks2children(fp, scales[idx]),
+            scale=scale,
+            children=peaks2children(fp, scale),
         )
         sources.append(node)
 
     # --- link smaller scale footprints to larger scale footprints -
-    for idx in scale_indices[:-1][::-1]:  # exclude largest scale, 2nd largest to smallest
+    # exclude largest scale, 2nd largest to smallest
+    smaller_scales = sorted(list(all_footprints.keys()), reverse=True)[::-1]
+    for scale in smaller_scales:
         registered_nodes = list(all_nodes(sources))
 
-        for fp in all_footprints[idx]:
+        for fp in all_footprints[scale]:
             peak = fp.peaks[0]
             node = HierarchicalFootprint(
                 peak=peak,
                 bbox=Box.from_bounds(*fp.bounds),
                 footprint=fp,  # store entire Footprint temporarily, clean up later
-                scale=scales[idx],
-                children=peaks2children(fp, scales[idx]),
+                scale=scale,
+                children=peaks2children(fp, scale),
             )
 
             # new fps are either matches to an existing source, to one of their children, or an orphan
@@ -1082,7 +1193,7 @@ def hierarchical_footprints(
         if sources[i] is None or not isinstance(sources[i].footprint, Footprint):
             continue
         fp_obj = sources[i].footprint  # still a Footprint at this point
-        enlarged_bbox = snr_bbox(fp_obj, sources[i].scale)
+        enlarged_bbox = snr_bbox(fp_obj, sources[i].scale, sigma[sources[i].scale])
         tight_bbox = Box.from_bounds(*fp_obj.bounds)
         padded = np.zeros(enlarged_bbox.shape, dtype=bool)
         enlarged_slices, tight_slices = overlap_slices(enlarged_bbox, tight_bbox)
@@ -1091,5 +1202,6 @@ def hierarchical_footprints(
         sources[i].footprint = padded
         if flatten:
             sources[i].children = []
-
+    if return_detect:
+        return sources, detect
     return sources

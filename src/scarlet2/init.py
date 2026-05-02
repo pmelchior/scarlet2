@@ -12,7 +12,7 @@ from equinox import tree_pformat
 
 from . import Scenery, measure
 from .bbox import Box, insert_into
-from .detect import HierarchicalFootprint, get_detect_wavelets, hierarchical_footprints
+from .detect import HierarchicalFootprint, hierarchical_footprints
 from .frame import get_relative_jacobian_shift
 from .morphology import GaussianMorphology
 from .observation import Observation
@@ -488,7 +488,7 @@ class HierarchicalSourceInfo:
         return tree_pformat(self)
 
 
-def _footprints_to_sources(obs, detect, footprints, scales, catalog):
+def _footprints_to_sources(obs, detect, footprints, catalog):
     try:
         frame = Scenery.scene.frame
     except AttributeError:
@@ -519,7 +519,9 @@ def _footprints_to_sources(obs, detect, footprints, scales, catalog):
     res = [
         None,
     ] * len(footprints)
-    for scale in sorted(scales, reverse=True):  # largest to smallest scales
+    # get all scales with footprints, from largest to smallest
+    scales = sorted(set(fp.scale for fp in footprints if fp is not None), reverse=True)
+    for scale in scales:
         for i, fp in enumerate(footprints):
             if fp is not None and fp.scale == scale:
                 footprint_map = insert_into(jnp.zeros(shape), jnp.asarray(fp.footprint), fp.bbox)
@@ -564,9 +566,6 @@ def _footprints_to_sources(obs, detect, footprints, scales, catalog):
 def hierarchical_sources(
     obs,
     scales=None,
-    detect=None,
-    footprints=None,
-    catalog=None,
     strict=True,
     K=3,
     split_peaks=True,
@@ -574,6 +573,7 @@ def hierarchical_sources(
     min_separation=0,
     min_area=9,
     thresh=0,
+    catalog=None,
 ):
     """Initialize sources from a wavelet-based hierarchical footprint detection.
 
@@ -593,17 +593,6 @@ def hierarchical_sources(
         coordinate frame used to convert ``centers`` to pixel positions.
     scales : list of int, optional
         Starlet scales (indices into the coefficient array, default `[1,2,3]`) to use for detection.
-    detect : ndarray, shape (max_scale+1, H, W), optional
-        Pre-computed masked starlet coefficients from
-        :func:`~scarlet2.detect.get_detect_wavelets`.  If ``None``, computed
-        from ``obs.data`` and ``obs.weights``.
-    footprints : list of :class:`~scarlet2.detect.HierarchicalFootprint`, optional
-        Pre-computed flat footprint list.  If ``None`` (or ``centers`` is
-        given), footprints are detected automatically.  Supplying this skips
-        detection entirely when ``centers`` is also ``None``.
-    catalog : list of :class:`astropy.coordinates.SkyCoord`, optional
-        If given, only footprints that contain one of these sky positions are
-        returned.  Converted to pixel coordinates via ``obs.frame.get_pixel``.
     strict : bool, optional
         If ``True``, the coarse residual plane is pushed one scale higher so
         that the selected ``scales`` are cleanly separated without bleed from
@@ -627,6 +616,9 @@ def hierarchical_sources(
         Minimum number of pixels a footprint must contain to be kept.
     thresh : float, optional
         Detection threshold; pixels must strictly exceed this value.
+    catalog : list of :class:`astropy.coordinates.SkyCoord`, optional
+        If given, only footprints that contain one of these sky positions are
+        returned.  Converted to pixel coordinates via ``obs.frame.get_pixel``.
 
     Returns
     -------
@@ -636,29 +628,22 @@ def hierarchical_sources(
 
     See Also
     --------
-    :func:`~scarlet2.detect.get_detect_wavelets`, :func:`~scarlet2.detect.hierarchical_footprints`
+    :func:`~scarlet2.detect.hierarchical_footprints`
     """
-    scales = [1, 2, 3] if scales is None else sorted(scales)
-    # for strict scale separation, need to push the "remaining" largest scale to one larger than max_scale
-    max_scale = max(scales) + strict
-    sigma = None
-    if detect is None:
-        detect, sigma = get_detect_wavelets(
-            obs.data, 1 / obs.weights, max_scale=max_scale, K=K, image_type=image_type
-        )
 
     catalog_ = obs.frame.get_pixel(catalog) if catalog is not None else None
-    if footprints is None or catalog_ is not None:
-        footprints = hierarchical_footprints(
-            detect,
-            scales=scales,
-            flatten=True,
-            catalog=catalog_,
-            sigma_scales=sigma,
-            K=K,
-            split_peaks=split_peaks,
-            min_separation=min_separation,
-            min_area=min_area,
-            thresh=thresh,
-        )
-    return _footprints_to_sources(obs, detect, footprints, scales, catalog_)
+    footprints, detect = hierarchical_footprints(
+        obs,
+        scales=scales,
+        strict=strict,
+        K=K,
+        split_peaks=split_peaks,
+        image_type=image_type,
+        min_separation=min_separation,
+        min_area=min_area,
+        thresh=thresh,
+        flatten=True,
+        catalog=catalog_,
+        return_detect=True,
+    )
+    return _footprints_to_sources(obs, detect, footprints, catalog_)

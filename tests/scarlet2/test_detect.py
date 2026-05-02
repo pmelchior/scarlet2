@@ -2,6 +2,8 @@
 # ruff: noqa: D102
 # ruff: noqa: D103
 
+import types
+
 import numpy as np
 
 from scarlet2.bbox import Box
@@ -14,7 +16,6 @@ from scarlet2.detect import (
     footprints,
     hierarchical_footprints,
 )
-from scarlet2.wavelets import get_multiresolution_support, starlet_transform
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -31,12 +32,11 @@ def _make_blob(shape, center, radius, peak_value, background=0.0):
     return img
 
 
-def _detect_coeffs(img, scales=3):
-    """Return masked starlet coefficients for a 2-D image."""
-    coeffs = np.asarray(starlet_transform(img, scales=scales))
-    sigma = float(np.std(img[img > 0])) * 0.1
-    M, _ = get_multiresolution_support(img, coeffs, sigma)
-    return M * coeffs
+def _make_obs(img, noise=0.1):
+    """Wrap a 2-D image in a minimal observation-like object."""
+    data = img[np.newaxis].astype(np.float32)  # (1, H, W)
+    weights = np.full_like(data, 1.0 / noise**2)
+    return types.SimpleNamespace(data=data, weights=weights)
 
 
 # ---------------------------------------------------------------------------
@@ -147,8 +147,8 @@ def test_build_source_list_single_source():
     # Use a Gaussian-like point source so the wavelet peak is unambiguous
     yy, xx = np.mgrid[:40, :40]
     img = 10.0 * np.exp(-((yy - 20) ** 2 + (xx - 20) ** 2) / (2 * 2.0**2)).astype(np.float32)
-    detect = _detect_coeffs(img)
-    sources = hierarchical_footprints(detect)
+    obs = _make_obs(img)
+    sources = hierarchical_footprints(obs)
 
     assert len(sources) >= 1
     peaks = [(s.peak.y, s.peak.x) for s in sources]
@@ -161,16 +161,16 @@ def test_build_source_list_two_blobs():
     img = np.zeros((50, 50), dtype=np.float32)
     img += _make_blob((50, 50), center=(12, 12), radius=4, peak_value=10.0)
     img += _make_blob((50, 50), center=(37, 37), radius=4, peak_value=6.0)
-    detect = _detect_coeffs(img)
-    sources = hierarchical_footprints(detect, flatten=True)
+    obs = _make_obs(img)
+    sources = hierarchical_footprints(obs, flatten=True)
 
     assert len(sources) >= 2
 
 
 def test_build_source_list_returns_scene_source():
     img = _make_blob((30, 30), center=(15, 15), radius=4, peak_value=8.0)
-    detect = _detect_coeffs(img)
-    sources = hierarchical_footprints(detect)
+    obs = _make_obs(img)
+    sources = hierarchical_footprints(obs)
 
     assert all(isinstance(s, HierarchicalFootprint) for s in sources)
     for s in sources:
@@ -188,8 +188,8 @@ def test_build_source_list_orphan_promoted():
     # compact source: bright single pixel, tiny footprint
     img[38, 38] = 8.0
     img[37:40, 37:40] = 2.0
-    detect = _detect_coeffs(img)
-    all_sources = hierarchical_footprints(detect, flatten=True)
+    obs = _make_obs(img)
+    all_sources = hierarchical_footprints(obs, flatten=True)
 
     peaks = [(s.peak.y, s.peak.x) for s in all_sources]
     assert any(abs(py - 38) <= 3 and abs(px - 38) <= 3 for py, px in peaks)
@@ -200,22 +200,22 @@ def test_build_source_list_flat_list():
     img = np.zeros((50, 50), dtype=np.float32)
     img += _make_blob((50, 50), center=(12, 12), radius=4, peak_value=10.0)
     img += _make_blob((50, 50), center=(37, 37), radius=4, peak_value=6.0)
-    detect = _detect_coeffs(img)
-    sources = hierarchical_footprints(detect, flatten=True)
+    obs = _make_obs(img)
+    sources = hierarchical_footprints(obs, flatten=True)
 
     assert all(isinstance(s, HierarchicalFootprint) for s in sources)
     assert all(s.children == [] for s in sources)
 
 
 def test_build_source_list_scale_coarsening():
-    """Passing detect[k:] restricts detection to scales k and above."""
+    """Passing scales=[2, 3] restricts detection to coarser scales only."""
     img = np.zeros((50, 50), dtype=np.float32)
     img += _make_blob((50, 50), center=(25, 25), radius=6, peak_value=10.0)
-    detect = _detect_coeffs(img, scales=4)
+    obs = _make_obs(img)
 
-    sources_all = hierarchical_footprints(detect)
-    sources_coarse = hierarchical_footprints(detect[2:])
+    sources_all = hierarchical_footprints(obs)
+    sources_coarse = hierarchical_footprints(obs, scales=[2, 3])
 
-    assert all(s.scale >= 0 for s in sources_coarse)
+    assert all(s.scale >= 2 for s in sources_coarse)
     assert len(sources_all) >= 1
     assert len(sources_coarse) >= 1

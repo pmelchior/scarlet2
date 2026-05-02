@@ -350,6 +350,60 @@ def img_to_rgb(img, channel_map=None, norm=None, mask=None):
 panel_size = 4.0
 
 
+def footprints(detect, fps):
+    """Plot wavelet-scale detection images with overlaid footprints and peaks.
+
+    Creates one panel per wavelet scale (including the coarse residual plane),
+    showing the masked starlet coefficient image at each scale.  For scales that
+    appear in ``fps``, the detected footprint masks are overlaid as a
+    semi-transparent grey layer and each peak is marked with a white ``x``.
+    The final panel corresponds to the smooth background residual and is labelled
+    ``scale=N+``.
+
+    Parameters
+    ----------
+    detect : ndarray, shape (max_scale+1, height, width) or (max_scale+2, height, width)
+        Masked starlet coefficients, e.g. the first element of the tuple returned
+        by ``detect.multiscale_footprints(..., return_intermediates=True)``.
+    fps : dict mapping int → list of :class:`~scarlet2.detect.Footprint`
+        Footprints at each detected scale, as returned by
+        :func:`~scarlet2.detect.multiscale_footprints`.  Only the scales that
+        appear as keys in this dict receive footprint and peak overlays.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        Figure with ``len(detect)`` panels, one per wavelet scale.
+    """
+    detection_scales = list(fps.keys())
+    max_scale = len(detect) - 1
+    # show each detection scale, compact footprints and peaks
+    im_shape = detect[0].shape
+    h, w = im_shape
+    size_factor = w / panel_size
+    fig, axes = plt.subplots(1, max_scale + 1, figsize=((max_scale + 1) * w / size_factor, h / size_factor))
+    for scale, ax in enumerate(axes):
+        footprint_map = np.zeros(im_shape)
+        ax.imshow(detect[scale])
+        if scale in detection_scales:
+            for fp in fps[scale]:
+                # footprints have binary array `footprint`
+                # and `bounds` to describe the position of `footprint` in `detect`
+                # so we can insert the footprint array in the larger image
+                footprint_map += insert_into(np.zeros(im_shape), fp.footprint, Box.from_bounds(*fp.bounds))
+                # footprints also contain local peaks
+                for peak in fp.peaks:
+                    ax.scatter(peak.x, peak.y, marker="x", color="w")
+            ax.imshow(footprint_map, cmap="grey", alpha=0.3)
+        if scale < max_scale:
+            ax.set_title(f"scale={scale}")
+        else:
+            ax.set_title(f"scale={scale}+")
+        ax.axis("off")
+    fig.tight_layout()
+    return fig
+
+
 def observation(
     observation,
     norm=None,
