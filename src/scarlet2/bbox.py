@@ -1,8 +1,7 @@
-import equinox as eqx
 import jax.numpy as jnp
 
 
-class Box(eqx.Module):
+class Box:
     """Bounding Box for data array
 
     A Bounding box describes the location of a data array in the model coordinate system.
@@ -16,11 +15,6 @@ class Box(eqx.Module):
     - 3D shapes denote (Channels, Height, Width)
     """
 
-    shape: tuple
-    """Size of the array"""
-    origin: tuple
-    """Start coordinate (in 2D: lower-left corner) of the array in model frame"""
-
     def __init__(self, shape, origin=None):
         """
         Parameters
@@ -30,10 +24,10 @@ class Box(eqx.Module):
         origin: tuple, optional
             Start coordinate (in 2D: lower-left corner) of the array in model frame
         """
-        self.shape = tuple(shape)
+        self.shape = tuple(int(s) for s in shape)
         if origin is None:
             origin = (0,) * len(shape)
-        self.origin = tuple(origin)
+        self.origin = tuple(int(o) for o in origin)
 
     @staticmethod
     def from_bounds(*bounds):
@@ -131,9 +125,8 @@ class Box(eqx.Module):
 
     def set_center(self, pos):
         """Center box at given position"""
-        pos_ = tuple(_.item() for _ in pos)
-        origin = tuple(o + p - c for o, p, c in zip(self.origin, pos_, self.center, strict=False))
-        object.__setattr__(self, "origin", origin)
+        pos_ = tuple(int(_) for _ in pos)
+        self.origin = tuple(o + p - c for o, p, c in zip(self.origin, pos_, self.center, strict=False))
 
     def grow(self, delta):
         """Grow the Box by the given delta in each direction"""
@@ -228,6 +221,9 @@ class Box(eqx.Module):
 
     def __hash__(self):
         return hash((self.shape, self.origin))
+
+    def __repr__(self):
+        return f"Box(shape={self.shape}, origin={self.origin})"
 
 
 def overlap_slices(bbox1, bbox2, return_boxes=False):

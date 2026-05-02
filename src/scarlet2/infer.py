@@ -297,9 +297,8 @@ def fit(
         from .validation import check_fit
 
         for obs in observations:
-            print(f"Running validation checks on the fit of the scene for observation {obs.name}.")
             validation_results = check_fit(scene_, obs)
-            print_validation_results("Fit validation results", validation_results)
+            print_validation_results(f"Fit validation results for observation {obs.name}", validation_results)
 
     return scene_, obs_
 

@@ -1,13 +1,19 @@
 """Helper methods to initialize sources"""
 
 import operator
+import warnings
+from dataclasses import dataclass
 from functools import reduce
 
+import astropy
 import astropy.units as u
 import jax.numpy as jnp
+from equinox import tree_pformat
 
 from . import Scenery, measure
-from .bbox import Box
+from .bbox import Box, insert_into
+from .detect import HierarchicalFootprint, hierarchical_footprints
+from .frame import get_relative_jacobian_shift
 from .morphology import GaussianMorphology
 from .observation import Observation
 
@@ -452,3 +458,192 @@ def _sort_spectra(spectra, channels):
             spectrum.append(0)
     spectrum = jnp.array(spectrum)
     return spectrum
+
+
+@dataclass
+class HierarchicalSourceInfo:
+    """Information for initializing a hierarchical source.
+
+    Attributes
+    ----------
+    peak: astropy.coordinates.SkyCoord
+        Sky position of detected peak
+    center: astropy.coordinates.SkyCoord
+        Sky position of the center of the bounding box
+    spectrum: jnp.array
+        1-D array of per-channel flux, shape ``(model.frame.C,)``
+    morphology: jnp.array
+        2-D intensity map, clipped to the footprint bounding box, normalized to maximum of 1
+    footprint: HierarchicalFootprint
+        The footprint from :func:`~scarlet2.detect.hierarchical_footprints`
+    """
+
+    peak: astropy.coordinates.SkyCoord
+    center: astropy.coordinates.SkyCoord
+    spectrum: jnp.array
+    morphology: jnp.array
+    footprint: HierarchicalFootprint
+
+    def __repr__(self):
+        return tree_pformat(self)
+
+
+def _footprints_to_sources(obs, detect, footprints, catalog):
+    try:
+        frame = Scenery.scene.frame
+    except AttributeError:
+        print("Attributes defined in sky coordinates can only be created within the context of a Scene")
+        print("Use 'with Scene(frame) as scene: (...)'")
+        raise
+
+    # we need a proper renderer to determine placement in the model frame
+    obs.check_set_renderer(frame)
+    # spatial differences
+    jac, shift = get_relative_jacobian_shift(frame, obs.frame)
+    if not jnp.allclose(jnp.linalg.det(jac), 1) or not jnp.allclose(shift, shift.astype(int)):
+        warnings.warn(
+            "hierarchical_sources does not support resampling. Align `obs` first!",
+            stacklevel=2,
+        )
+    # map between frame and obs channels: assumes clean 1-to-1 mapping
+    if frame.channels != obs.frame.channels:
+        frame_channels = list(frame.channels)
+        obs_channels = list(obs.frame.channels)
+        obs_idx = {c: i for i, c in enumerate(obs_channels)}
+        channel_map = {i: obs_idx[c] for i, c in enumerate(frame_channels) if c in obs_idx}
+        frame_channels = jnp.asarray(list(channel_map.keys()))
+        obs_channels = jnp.asarray(list(channel_map.values()))
+
+    _images = jnp.copy(obs.data)
+    shape = obs.frame.bbox.spatial.shape
+    res = [
+        None,
+    ] * len(footprints)
+    # get all scales with footprints, from largest to smallest
+    scales = sorted(set(fp.scale for fp in footprints if fp is not None), reverse=True)
+    for scale in scales:
+        for i, fp in enumerate(footprints):
+            if fp is not None and fp.scale == scale:
+                footprint_map = insert_into(jnp.zeros(shape), jnp.asarray(fp.footprint), fp.bbox)
+                source_detect = detect[scale] * footprint_map
+                # spectrum: MLE of flux per band given the morphology from source_detect
+                spectrum = (_images * source_detect[None, :, :]).sum(axis=(-2, -1)) / jnp.sum(
+                    source_detect**2
+                )
+                spectrum = jnp.maximum(spectrum, 0)
+                _images -= spectrum[:, None, None] * source_detect[None, :, :]
+                # morph: detection image at detection scale within the footprint
+                morph = jnp.maximum(source_detect[fp.bbox.slices], 0)
+                # max normalization
+                factor = morph.max()
+                morph = morph / factor
+                spectrum *= factor
+
+                # convert peak and box center to RA/Dec
+                peak = obs.frame.get_sky_coord((fp.peak.y, fp.peak.x))
+                center = obs.frame.get_sky_coord(fp.bbox.center)
+                # ensure correct placement of observed spectrum in model_frame
+                if frame.channels != obs.frame.channels:
+                    spectrum = jnp.zeros(frame.C).at[frame_channels].set(spectrum[obs_channels])
+                res[i] = HierarchicalSourceInfo(peak, center, spectrum, morph, fp)
+
+    # sweep for catalog sources with non-detections: initialize them as compact sources
+    if catalog is not None:
+        for i, peak in enumerate(catalog):
+            if footprints[i] is None:
+                pixel = peak.astype(int)
+                spectrum = jnp.asarray(_images[:, pixel[0], pixel[1]])
+                spectrum = jnp.maximum(spectrum, 0)
+                if frame.channels != obs.frame.channels:
+                    spectrum = jnp.zeros(frame.C).at[frame_channels].set(spectrum[obs_channels])
+                morph = compact_morphology()
+                peak = obs.frame.get_sky_coord(peak)
+                center = peak
+                res[i] = HierarchicalSourceInfo(peak, center, spectrum, morph, footprints[i])
+    return res
+
+
+def hierarchical_sources(
+    obs,
+    scales=None,
+    strict=True,
+    K=3,
+    split_peaks=True,
+    image_type="ground",
+    min_separation=0,
+    min_area=9,
+    thresh=0,
+    catalog=None,
+):
+    """Initialize sources from a wavelet-based hierarchical footprint detection.
+
+    Computes a detection image from ``obs``, decomposes it into a hierarchy of
+    footprints across starlet scales, and returns one :class:`HierarchicalSourceInfo`
+    per footprint, suitable for constructing :class:`~scarlet2.Source` objects.
+
+    Spectra and morphologies are initialized from the wavelet detection image
+    at each source's scale, with a least-squares flux estimate that
+    progressively subtracts brighter/larger sources before fitting fainter/
+    smaller ones (largest scale first).
+
+    Parameters
+    ----------
+    obs : :class:`~scarlet2.Observation`
+        The observation providing image data, per-pixel weights, and the
+        coordinate frame used to convert ``centers`` to pixel positions.
+    scales : list of int, optional
+        Starlet scales (indices into the coefficient array, default `[1,2,3]`) to use for detection.
+    strict : bool, optional
+        If ``True``, the coarse residual plane is pushed one scale higher so
+        that the selected ``scales`` are cleanly separated without bleed from
+        the largest-scale smooth background.  Default ``False``.
+    K : float, optional
+        Detection threshold multiplier: coefficients with
+        ``|w| > K * sigma_j`` are considered significant.  Also used for the
+        SNR-based bounding box extension.  Default ``3``.
+    split_peaks : bool, optional
+        If ``True`` (default), footprints with multiple peaks are split into separate sources
+        using a watershed algorithm. Otherwise, additional peaks become children of the
+        originating footprint,  which retains the full footprint area, i.e. the children overlap.
+        Splitting peaks allows to reduce the overlap of mostly independent sources.
+    image_type: str
+        The type of image that is being used.
+        This should be ``"ground"`` for ground based images with wide PSFs or
+        ``"space"`` for images from space-based telescopes with a narrow PSF.
+    min_separation : float, optional
+        Minimum pixel separation between peaks within a footprint.
+    min_area : int, optional
+        Minimum number of pixels a footprint must contain to be kept.
+    thresh : float, optional
+        Detection threshold; pixels must strictly exceed this value.
+    catalog : list of :class:`astropy.coordinates.SkyCoord`, optional
+        If given, only footprints that contain one of these sky positions are
+        returned.  Converted to pixel coordinates via ``obs.frame.get_pixel``.
+
+    Returns
+    -------
+    sources : list of :class:`HierarchicalSourceInfo`
+        One entry per detected footprint. Will create a "compact" source, i.e. a morphology array
+        from the model PSF for every location in `catalog` that is not detected as a footprint.
+
+    See Also
+    --------
+    :func:`~scarlet2.detect.hierarchical_footprints`
+    """
+
+    catalog_ = obs.frame.get_pixel(catalog) if catalog is not None else None
+    footprints, detect = hierarchical_footprints(
+        obs,
+        scales=scales,
+        strict=strict,
+        K=K,
+        split_peaks=split_peaks,
+        image_type=image_type,
+        min_separation=min_separation,
+        min_area=min_area,
+        thresh=thresh,
+        flatten=True,
+        catalog=catalog_,
+        return_detect=True,
+    )
+    return _footprints_to_sources(obs, detect, footprints, catalog_)
