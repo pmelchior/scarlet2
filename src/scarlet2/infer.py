@@ -160,7 +160,7 @@ def fit(
     """Fit model `parameters` of every source in `scene` to match `observations`.
 
     Computes the best-fit parameters of all components in every source by
-    first-order gradient descent with the Adam optimizer from `optax`.
+    first-order gradient descent with the Yogi optimizer from `optax`.
 
     Parameters
     ----------
@@ -252,7 +252,7 @@ def fit(
 
     # run adam, followed by stepsize adjustments
     optim = optax.chain(
-        optax.scale_by_adam(**kwargs),
+        optax.scale_by_yogi(**kwargs),
         optax.scale_by_schedule(schedule if callable(schedule) else lambda x: 1),
         scale_by_stepsize(),
     )
