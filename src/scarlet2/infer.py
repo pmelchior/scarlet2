@@ -57,6 +57,91 @@ def _dict_to_eqx_module(name: str, data: dict):
     return cls(**data)
 
 
+# -----------------------------------------------------------------------------
+# Responsibility regularizer
+# -----------------------------------------------------------------------------
+#
+# Penalizes "parasitic flux", i.e. configurations where one source acquires
+# flux in pixels that another source dominates, while leaving genuine overlaps
+# essentially untouched.
+#
+# For each source k with rendered model S_k(x) >= 0, define
+#    gamma_k(x) = S_k(x) / (sum_j S_j(x) + eps)        # responsibility
+#    w_k(x)     = S_k(x) / sum_y S_k(y)                # source's flux distribution
+#
+# The regularizer is the cross-entropy of w_k against gamma_k,
+# weighted flux-fractionally and summed over sources:
+#
+#    R = sum_k sum_x w_k(x) * (-log gamma_k(x))
+#
+# Properties:
+#   - Scale-invariant in the global flux normalization.
+#   - Asymmetric: penalizes w_k being large where gamma_k is small (parasitic),
+#     but not gamma_k being large where w_k is small.
+#   - Genuine equal overlaps contribute a flat ~K * log(K) baseline.
+# -----------------------------------------------------------------------------
+
+
+class _ResponsibilityConfig(eqx.Module):
+    """Static configuration for the responsibility penalty.
+
+    An ``eqx.Module`` so it threads cleanly through ``eqx.filter_jit``
+    without being treated as a differentiable leaf.
+    """
+
+    weight: float = eqx.field(static=True)
+    eps: float = eqx.field(static=True)
+    support_threshold: float | None = eqx.field(static=True)
+    support_tau: float = eqx.field(static=True)
+
+
+def _responsibility_from_stack(per_source, cfg: _ResponsibilityConfig):
+    """Compute R from a stack of per-source models in a common frame.
+
+    ``per_source`` has shape ``(K, ...)``: leading axis enumerates sources,
+    remaining axes are spatial (and optionally spectral). Pure tensor math so
+    it can be exercised in tests without constructing a Scene. Does not apply
+    ``cfg.weight``; the caller multiplies.
+    """
+    # Clip to non-negative: morphologies are typically constrained >= 0, but
+    # some parameterizations (e.g. gradient steps in unconstrained space before
+    # the constraint bijector is applied) can transiently dip below zero.
+    per_source = jnp.maximum(per_source, 0.0)
+
+    total = jnp.sum(per_source, axis=0)
+    gamma = per_source / (total + cfg.eps)
+
+    spatial_axes = tuple(range(1, per_source.ndim))
+    flux_per_source = jnp.sum(per_source, axis=spatial_axes, keepdims=True)
+    w = per_source / (flux_per_source + cfg.eps)
+
+    if cfg.support_threshold is not None:
+        mask = jax.nn.sigmoid((per_source - cfg.support_threshold) / cfg.support_tau)
+        w = w * mask
+        w = w / (jnp.sum(w, axis=spatial_axes, keepdims=True) + cfg.eps)
+
+    log_gamma = jnp.log(gamma + cfg.eps)
+    return -jnp.sum(w * log_gamma)
+
+
+def _responsibility_penalty(scene_obj, cfg: _ResponsibilityConfig):
+    """Compute the responsibility regularizer for a rendered Scene.
+
+    ``scene_obj`` is the parameter-substituted Scene (i.e. ``scene.set(values_)``);
+    we need this rather than the rendered total because we evaluate each source
+    in the scene frame separately to form the responsibility map.
+    """
+    if cfg.weight == 0.0:
+        return jnp.array(0.0)
+
+    # scene.evaluate_source places each source into a zero array of the full
+    # scene bbox, so all entries live on the same (C, H, W) grid.
+    per_source = jnp.stack(
+        [scene_obj.evaluate_source(s) for s in scene_obj.sources], axis=0
+    )
+    return cfg.weight * _responsibility_from_stack(per_source, cfg)
+
+
 def sample(scene, observations, *args, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs):
     """Sample `parameters` of every source in `scene` to get posteriors given `observations`.
 
@@ -155,6 +240,10 @@ def fit(
     e_rel=1e-4,
     progress_bar=True,
     callback=None,
+    responsibility_weight=0.0,
+    responsibility_eps=1e-12,
+    responsibility_support_threshold=None,
+    responsibility_support_tau=1.0,
     **kwargs,
 ):
     """Fit model `parameters` of every source in `scene` to match `observations`.
@@ -184,8 +273,26 @@ def fit(
         Signature `callback(scene, convergence, loss) -> None`, where
         `convergence` is a tree of the same structure as `scene`, and `loss`
         is the current value of the log_posterior.
+    responsibility_weight : float, optional
+        Coefficient ``lambda`` of the responsibility regularizer added to the
+        loss. ``0.0`` (default) disables the regularizer entirely (the loss is
+        bit-identical to the un-regularized version). Penalizes parasitic flux,
+        i.e. configurations where one source acquires flux in pixels that
+        another source dominates. See module docstring for details.
+    responsibility_eps : float, optional
+        Small constant added to denominators in the regularizer for numerical
+        stability. Set this to a small fraction of the noise RMS in your model
+        units. Default ``1e-12`` is appropriate for unit-flux frames.
+    responsibility_support_threshold : float, optional
+        If set, the regularizer is restricted to pixels where each source has
+        flux above this threshold (using a soft sigmoid mask). Recommended:
+        a few times the noise RMS in the model frame. ``None`` (default)
+        applies the regularizer over all pixels with nonzero flux.
+    responsibility_support_tau : float, optional
+        Smoothing scale of the soft support mask. Only used when
+        ``responsibility_support_threshold`` is not ``None``.
     **kwargs: dict, optional
-        Additional keyword arguments passed to the `optax.scale_by_adam` optimizer.
+        Additional keyword arguments passed to the `optax.scale_by_yogi` optimizer.
 
     Notes
     -----
@@ -261,11 +368,23 @@ def fit(
     values = _constraint_replace(values, params, inv=True)
     opt_state = optim.init(values)
 
+    # bundle the responsibility regularizer config; static fields => no retracing
+    resp_cfg = _ResponsibilityConfig(
+        weight=float(responsibility_weight),
+        eps=float(responsibility_eps),
+        support_threshold=(
+            None
+            if responsibility_support_threshold is None
+            else float(responsibility_support_threshold)
+        ),
+        support_tau=float(responsibility_support_tau),
+    )
+
     with trange(max_iter, disable=not progress_bar) as t:
         for step in t:  # noqa: B007
             # optimizer step
             values, loss, opt_state, convergence = _make_step(
-                values, params, scene, observations, optim, opt_state
+                values, params, scene, observations, optim, opt_state, resp_cfg
             )
 
             # compute max change across all non-fixed parameters for convergence test
@@ -317,14 +436,14 @@ def _constraint_replace(values, params, inv=False):
 
 # update step for optax optimizer
 @eqx.filter_jit
-def _make_step(values, params, scene, observations, optim, opt_state):
+def _make_step(values, params, scene, observations, optim, opt_state, resp_cfg):
     def loss_fn(values):
         # parameters now obey constraints
         # transformation happens in the grad path, so gradients are wrt to unconstrained variables
         # likelihood and prior grads transparently apply the Jacobians of these transformations
         values_ = _constraint_replace(values, params)
-        scene_ = scene.set(values_)()
-        log_like = sum(obs.set(values_).log_likelihood(scene_) for obs in observations)
+        scene_ = scene.set(values_)
+        log_like = sum(obs.set(values_).log_likelihood(scene_()) for obs in observations)
 
         # add log prior for all parameters which define priors
         # Note: This calls priors separately even if they support batched execution
@@ -339,7 +458,10 @@ def _make_step(values, params, scene, observations, optim, opt_state):
             ),
         )
 
-        return -(log_like + log_prior)
+        # responsibility regularizer (no-op when resp_cfg.weight == 0.0)
+        resp = _responsibility_penalty(scene_, resp_cfg)
+
+        return -(log_like + log_prior) + resp
 
     loss, grads = eqx.filter_value_and_grad(loss_fn)(values)
     updates, opt_state = optim.update(grads, opt_state, values)
