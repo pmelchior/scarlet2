@@ -87,12 +87,27 @@ class _ResponsibilityConfig(eqx.Module):
 
     An ``eqx.Module`` so it threads cleanly through ``eqx.filter_jit``
     without being treated as a differentiable leaf.
+
+    ``mode`` selects how the channel axis of multi-band scenes is treated:
+
+    - ``"band_summed"``: sum per-source models over the channel axis before
+      computing responsibilities. Right answer for factorized sources
+      (morphology x spectrum) where the responsibility structure is 2D.
+    - ``"per_band"``: compute responsibilities per channel with per-channel
+      ``w_k(c, x)``, then sum cross-entropies across channels. Right for
+      sources with spatially varying spectra (color gradients, AGN+host,
+      transient on host).
+    - ``"joint"``: treat ``(c, x)`` as one big index. Kept for reproducibility.
     """
 
     weight: float = eqx.field(static=True)
     eps: float = eqx.field(static=True)
     support_threshold: float | None = eqx.field(static=True)
     support_tau: float = eqx.field(static=True)
+    mode: str = eqx.field(static=True)
+
+
+_RESPONSIBILITY_MODES = ("band_summed", "per_band", "joint")
 
 
 def _responsibility_from_stack(per_source, cfg: _ResponsibilityConfig):
@@ -103,6 +118,12 @@ def _responsibility_from_stack(per_source, cfg: _ResponsibilityConfig):
     it can be exercised in tests without constructing a Scene. Does not apply
     ``cfg.weight``; the caller multiplies.
     """
+    # band_summed mode: collapse the channel axis (axis=1) of a (K, C, H, W)
+    # stack into (K, H, W) so responsibilities are computed in 2D. 2D inputs
+    # (K, H, W) are unaffected.
+    if cfg.mode == "band_summed" and per_source.ndim == 4:
+        per_source = jnp.sum(per_source, axis=1)
+
     # Clip to non-negative: morphologies are typically constrained >= 0, but
     # some parameterizations (e.g. gradient steps in unconstrained space before
     # the constraint bijector is applied) can transiently dip below zero.
@@ -111,7 +132,15 @@ def _responsibility_from_stack(per_source, cfg: _ResponsibilityConfig):
     total = jnp.sum(per_source, axis=0)
     gamma = per_source / (total + cfg.eps)
 
-    spatial_axes = tuple(range(1, per_source.ndim))
+    # Per-source weight w_k. In "per_band" mode on a (K, C, H, W) stack, w is
+    # normalized separately for each channel (axes 2..end), so cross-entropies
+    # are summed independently per band. In other modes, w is normalized over
+    # all non-leading axes (channel folded into spatial). For ndim<4, per_band
+    # has no separate channel axis and falls back to the joint normalization.
+    if cfg.mode == "per_band" and per_source.ndim >= 4:
+        spatial_axes = tuple(range(2, per_source.ndim))
+    else:
+        spatial_axes = tuple(range(1, per_source.ndim))
     flux_per_source = jnp.sum(per_source, axis=spatial_axes, keepdims=True)
     w = per_source / (flux_per_source + cfg.eps)
 
@@ -244,6 +273,7 @@ def fit(
     responsibility_eps=1e-12,
     responsibility_support_threshold=None,
     responsibility_support_tau=1.0,
+    responsibility_mode="band_summed",
     **kwargs,
 ):
     """Fit model `parameters` of every source in `scene` to match `observations`.
@@ -291,6 +321,16 @@ def fit(
     responsibility_support_tau : float, optional
         Smoothing scale of the soft support mask. Only used when
         ``responsibility_support_threshold`` is not ``None``.
+    responsibility_mode : {"band_summed", "per_band", "joint"}, optional
+        How the channel axis of multi-band scenes is treated when computing
+        the regularizer. ``"band_summed"`` (default) sums per-source models
+        over the channel axis first, computing 2D responsibilities — the
+        right answer for factorized morphology x spectrum sources.
+        ``"per_band"`` normalizes the per-source weight separately per
+        channel and sums cross-entropies across channels — appropriate for
+        sources with spatially varying spectra (color gradients, AGN+host,
+        transient on host). ``"joint"`` treats ``(c, x)`` as one big index;
+        kept for reproducibility of older runs.
     **kwargs: dict, optional
         Additional keyword arguments passed to the `optax.scale_by_yogi` optimizer.
 
@@ -368,6 +408,13 @@ def fit(
     values = _constraint_replace(values, params, inv=True)
     opt_state = optim.init(values)
 
+    if responsibility_mode not in _RESPONSIBILITY_MODES:
+        msg = (
+            f"responsibility_mode must be one of {_RESPONSIBILITY_MODES}, "
+            f"got {responsibility_mode!r}"
+        )
+        raise ValueError(msg)
+
     # bundle the responsibility regularizer config; static fields => no retracing
     resp_cfg = _ResponsibilityConfig(
         weight=float(responsibility_weight),
@@ -378,6 +425,7 @@ def fit(
             else float(responsibility_support_threshold)
         ),
         support_tau=float(responsibility_support_tau),
+        mode=responsibility_mode,
     )
 
     with trange(max_iter, disable=not progress_bar) as t:
