@@ -42,7 +42,7 @@ __citation__ = __bibtex__ = (Path(__file__).parent / "citation.bib").read_text()
 
 from .bbox import Box
 from .frame import Frame
-from .infer import fit, sample
+from .infer import Responsibility, fit, sample
 from .module import Module, Parameter, Parameters, relative_step
 from .morphology import (
     GaussianMorphology,
@@ -69,6 +69,7 @@ __all__ = [
     "plot",
     "fit",
     "sample",
+    "Responsibility",
     "Scenery",
     "Parameterization",
     "Box",

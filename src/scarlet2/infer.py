@@ -82,35 +82,68 @@ def _dict_to_eqx_module(name: str, data: dict):
 # -----------------------------------------------------------------------------
 
 
-class _ResponsibilityConfig(eqx.Module):
-    """Static configuration for the responsibility penalty.
-
-    An ``eqx.Module`` so it threads cleanly through ``eqx.filter_jit``
-    without being treated as a differentiable leaf.
-
-    ``mode`` selects how the channel axis of multi-band scenes is treated:
-
-    - ``"band_summed"``: sum per-source models over the channel axis before
-      computing responsibilities. Right answer for factorized sources
-      (morphology x spectrum) where the responsibility structure is 2D.
-    - ``"per_band"``: compute responsibilities per channel with per-channel
-      ``w_k(c, x)``, then sum cross-entropies across channels. Right for
-      sources with spatially varying spectra (color gradients, AGN+host,
-      transient on host).
-    - ``"joint"``: treat ``(c, x)`` as one big index. Kept for reproducibility.
-    """
-
-    weight: float = eqx.field(static=True)
-    eps: float = eqx.field(static=True)
-    support_threshold: float | None = eqx.field(static=True)
-    support_tau: float = eqx.field(static=True)
-    mode: str = eqx.field(static=True)
-
-
 _RESPONSIBILITY_MODES = ("band_summed", "per_band", "joint")
 
 
-def _responsibility_from_stack(per_source, cfg: _ResponsibilityConfig):
+class Responsibility(eqx.Module):
+    """Configuration for the responsibility regularizer used by :func:`fit`.
+
+    Penalizes "parasitic flux", i.e. configurations where one source acquires
+    flux in pixels that another source dominates, while leaving genuine
+    overlaps essentially untouched. Pass an instance of this class to
+    ``fit(..., responsibility=Responsibility(weight=...))`` to enable.
+
+    Parameters
+    ----------
+    weight : float
+        Coefficient ``lambda`` of the regularizer added to the loss. ``0.0``
+        is a no-op (bit-identical to the unregularized loss).
+        As a guide, ``lambda * K log (K) ~= Loss / 100``, where ``K`` is the number
+        of components in the scene and ``Loss`` is the unregularized loss.
+    eps : float, optional
+        Small constant added to denominators for numerical stability. Set to
+        a small fraction of the noise RMS in your model units.
+    support_threshold : float or None, optional
+        If set, restrict each source's contribution to pixels where it has
+        flux above this threshold (soft sigmoid mask). Recommended: a few
+        times the noise RMS in the model frame. ``None`` (default) applies
+        the regularizer over all pixels with nonzero flux.
+    support_tau : float, optional
+        Smoothing scale of the soft support mask. Only used when
+        ``support_threshold`` is not ``None``.
+    mode : {"band_summed", "per_band", "joint"}, optional
+        How the channel axis of multi-band scenes is treated:
+
+        - ``"band_summed"`` (default): sum per-source models over the channel
+          axis first, computing 2D responsibilities. Right answer for
+          factorized sources (morphology x spectrum).
+        - ``"per_band"``: normalize per-source weights separately per channel
+          and sum cross-entropies across channels. Right for sources with
+          spatially varying spectra (color gradients, AGN+host, transient
+          on host).
+        - ``"joint"``: treat ``(c, x)`` as one big index. Kept for
+          reproducibility of older runs.
+
+    Notes
+    -----
+    Implemented as an ``eqx.Module`` with all-static fields so it threads
+    through ``eqx.filter_jit`` without being treated as a differentiable
+    leaf and without forcing recompilation across identical configs.
+    """
+
+    weight: float = eqx.field(static=True)
+    eps: float = eqx.field(static=True, default=1e-12)
+    support_threshold: float | None = eqx.field(static=True, default=None)
+    support_tau: float = eqx.field(static=True, default=1.0)
+    mode: str = eqx.field(static=True, default="band_summed")
+
+    def __check_init__(self):
+        if self.mode not in _RESPONSIBILITY_MODES:
+            msg = f"Responsibility.mode must be one of {_RESPONSIBILITY_MODES}, got {self.mode!r}"
+            raise ValueError(msg)
+
+
+def _responsibility_from_stack(per_source, cfg: Responsibility):
     """Compute R from a stack of per-source models in a common frame.
 
     ``per_source`` has shape ``(K, ...)``: leading axis enumerates sources,
@@ -153,7 +186,7 @@ def _responsibility_from_stack(per_source, cfg: _ResponsibilityConfig):
     return -jnp.sum(w * log_gamma)
 
 
-def _responsibility_penalty(scene_obj, cfg: _ResponsibilityConfig):
+def _responsibility_penalty(scene_obj, cfg: Responsibility):
     """Compute the responsibility regularizer for a rendered Scene.
 
     ``scene_obj`` is the parameter-substituted Scene (i.e. ``scene.set(values_)``);
@@ -165,9 +198,7 @@ def _responsibility_penalty(scene_obj, cfg: _ResponsibilityConfig):
 
     # scene.evaluate_source places each source into a zero array of the full
     # scene bbox, so all entries live on the same (C, H, W) grid.
-    per_source = jnp.stack(
-        [scene_obj.evaluate_source(s) for s in scene_obj.sources], axis=0
-    )
+    per_source = jnp.stack([scene_obj.evaluate_source(s) for s in scene_obj.sources], axis=0)
     return cfg.weight * _responsibility_from_stack(per_source, cfg)
 
 
@@ -269,11 +300,7 @@ def fit(
     e_rel=1e-4,
     progress_bar=True,
     callback=None,
-    responsibility_weight=0.0,
-    responsibility_eps=1e-12,
-    responsibility_support_threshold=None,
-    responsibility_support_tau=1.0,
-    responsibility_mode="band_summed",
+    responsibility=None,
     **kwargs,
 ):
     """Fit model `parameters` of every source in `scene` to match `observations`.
@@ -303,34 +330,13 @@ def fit(
         Signature `callback(scene, convergence, loss) -> None`, where
         `convergence` is a tree of the same structure as `scene`, and `loss`
         is the current value of the log_posterior.
-    responsibility_weight : float, optional
-        Coefficient ``lambda`` of the responsibility regularizer added to the
-        loss. ``0.0`` (default) disables the regularizer entirely (the loss is
-        bit-identical to the un-regularized version). Penalizes parasitic flux,
-        i.e. configurations where one source acquires flux in pixels that
-        another source dominates. See module docstring for details.
-    responsibility_eps : float, optional
-        Small constant added to denominators in the regularizer for numerical
-        stability. Set this to a small fraction of the noise RMS in your model
-        units. Default ``1e-12`` is appropriate for unit-flux frames.
-    responsibility_support_threshold : float, optional
-        If set, the regularizer is restricted to pixels where each source has
-        flux above this threshold (using a soft sigmoid mask). Recommended:
-        a few times the noise RMS in the model frame. ``None`` (default)
-        applies the regularizer over all pixels with nonzero flux.
-    responsibility_support_tau : float, optional
-        Smoothing scale of the soft support mask. Only used when
-        ``responsibility_support_threshold`` is not ``None``.
-    responsibility_mode : {"band_summed", "per_band", "joint"}, optional
-        How the channel axis of multi-band scenes is treated when computing
-        the regularizer. ``"band_summed"`` (default) sums per-source models
-        over the channel axis first, computing 2D responsibilities — the
-        right answer for factorized morphology x spectrum sources.
-        ``"per_band"`` normalizes the per-source weight separately per
-        channel and sums cross-entropies across channels — appropriate for
-        sources with spatially varying spectra (color gradients, AGN+host,
-        transient on host). ``"joint"`` treats ``(c, x)`` as one big index;
-        kept for reproducibility of older runs.
+    responsibility : :py:class:`~scarlet2.Responsibility`, optional
+        If given, adds a responsibility regularizer to the loss. ``None``
+        (default) disables the regularizer entirely (the loss is bit-identical
+        to the un-regularized version). The regularizer penalizes parasitic
+        flux, i.e. configurations where one source acquires flux in pixels
+        that another source dominates. See :py:class:`~scarlet2.Responsibility`
+        for the available options.
     **kwargs: dict, optional
         Additional keyword arguments passed to the `optax.scale_by_yogi` optimizer.
 
@@ -408,25 +414,8 @@ def fit(
     values = _constraint_replace(values, params, inv=True)
     opt_state = optim.init(values)
 
-    if responsibility_mode not in _RESPONSIBILITY_MODES:
-        msg = (
-            f"responsibility_mode must be one of {_RESPONSIBILITY_MODES}, "
-            f"got {responsibility_mode!r}"
-        )
-        raise ValueError(msg)
-
-    # bundle the responsibility regularizer config; static fields => no retracing
-    resp_cfg = _ResponsibilityConfig(
-        weight=float(responsibility_weight),
-        eps=float(responsibility_eps),
-        support_threshold=(
-            None
-            if responsibility_support_threshold is None
-            else float(responsibility_support_threshold)
-        ),
-        support_tau=float(responsibility_support_tau),
-        mode=responsibility_mode,
-    )
+    # default: regularizer off (weight=0.0 short-circuits to a no-op)
+    resp_cfg = responsibility if responsibility is not None else Responsibility(weight=0.0)
 
     with trange(max_iter, disable=not progress_bar) as t:
         for step in t:  # noqa: B007

@@ -17,17 +17,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from scarlet2.infer import _ResponsibilityConfig, _responsibility_from_stack
-
-
-def _cfg(eps=1e-12, support_threshold=None, support_tau=1.0, mode="band_summed"):
-    return _ResponsibilityConfig(
-        weight=1.0,
-        eps=eps,
-        support_threshold=support_threshold,
-        support_tau=support_tau,
-        mode=mode,
-    )
+from scarlet2 import Responsibility
+from scarlet2.infer import _responsibility_from_stack
 
 
 def _gaussian(shape, center, sigma, amp=1.0):
@@ -42,7 +33,7 @@ SHAPE = (64, 64)
 def test_disjoint_sources_near_zero():
     A = _gaussian(SHAPE, (16, 16), sigma=3.0, amp=10.0)
     B = _gaussian(SHAPE, (48, 48), sigma=3.0, amp=10.0)
-    R = float(_responsibility_from_stack(jnp.stack([A, B]), _cfg()))
+    R = float(_responsibility_from_stack(jnp.stack([A, B]), Responsibility(weight=1.0)))
     assert R < 1e-3
 
 
@@ -51,7 +42,7 @@ def test_equal_full_overlap_matches_baseline():
     # in the support, so each source contributes -sum w_k log(1/2) = log 2.
     A = _gaussian(SHAPE, (32, 32), sigma=4.0, amp=10.0)
     B = _gaussian(SHAPE, (32, 32), sigma=4.0, amp=10.0)
-    R = float(_responsibility_from_stack(jnp.stack([A, B]), _cfg()))
+    R = float(_responsibility_from_stack(jnp.stack([A, B]), Responsibility(weight=1.0)))
     assert R == pytest.approx(2 * np.log(2), abs=0.05)
 
 
@@ -62,8 +53,8 @@ def test_parasitic_flux_increases_R():
     B = _gaussian(SHAPE, (32, 32), sigma=1.5, amp=20.0)
     A_parasitic = A_clean + _gaussian(SHAPE, (32, 32), sigma=1.5, amp=8.0)
 
-    R_clean = float(_responsibility_from_stack(jnp.stack([A_clean, B]), _cfg()))
-    R_parasitic = float(_responsibility_from_stack(jnp.stack([A_parasitic, B]), _cfg()))
+    R_clean = float(_responsibility_from_stack(jnp.stack([A_clean, B]), Responsibility(weight=1.0)))
+    R_parasitic = float(_responsibility_from_stack(jnp.stack([A_parasitic, B]), Responsibility(weight=1.0)))
     assert R_parasitic > R_clean
 
 
@@ -73,7 +64,7 @@ def test_gradient_pushes_parasitic_amplitude_down():
 
     def R_of_amp(amp):
         A_var = A_clean + _gaussian(SHAPE, (32, 32), sigma=1.5, amp=amp)
-        return _responsibility_from_stack(jnp.stack([A_var, B]), _cfg())
+        return _responsibility_from_stack(jnp.stack([A_var, B]), Responsibility(weight=1.0))
 
     grad_at_zero = float(jax.grad(R_of_amp)(0.0))
     grad_at_eight = float(jax.grad(R_of_amp)(8.0))
@@ -97,8 +88,8 @@ def test_band_summed_collapses_channel_axis_to_2d_math():
     stack3d = jnp.stack([A, B], axis=0)  # (K, C, H, W)
     stack2d = jnp.stack([A.sum(axis=0), B.sum(axis=0)], axis=0)  # (K, H, W)
 
-    R_3d = float(_responsibility_from_stack(stack3d, _cfg(mode="band_summed")))
-    R_2d = float(_responsibility_from_stack(stack2d, _cfg(mode="joint")))
+    R_3d = float(_responsibility_from_stack(stack3d, Responsibility(weight=1.0, mode="band_summed")))
+    R_2d = float(_responsibility_from_stack(stack2d, Responsibility(weight=1.0, mode="joint")))
     assert R_3d == pytest.approx(R_2d, rel=1e-6)
 
 
@@ -112,8 +103,8 @@ def test_band_summed_and_joint_disagree_on_color_separated_overlap():
     B = jnp.stack([0.05 * morph, 1.0 * morph], axis=0)
     stack = jnp.stack([A, B], axis=0)
 
-    R_summed = float(_responsibility_from_stack(stack, _cfg(mode="band_summed")))
-    R_joint = float(_responsibility_from_stack(stack, _cfg(mode="joint")))
+    R_summed = float(_responsibility_from_stack(stack, Responsibility(weight=1.0, mode="band_summed")))
+    R_joint = float(_responsibility_from_stack(stack, Responsibility(weight=1.0, mode="joint")))
 
     assert R_summed > R_joint
     assert R_summed == pytest.approx(2 * np.log(2), abs=0.1)
@@ -126,8 +117,8 @@ def test_3d_disjoint_sources_near_zero_in_both_modes():
     B = jnp.stack([0.5 * morph_B, morph_B], axis=0)
     stack = jnp.stack([A, B], axis=0)
 
-    assert float(_responsibility_from_stack(stack, _cfg(mode="band_summed"))) < 1e-3
-    assert float(_responsibility_from_stack(stack, _cfg(mode="joint"))) < 1e-3
+    assert float(_responsibility_from_stack(stack, Responsibility(weight=1.0, mode="band_summed"))) < 1e-3
+    assert float(_responsibility_from_stack(stack, Responsibility(weight=1.0, mode="joint"))) < 1e-3
 
 
 def test_per_band_falls_back_to_joint_on_2d_input():
@@ -136,8 +127,8 @@ def test_per_band_falls_back_to_joint_on_2d_input():
     B = _gaussian(SHAPE, (32, 32), sigma=4.0, amp=10.0)
     stack = jnp.stack([A, B])  # (K, H, W)
 
-    R_per_band = float(_responsibility_from_stack(stack, _cfg(mode="per_band")))
-    R_joint = float(_responsibility_from_stack(stack, _cfg(mode="joint")))
+    R_per_band = float(_responsibility_from_stack(stack, Responsibility(weight=1.0, mode="per_band")))
+    R_joint = float(_responsibility_from_stack(stack, Responsibility(weight=1.0, mode="joint")))
     assert R_per_band == pytest.approx(R_joint, rel=1e-6)
 
 
@@ -151,11 +142,16 @@ def test_per_band_diverges_from_joint_on_color_separated_overlap():
     B = jnp.stack([0.05 * morph, 1.0 * morph], axis=0)
     stack = jnp.stack([A, B], axis=0)
 
-    R_per_band = float(_responsibility_from_stack(stack, _cfg(mode="per_band")))
-    R_joint = float(_responsibility_from_stack(stack, _cfg(mode="joint")))
-    R_band_summed = float(_responsibility_from_stack(stack, _cfg(mode="band_summed")))
+    R_per_band = float(_responsibility_from_stack(stack, Responsibility(weight=1.0, mode="per_band")))
+    R_joint = float(_responsibility_from_stack(stack, Responsibility(weight=1.0, mode="joint")))
+    R_band_summed = float(_responsibility_from_stack(stack, Responsibility(weight=1.0, mode="band_summed")))
     assert R_per_band != pytest.approx(R_joint, rel=1e-3)
     assert R_per_band != pytest.approx(R_band_summed, rel=1e-3)
+
+
+def test_invalid_mode_raises_on_construction():
+    with pytest.raises(ValueError, match="mode"):
+        Responsibility(weight=1.0, mode="bogus")
 
 
 def test_per_band_detects_single_channel_parasitic_flux():
@@ -170,6 +166,6 @@ def test_per_band_detects_single_channel_parasitic_flux():
     A_parasitic = jnp.stack([morph_A + bump, morph_A], axis=0)
     B = jnp.stack([morph_B, jnp.zeros_like(morph_B)], axis=0)
 
-    R_clean = float(_responsibility_from_stack(jnp.stack([A_clean, B]), _cfg(mode="per_band")))
-    R_parasitic = float(_responsibility_from_stack(jnp.stack([A_parasitic, B]), _cfg(mode="per_band")))
+    R_clean = float(_responsibility_from_stack(jnp.stack([A_clean, B]), Responsibility(weight=1.0, mode="per_band")))
+    R_parasitic = float(_responsibility_from_stack(jnp.stack([A_parasitic, B]), Responsibility(weight=1.0, mode="per_band")))
     assert R_parasitic > R_clean
