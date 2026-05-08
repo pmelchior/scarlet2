@@ -266,6 +266,35 @@ class Frame(Module):
 
         return model_frame
 
+    def map_channels(self, other_frame):
+        """Map channel indices of this frame to matching indices in another frame.
+
+        Parameters
+        ----------
+        other_frame: :py:class:`~scarlet2.Frame`
+            Frame whose channels are to be matched against this frame's channels.
+
+        Returns
+        -------
+        dict
+            Mapping from each channel index in this frame to the corresponding channel
+            index in `other_frame`, for all channels present in both frames.
+            Channels unique to either frame are omitted.
+
+        Examples
+        --------
+        >>> from scarlet2 import Frame
+        >>> from scarlet2.bbox import Box
+        >>> f1 = Frame(Box((3, 10, 10)), channels=["g", "r", "i"])
+        >>> f2 = Frame(Box((2, 10, 10)), channels=["r", "i"])
+        >>> f1.map_channels(f2)
+        {1: 0, 2: 1}
+        """
+        self_channels = list(self.channels)
+        other_channels = list(other_frame.channels)
+        other_idx = {c: i for i, c in enumerate(other_channels)}
+        return {i: other_idx[c] for i, c in enumerate(self_channels) if c in other_idx}
+
 
 def get_psf_size(psf):
     """Measures the size of a psf by computing the size of the area in 3 sigma around the center.

@@ -1,0 +1,4 @@
+[filter "nbstrip"]
+        clean = jupyter nbconvert --clear-output --to notebook --stdin --stdout 2>/dev/null
+        smudge = cat
+        required = true

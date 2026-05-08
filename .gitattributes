@@ -22,3 +22,5 @@
 # *.png	filter=lfs diff=lfs merge=lfs -text
 
 .git_archival.txt export-subst
+
+*.ipynb filter=nbstrip
