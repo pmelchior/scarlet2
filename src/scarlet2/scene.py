@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 
@@ -46,6 +47,8 @@ class Scene(Module):
     """Portion of the sky represented by this model"""
     sources: list
     """List of :py:class:`~scarlet2.Source` comprised in this model"""
+    fit_info: dict = eqx.field(default=None, static=True, repr=False)
+    """Diagnostic info populated by :py:func:`~scarlet2.fit` (loss history, best loss, n_iter)"""
 
     def __init__(self, frame):
         """
@@ -75,6 +78,7 @@ class Scene(Module):
         """
         self.frame = frame
         self.sources = SourceList()
+        self.fit_info = None
 
     def __call__(self):
         """What to run when the scene is called"""

@@ -1,3 +1,4 @@
+import functools
 import operator
 from pprint import pformat
 
@@ -46,14 +47,17 @@ class _ObsDistribution(dist.Distribution):
         return self.obs._log_likelihood(self.model, value)
 
 
+@functools.lru_cache(maxsize=16)
+def _eqx_module_class(name: str, fields: tuple):
+    # Cached so repeated fit() calls with the same parameter set reuse the same class.
+    # Class identity drives JAX's pytree treedef, so a fresh class would invalidate the
+    # JIT cache for any function taking this module as an arg.
+    annotations = {k: jax.Array for k in fields}
+    return type(name, (eqx.Module,), {"__annotations__": annotations})
+
+
 def _dict_to_eqx_module(name: str, data: dict):
-    # Build field annotations dynamically
-    annotations = {k: type(v) for k, v in data.items()}
-
-    # Create a class that inherits from eqx.Module
-    cls = type(name, (eqx.Module,), {"__annotations__": annotations})
-
-    # Instantiate with the dict values
+    cls = _eqx_module_class(name, tuple(data.keys()))
     return cls(**data)
 
 
@@ -189,16 +193,18 @@ def fit(
 
     Notes
     -----
-    Requires `optax`
+    Requires `optax`. The returned scene carries the *best* parameters seen during
+    optimization (lowest loss), not the last iteration's, since Yogi/Adam can be
+    non-monotonic. Diagnostic info (loss history, best loss, iteration count) is
+    attached as :py:attr:`Scene.fit_info`.
 
     Returns
     -------
     Scene, list(Observation)
-        The scene and observation(s) with updated parameters
+        The scene and observation(s) with best-fit parameters. ``scene.fit_info``
+        contains ``{"losses", "best_loss", "n_iter"}``.
     """
     try:
-        import optax
-        import optax._src.base as base
         from tqdm.auto import trange
     except ImportError as err:
         raise ImportError("scarlet2.Scene.fit() requires optax and numpyro.") from err
@@ -217,6 +223,10 @@ def fit(
         msg = "Scene and Observation(s) must have at least one parameter. Found none."
         raise AttributeError(msg)
 
+    # canonicalize: strip any fit_info from a previously-fit scene so the JIT cache key
+    # is identical for fresh and re-fitted inputs (fit_info is a static eqx field)
+    scene = scene.replace("fit_info", None)
+
     values = scene.get()
     for obs in observations:
         values |= obs.get()
@@ -229,44 +239,30 @@ def fit(
     params = jt.unflatten(treedef, params)
     steps = jt.map(lambda param: param.stepsize, params)
 
-    def scale_by_stepsize() -> base.GradientTransformation:
-        # adapted from optax.scale_by_param_block_norm()
-        def init_fn(params):
-            del params
-            return base.EmptyState()
-
-        def update_fn(updates, state, params):
-            if params is None:
-                raise ValueError(base.NO_PARAMS_MSG)
-            updates = jt.map(
-                # minus because we want gradient descent
-                lambda u, s, p: None if u is None else -s * u if not callable(s) else -s(p) * u,
-                updates,
-                steps,
-                params,
-                is_leaf=lambda x: x is None,
-            )
-            return updates, state
-
-        return base.GradientTransformation(init_fn, update_fn)
-
-    # run adam, followed by stepsize adjustments
-    optim = optax.chain(
-        optax.scale_by_yogi(**kwargs),
-        optax.scale_by_schedule(schedule if callable(schedule) else lambda x: 1),
-        scale_by_stepsize(),
-    )
+    # build (or fetch from cache) the optax optimizer; identity-stable across fit() calls
+    # with matching kwargs and schedule, so JAX's JIT cache stays warm
+    schedule_fn = schedule if callable(schedule) else _unit_schedule
+    optim = _build_optim(tuple(sorted(kwargs.items())), schedule_fn)
 
     # transform to unconstrained parameters
     values = _constraint_replace(values, params, inv=True)
     opt_state = optim.init(values)
 
+    # initialize best-fit tracker (loss is minimized, so start at +inf).
+    # Use an explicit dtype so the array is strongly-typed: jnp.where()'s output
+    # in iter 1 is strongly-typed, and JAX caches weak vs. strong separately —
+    # passing a weak inf would force a second compile on iter 2.
+    best_loss = jnp.array(jnp.inf, dtype=jnp.float32)
+    best_values = values
+    losses = []
+
     with trange(max_iter, disable=not progress_bar) as t:
         for step in t:  # noqa: B007
             # optimizer step
-            values, loss, opt_state, convergence = _make_step(
-                values, params, scene, observations, optim, opt_state
+            values, loss, opt_state, convergence, best_loss, best_values = _make_step(
+                values, params, scene, observations, optim, opt_state, steps, best_loss, best_values
             )
+            losses.append(loss)
 
             # compute max change across all non-fixed parameters for convergence test
             max_change = jax.tree_util.tree_reduce(lambda a, b: max(a, b), convergence)
@@ -284,11 +280,19 @@ def fit(
             if max_change < e_rel:
                 break
 
-    # transform back to constrained variables and replace in scene
-    values = _constraint_replace(values, params)
+    # transform best-fit values back to constrained variables and replace in scene
+    best_values = _constraint_replace(best_values, params)
     # scene_ is a copy, but its registry_key still points to scene.parameters, can thus be reused
-    scene_ = scene.set(values)
-    obs_ = tuple(obs.set(values) for obs in observations)
+    scene_ = scene.set(best_values)
+    obs_ = tuple(obs.set(best_values) for obs in observations)
+
+    # attach diagnostic info to the returned scene
+    fit_info = {
+        "losses": jnp.stack(losses),
+        "best_loss": best_loss,
+        "n_iter": step + 1,
+    }
+    scene_ = scene_.replace("fit_info", fit_info)
 
     # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
     from .validation_utils import VALIDATION_SWITCH
@@ -315,9 +319,32 @@ def _constraint_replace(values, params, inv=False):
     return jt.map(transform, values, params)
 
 
+def _unit_schedule(_):
+    # module-level so optax.scale_by_schedule(_unit_schedule) has stable identity across calls
+    return 1.0
+
+
+@functools.lru_cache(maxsize=8)
+def _build_optim(kwargs_items, schedule):
+    """Construct (and cache) the optax optimizer.
+
+    Cached on hashable args so repeated `fit()` calls with the same configuration
+    reuse the same optimizer instance. JAX's JIT cache keys static args by Python
+    identity, so a fresh `optax.chain(...)` from each fit() call would otherwise
+    miss the cache and recompile `_make_step` every time. See
+    https://github.com/pmelchior/scarlet2/issues/120.
+    """
+    import optax
+
+    return optax.chain(
+        optax.scale_by_yogi(**dict(kwargs_items)),
+        optax.scale_by_schedule(schedule),
+    )
+
+
 # update step for optax optimizer
 @eqx.filter_jit
-def _make_step(values, params, scene, observations, optim, opt_state):
+def _make_step(values, params, scene, observations, optim, opt_state, steps, best_loss, best_values):
     def loss_fn(values):
         # parameters now obey constraints
         # transformation happens in the grad path, so gradients are wrt to unconstrained variables
@@ -343,13 +370,27 @@ def _make_step(values, params, scene, observations, optim, opt_state):
 
     loss, grads = eqx.filter_value_and_grad(loss_fn)(values)
     updates, opt_state = optim.update(grads, opt_state, values)
+    # apply per-parameter stepsizes; minus sign because we want gradient descent
+    updates = jt.map(
+        lambda u, s, p: None if u is None else (-s(p) * u if callable(s) else -s * u),
+        updates,
+        steps,
+        values,
+        is_leaf=lambda x: x is None,
+    )
     values_ = eqx.apply_updates(values, updates)
 
     # for convergence criterion: compute norms of parameters and updates
     norm = lambda x, dx: 0 if dx is None else jnp.linalg.norm(dx) / jnp.linalg.norm(x)
     convergence = jt.map(lambda x, dx: norm(x, dx), values, updates)
 
-    return values_, loss, opt_state, convergence
+    # track best-fit: loss is at the *input* `values` (pre-update), so on improvement
+    # we keep the input values, not the post-update ones
+    is_better = loss < best_loss
+    best_loss = jnp.where(is_better, loss, best_loss)
+    best_values = jt.map(lambda b, v: jnp.where(is_better, v, b), best_values, values)
+
+    return values_, loss, opt_state, convergence, best_loss, best_values
 
 
 class FitValidator(metaclass=ValidationMethodCollector):
