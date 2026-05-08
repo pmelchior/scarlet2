@@ -202,6 +202,99 @@ def _responsibility_penalty(scene_obj, cfg: Responsibility):
     return cfg.weight * _responsibility_from_stack(per_source, cfg)
 
 
+# -----------------------------------------------------------------------------
+# Pair-similarity regularizer
+# -----------------------------------------------------------------------------
+#
+# Penalizes the source-pair similarity that is the geometric signature of
+# parasitic flux: when source A acquires a B-shaped bump, the cosine
+# similarity between A's and B's morphologies rises. The penalty is
+#
+#     R = sum_{A != B} sigma_AB * rho_AB
+#
+# where rho_AB is the cosine similarity of the band-summed morphologies and
+# sigma_AB is the cosine similarity of the SEDs. The SED factor scales the
+# penalty by the strength of the spectral degeneracy: maximal where the
+# data likelihood cannot tell A and B apart, fading where SEDs differ.
+# -----------------------------------------------------------------------------
+
+
+class PairSimilarity(eqx.Module):
+    """Configuration for the pair-similarity regularizer used by :func:`fit`.
+
+    Penalizes the morphology-cosine x SED-cosine similarity summed over
+    source pairs. Targets the parasitic-flux failure mode: when source A
+    absorbs flux in the shape of a neighbour B, the morphology cosine
+    rises, and the penalty pushes that B-shaped component back down.
+    The SED-cosine factor scales the penalty by the degree of spectral
+    degeneracy between the pair.
+
+    Parameters
+    ----------
+    weight : float
+        Coefficient ``lambda`` of the regularizer added to the loss. ``0.0``
+        is a no-op (bit-identical to the unregularized loss). A reasonable
+        starting point is to pick ``lambda`` such that ``lambda * K`` is a
+        small percent of the typical NLL, where ``K`` is the number of
+        sources.
+    eps : float, optional
+        Small constant added to cosine denominators for numerical stability.
+
+    Notes
+    -----
+    Implemented as an ``eqx.Module`` with all-static fields so it threads
+    through ``eqx.filter_jit`` without being treated as a differentiable
+    leaf and without forcing recompilation across identical configs.
+    """
+
+    weight: float = eqx.field(static=True)
+    eps: float = eqx.field(static=True, default=1e-12)
+
+
+def _cosine_matrix(X, eps):
+    """Cosine similarity between rows of X. Shape (N, D) -> (N, N)."""
+    norms = jnp.sqrt(jnp.sum(X * X, axis=1, keepdims=True))
+    Xn = X / (norms + eps)
+    return Xn @ Xn.T
+
+
+def _pair_similarity_from_stack(per_source, cfg: PairSimilarity):
+    """Compute R from a stack of per-source models in a common frame.
+
+    ``per_source`` has shape ``(K, C, H, W)`` for multi-band scenes or
+    ``(K, H, W)`` for single-band. Pure tensor math so it can be exercised
+    in tests without a Scene. Does not apply ``cfg.weight``; the caller
+    multiplies.
+    """
+    per_source = jnp.maximum(per_source, 0.0)
+
+    if per_source.ndim == 4:
+        M = per_source.sum(axis=1)  # (K, H, W)
+        f = per_source.sum(axis=(2, 3))  # (K, C)
+    else:
+        M = per_source
+        # Degenerate single-band case: SED cosine is identically 1, so
+        # only morphology contributes.
+        f = jnp.ones((per_source.shape[0], 1))
+
+    M_flat = M.reshape(M.shape[0], -1)
+    rho = _cosine_matrix(M_flat, eps=cfg.eps)
+    sigma = _cosine_matrix(f, eps=cfg.eps)
+
+    pair_term = sigma * rho
+    # Off-diagonal sum over unordered pairs: (sum - trace) / 2
+    return (jnp.sum(pair_term) - jnp.trace(pair_term)) / 2.0
+
+
+def _pair_similarity_penalty(scene_obj, cfg: PairSimilarity):
+    """Compute the pair-similarity regularizer for a rendered Scene."""
+    if cfg.weight == 0.0:
+        return jnp.array(0.0)
+
+    per_source = jnp.stack([scene_obj.evaluate_source(s) for s in scene_obj.sources], axis=0)
+    return cfg.weight * _pair_similarity_from_stack(per_source, cfg)
+
+
 def sample(scene, observations, *args, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs):
     """Sample `parameters` of every source in `scene` to get posteriors given `observations`.
 
@@ -301,6 +394,7 @@ def fit(
     progress_bar=True,
     callback=None,
     responsibility=None,
+    pair_similarity=None,
     **kwargs,
 ):
     """Fit model `parameters` of every source in `scene` to match `observations`.
@@ -337,6 +431,13 @@ def fit(
         flux, i.e. configurations where one source acquires flux in pixels
         that another source dominates. See :py:class:`~scarlet2.Responsibility`
         for the available options.
+    pair_similarity : :py:class:`~scarlet2.PairSimilarity`, optional
+        If given, adds a pair-similarity regularizer to the loss. ``None``
+        (default) disables it (bit-identical to the un-regularized version).
+        Penalizes the cosine similarity of source-pair morphologies, scaled
+        by the cosine similarity of their SEDs. Targets parasitic flux
+        directly via the morphology cosine. See
+        :py:class:`~scarlet2.PairSimilarity` for the available options.
     **kwargs: dict, optional
         Additional keyword arguments passed to the `optax.scale_by_yogi` optimizer.
 
@@ -416,12 +517,13 @@ def fit(
 
     # default: regularizer off (weight=0.0 short-circuits to a no-op)
     resp_cfg = responsibility if responsibility is not None else Responsibility(weight=0.0)
+    pair_cfg = pair_similarity if pair_similarity is not None else PairSimilarity(weight=0.0)
 
     with trange(max_iter, disable=not progress_bar) as t:
         for step in t:  # noqa: B007
             # optimizer step
             values, loss, opt_state, convergence = _make_step(
-                values, params, scene, observations, optim, opt_state, resp_cfg
+                values, params, scene, observations, optim, opt_state, resp_cfg, pair_cfg
             )
 
             # compute max change across all non-fixed parameters for convergence test
@@ -473,7 +575,7 @@ def _constraint_replace(values, params, inv=False):
 
 # update step for optax optimizer
 @eqx.filter_jit
-def _make_step(values, params, scene, observations, optim, opt_state, resp_cfg):
+def _make_step(values, params, scene, observations, optim, opt_state, resp_cfg, pair_cfg):
     def loss_fn(values):
         # parameters now obey constraints
         # transformation happens in the grad path, so gradients are wrt to unconstrained variables
@@ -497,8 +599,10 @@ def _make_step(values, params, scene, observations, optim, opt_state, resp_cfg):
 
         # responsibility regularizer (no-op when resp_cfg.weight == 0.0)
         resp = _responsibility_penalty(scene_, resp_cfg)
+        # pair-similarity regularizer (no-op when pair_cfg.weight == 0.0)
+        pair = _pair_similarity_penalty(scene_, pair_cfg)
 
-        return -(log_like + log_prior) + resp
+        return -(log_like + log_prior) + resp + pair
 
     loss, grads = eqx.filter_value_and_grad(loss_fn)(values)
     updates, opt_state = optim.update(grads, opt_state, values)
