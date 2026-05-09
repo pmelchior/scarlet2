@@ -1,3 +1,5 @@
+import copy
+import dataclasses
 import re
 
 import astropy.units as u
@@ -46,7 +48,15 @@ class Module(eqx.Module):
         Module
             The modified module.
         """
-        return eqx.tree_at(lambda x: getattr(x, name), self, replace=value)
+        # static eqx fields aren't pytree leaves, so eqx.tree_at can't reach them;
+        # copy the (frozen) module and set the attribute directly
+        field_def = next((f for f in dataclasses.fields(self) if f.name == name), None)
+        if field_def is not None and field_def.metadata.get("static", False):
+            new = copy.copy(self)
+            object.__setattr__(new, name, value)
+            return new
+        # is_leaf=lambda x: x is None lets tree_at locate fields whose current value is None
+        return eqx.tree_at(lambda x: getattr(x, name), self, replace=value, is_leaf=lambda x: x is None)
 
     @property
     def parameters(self):

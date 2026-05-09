@@ -507,10 +507,7 @@ def _footprints_to_sources(obs, detect, footprints, catalog):
         )
     # map between frame and obs channels: assumes clean 1-to-1 mapping
     if frame.channels != obs.frame.channels:
-        frame_channels = list(frame.channels)
-        obs_channels = list(obs.frame.channels)
-        obs_idx = {c: i for i, c in enumerate(obs_channels)}
-        channel_map = {i: obs_idx[c] for i, c in enumerate(frame_channels) if c in obs_idx}
+        channel_map = frame.map_channels(obs.frame)
         frame_channels = jnp.asarray(list(channel_map.keys()))
         obs_channels = jnp.asarray(list(channel_map.values()))
 

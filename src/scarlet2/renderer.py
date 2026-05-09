@@ -79,8 +79,9 @@ class ChannelRenderer(Renderer):
         if obs_frame.channels == model_frame.channels:
             channel_map = None
         else:
+            channel_map = obs_frame.map_channels(model_frame)
             try:
-                channel_map = [list(model_frame.channels).index(c) for c in list(obs_frame.channels)]
+                channel_map = [channel_map[cidx] for cidx in range(obs_frame.C)]
             except ValueError as err:
                 msg = "Cannot match channels between model and observation.\n"
                 msg += f"Got {model_frame.channels} and {obs_frame.channels}."
