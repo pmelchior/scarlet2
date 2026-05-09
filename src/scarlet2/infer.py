@@ -285,9 +285,14 @@ def _pair_similarity_from_stack(per_source, cfg: PairSimilarity):
     rho = _cosine_matrix(M_flat, eps=cfg.eps)
     sigma = _cosine_matrix(f, eps=cfg.eps)
 
-    pair_term = sigma * rho
-    # Off-diagonal sum over unordered pairs: (sum - trace) / 2
-    return (jnp.sum(pair_term) - jnp.trace(pair_term)) / 2.0
+    # rho, sigma are matmuls of non-negative matrices and thus non-negative
+    # element-wise; the maxima are belt-and-braces against any roundoff dust.
+    pair_term = jnp.maximum(sigma, 0.0) * jnp.maximum(rho, 0.0)
+    # Sum the strict upper triangle directly. We avoid `(sum - trace) / 2`:
+    # in float32 those are two reductions of comparable magnitude (~K) summed
+    # in different orders, so when off-diagonals are tiny the diagonals do
+    # not cancel exactly and the result can flip slightly negative.
+    return jnp.sum(jnp.triu(pair_term, k=1))
 
 
 def _pair_similarity_penalty(scene_obj, cfg: PairSimilarity):
