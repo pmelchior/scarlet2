@@ -62,151 +62,6 @@ def _dict_to_eqx_module(name: str, data: dict):
 
 
 # -----------------------------------------------------------------------------
-# Responsibility regularizer
-# -----------------------------------------------------------------------------
-#
-# Penalizes "parasitic flux", i.e. configurations where one source acquires
-# flux in pixels that another source dominates, while leaving genuine overlaps
-# essentially untouched.
-#
-# For each source k with rendered model S_k(x) >= 0, define
-#    gamma_k(x) = S_k(x) / (sum_j S_j(x) + eps)        # responsibility
-#    w_k(x)     = S_k(x) / sum_y S_k(y)                # source's flux distribution
-#
-# The regularizer is the cross-entropy of w_k against gamma_k,
-# weighted flux-fractionally and summed over sources:
-#
-#    R = sum_k sum_x w_k(x) * (-log gamma_k(x))
-#
-# Properties:
-#   - Scale-invariant in the global flux normalization.
-#   - Asymmetric: penalizes w_k being large where gamma_k is small (parasitic),
-#     but not gamma_k being large where w_k is small.
-#   - Genuine equal overlaps contribute a flat ~K * log(K) baseline.
-# -----------------------------------------------------------------------------
-
-
-_RESPONSIBILITY_MODES = ("band_summed", "per_band", "joint")
-
-
-class Responsibility(eqx.Module):
-    """Configuration for the responsibility regularizer used by :func:`fit`.
-
-    Penalizes "parasitic flux", i.e. configurations where one source acquires
-    flux in pixels that another source dominates, while leaving genuine
-    overlaps essentially untouched. Pass an instance of this class to
-    ``fit(..., responsibility=Responsibility(weight=...))`` to enable.
-
-    Parameters
-    ----------
-    weight : float
-        Coefficient ``lambda`` of the regularizer added to the loss. ``0.0``
-        is a no-op (bit-identical to the unregularized loss).
-        As a guide, ``lambda * K log (K) ~= Loss / 100``, where ``K`` is the number
-        of components in the scene and ``Loss`` is the unregularized loss.
-    eps : float, optional
-        Small constant added to denominators for numerical stability. Set to
-        a small fraction of the noise RMS in your model units.
-    support_threshold : float or None, optional
-        If set, restrict each source's contribution to pixels where it has
-        flux above this threshold (soft sigmoid mask). Recommended: a few
-        times the noise RMS in the model frame. ``None`` (default) applies
-        the regularizer over all pixels with nonzero flux.
-    support_tau : float, optional
-        Smoothing scale of the soft support mask. Only used when
-        ``support_threshold`` is not ``None``.
-    mode : {"band_summed", "per_band", "joint"}, optional
-        How the channel axis of multi-band scenes is treated:
-
-        - ``"band_summed"`` (default): sum per-source models over the channel
-          axis first, computing 2D responsibilities. Right answer for
-          factorized sources (morphology x spectrum).
-        - ``"per_band"``: normalize per-source weights separately per channel
-          and sum cross-entropies across channels. Right for sources with
-          spatially varying spectra (color gradients, AGN+host, transient
-          on host).
-        - ``"joint"``: treat ``(c, x)`` as one big index. Kept for
-          reproducibility of older runs.
-
-    Notes
-    -----
-    Implemented as an ``eqx.Module`` with all-static fields so it threads
-    through ``eqx.filter_jit`` without being treated as a differentiable
-    leaf and without forcing recompilation across identical configs.
-    """
-
-    weight: float = eqx.field(static=True)
-    eps: float = eqx.field(static=True, default=1e-12)
-    support_threshold: float | None = eqx.field(static=True, default=None)
-    support_tau: float = eqx.field(static=True, default=1.0)
-    mode: str = eqx.field(static=True, default="band_summed")
-
-    def __check_init__(self):
-        if self.mode not in _RESPONSIBILITY_MODES:
-            msg = f"Responsibility.mode must be one of {_RESPONSIBILITY_MODES}, got {self.mode!r}"
-            raise ValueError(msg)
-
-
-def _responsibility_from_stack(per_source, cfg: Responsibility):
-    """Compute R from a stack of per-source models in a common frame.
-
-    ``per_source`` has shape ``(K, ...)``: leading axis enumerates sources,
-    remaining axes are spatial (and optionally spectral). Pure tensor math so
-    it can be exercised in tests without constructing a Scene. Does not apply
-    ``cfg.weight``; the caller multiplies.
-    """
-    # band_summed mode: collapse the channel axis (axis=1) of a (K, C, H, W)
-    # stack into (K, H, W) so responsibilities are computed in 2D. 2D inputs
-    # (K, H, W) are unaffected.
-    if cfg.mode == "band_summed" and per_source.ndim == 4:
-        per_source = jnp.sum(per_source, axis=1)
-
-    # Clip to non-negative: morphologies are typically constrained >= 0, but
-    # some parameterizations (e.g. gradient steps in unconstrained space before
-    # the constraint bijector is applied) can transiently dip below zero.
-    per_source = jnp.maximum(per_source, 0.0)
-
-    total = jnp.sum(per_source, axis=0)
-    gamma = per_source / (total + cfg.eps)
-
-    # Per-source weight w_k. In "per_band" mode on a (K, C, H, W) stack, w is
-    # normalized separately for each channel (axes 2..end), so cross-entropies
-    # are summed independently per band. In other modes, w is normalized over
-    # all non-leading axes (channel folded into spatial). For ndim<4, per_band
-    # has no separate channel axis and falls back to the joint normalization.
-    if cfg.mode == "per_band" and per_source.ndim >= 4:
-        spatial_axes = tuple(range(2, per_source.ndim))
-    else:
-        spatial_axes = tuple(range(1, per_source.ndim))
-    flux_per_source = jnp.sum(per_source, axis=spatial_axes, keepdims=True)
-    w = per_source / (flux_per_source + cfg.eps)
-
-    if cfg.support_threshold is not None:
-        mask = jax.nn.sigmoid((per_source - cfg.support_threshold) / cfg.support_tau)
-        w = w * mask
-        w = w / (jnp.sum(w, axis=spatial_axes, keepdims=True) + cfg.eps)
-
-    log_gamma = jnp.log(gamma + cfg.eps)
-    return -jnp.sum(w * log_gamma)
-
-
-def _responsibility_penalty(scene_obj, cfg: Responsibility):
-    """Compute the responsibility regularizer for a rendered Scene.
-
-    ``scene_obj`` is the parameter-substituted Scene (i.e. ``scene.set(values_)``);
-    we need this rather than the rendered total because we evaluate each source
-    in the scene frame separately to form the responsibility map.
-    """
-    if cfg.weight == 0.0:
-        return jnp.array(0.0)
-
-    # scene.evaluate_source places each source into a zero array of the full
-    # scene bbox, so all entries live on the same (C, H, W) grid.
-    per_source = jnp.stack([scene_obj.evaluate_source(s) for s in scene_obj.sources], axis=0)
-    return cfg.weight * _responsibility_from_stack(per_source, cfg)
-
-
-# -----------------------------------------------------------------------------
 # Pair-similarity regularizer
 # -----------------------------------------------------------------------------
 #
@@ -297,12 +152,22 @@ def _pair_similarity_from_stack(per_source, cfg: PairSimilarity):
     return jnp.sum(jnp.triu(pair_term, k=1))
 
 
-def _pair_similarity_penalty(scene_obj, cfg: PairSimilarity):
-    """Compute the pair-similarity regularizer for a rendered Scene."""
+def _evaluate_per_source(scene_obj):
+    """Stack of per-source models in the scene frame: shape ``(K, C, H, W)``."""
+    return jnp.stack([scene_obj.evaluate_source(s) for s in scene_obj.sources], axis=0)
+
+
+def _pair_similarity_penalty(scene_obj, cfg: PairSimilarity, per_source=None):
+    """Compute the pair-similarity regularizer for a rendered Scene.
+
+    If ``per_source`` (the ``(K, C, H, W)`` stack) is already available from the
+    caller, pass it in to avoid re-evaluating each source.
+    """
     if cfg.weight == 0.0:
         return jnp.array(0.0)
 
-    per_source = jnp.stack([scene_obj.evaluate_source(s) for s in scene_obj.sources], axis=0)
+    if per_source is None:
+        per_source = _evaluate_per_source(scene_obj)
     return cfg.weight * _pair_similarity_from_stack(per_source, cfg)
 
 
@@ -404,7 +269,6 @@ def fit(
     e_rel=1e-4,
     progress_bar=True,
     callback=None,
-    responsibility=None,
     pair_similarity=None,
     **kwargs,
 ):
@@ -435,13 +299,6 @@ def fit(
         Signature `callback(scene, convergence, loss) -> None`, where
         `convergence` is a tree of the same structure as `scene`, and `loss`
         is the current value of the log_posterior.
-    responsibility : :py:class:`~scarlet2.Responsibility`, optional
-        If given, adds a responsibility regularizer to the loss. ``None``
-        (default) disables the regularizer entirely (the loss is bit-identical
-        to the un-regularized version). The regularizer penalizes parasitic
-        flux, i.e. configurations where one source acquires flux in pixels
-        that another source dominates. See :py:class:`~scarlet2.Responsibility`
-        for the available options.
     pair_similarity : :py:class:`~scarlet2.PairSimilarity`, optional
         If given, adds a pair-similarity regularizer to the loss. ``None``
         (default) disables it (bit-identical to the un-regularized version).
@@ -463,10 +320,9 @@ def fit(
     -------
     Scene, list(Observation)
         The scene and observation(s) with best-fit parameters. ``scene.fit_info``
-        contains ``{"losses", "responsibility", "pair_similarity", "best_loss", "n_iter"}``.
-        The ``responsibility`` and ``pair_similarity`` arrays trace each
-        regularizer's per-iteration contribution (zero when the regularizer is
-        disabled).
+        contains ``{"loss", "pair_similarity", "best_loss", "n_iter"}``.
+        The ``pair_similarity`` array report zero when the regularizer is
+        disabled.
     """
     try:
         from tqdm.auto import trange
@@ -512,8 +368,7 @@ def fit(
     values = _constraint_replace(values, params, inv=True)
     opt_state = optim.init(values)
 
-    # default: regularizers off (weight=0.0 short-circuits to a no-op)
-    resp_cfg = responsibility if responsibility is not None else Responsibility(weight=0.0)
+    # default: regularizer off (weight=0.0 short-circuits to a no-op)
     pair_cfg = pair_similarity if pair_similarity is not None else PairSimilarity(weight=0.0)
 
     # Calibrate pair-similarity: user-facing `weight` is relative to the initial NLL.
@@ -523,10 +378,7 @@ def fit(
         values_init = _constraint_replace(values, params)
         scene_init = scene.set(values_init)
         nll_init = -sum(obs.set(values_init).log_likelihood(scene_init()) for obs in observations)
-        r_init = _pair_similarity_from_stack(
-            jnp.stack([scene_init.evaluate_source(s) for s in scene_init.sources], axis=0),
-            pair_cfg,
-        )
+        r_init = _pair_similarity_from_stack(_evaluate_per_source(scene_init), pair_cfg)
         scale = jnp.where(r_init > 0, jnp.abs(nll_init) / (r_init + pair_cfg.eps), 0.0)
         pair_cfg = PairSimilarity(weight=float(pair_cfg.weight * scale), eps=pair_cfg.eps)
 
@@ -537,13 +389,12 @@ def fit(
     best_loss = jnp.array(jnp.inf, dtype=jnp.float32)
     best_values = values
     losses = []
-    resp_history = []
     pair_history = []
 
     with trange(max_iter, disable=not progress_bar) as t:
         for step in t:  # noqa: B007
             # optimizer step
-            values, loss, resp, pair, opt_state, convergence, best_loss, best_values = _make_step(
+            values, loss, pair, opt_state, convergence, best_loss, best_values = _make_step(
                 values,
                 params,
                 scene,
@@ -553,11 +404,9 @@ def fit(
                 steps,
                 best_loss,
                 best_values,
-                resp_cfg,
                 pair_cfg,
             )
             losses.append(loss)
-            resp_history.append(resp)
             pair_history.append(pair)
 
             # compute max change across all non-fixed parameters for convergence test
@@ -584,8 +433,7 @@ def fit(
 
     # attach diagnostic info to the returned scene
     fit_info = {
-        "losses": jnp.stack(losses),
-        "responsibility": jnp.stack(resp_history),
+        "loss": jnp.stack(losses),
         "pair_similarity": jnp.stack(pair_history),
         "best_loss": best_loss,
         "n_iter": step + 1,
@@ -643,7 +491,7 @@ def _build_optim(kwargs_items, schedule):
 # update step for optax optimizer
 @eqx.filter_jit
 def _make_step(
-    values, params, scene, observations, optim, opt_state, steps, best_loss, best_values, resp_cfg, pair_cfg
+    values, params, scene, observations, optim, opt_state, steps, best_loss, best_values, pair_cfg
 ):
     def loss_fn(values):
         # parameters now obey constraints
@@ -651,7 +499,17 @@ def _make_step(
         # likelihood and prior grads transparently apply the Jacobians of these transformations
         values_ = _constraint_replace(values, params)
         scene_ = scene.set(values_)
-        log_like = sum(obs.set(values_).log_likelihood(scene_()) for obs in observations)
+        # If any regularizer is active, we need the per-source stack anyway —
+        # build it once and reuse its sum as the model so we don't loop over
+        # sources twice.
+        needs_per_source = pair_cfg.weight != 0.0
+        if needs_per_source:
+            per_source = _evaluate_per_source(scene_)
+            model = per_source.sum(axis=0)
+        else:
+            per_source = None
+            model = scene_()
+        log_like = sum(obs.set(values_).log_likelihood(model) for obs in observations)
 
         # add log prior for all parameters which define priors
         # Note: This calls priors separately even if they support batched execution
@@ -666,16 +524,14 @@ def _make_step(
             ),
         )
 
-        # responsibility regularizer (no-op when resp_cfg.weight == 0.0)
-        resp = _responsibility_penalty(scene_, resp_cfg)
         # pair-similarity regularizer (no-op when pair_cfg.weight == 0.0)
-        pair = _pair_similarity_penalty(scene_, pair_cfg)
+        pair = _pair_similarity_penalty(scene_, pair_cfg, per_source=per_source)
 
         # has_aux=True: return penalty values alongside the loss so they can be
         # tracked in fit_info without a second forward pass
-        return -(log_like + log_prior) + resp + pair, (resp, pair)
+        return -(log_like + log_prior) + pair, (pair,)
 
-    (loss, (resp, pair)), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(values)
+    (loss, (pair,)), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(values)
     updates, opt_state = optim.update(grads, opt_state, values)
     # apply per-parameter stepsizes; minus sign because we want gradient descent
     updates = jt.map(
@@ -697,7 +553,7 @@ def _make_step(
     best_loss = jnp.where(is_better, loss, best_loss)
     best_values = jt.map(lambda b, v: jnp.where(is_better, v, b), best_values, values)
 
-    return values_, loss, resp, pair, opt_state, convergence, best_loss, best_values
+    return values_, loss, pair, opt_state, convergence, best_loss, best_values
 
 
 class FitValidator(metaclass=ValidationMethodCollector):
