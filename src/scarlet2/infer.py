@@ -236,11 +236,13 @@ class PairSimilarity(eqx.Module):
     Parameters
     ----------
     weight : float
-        Coefficient ``lambda`` of the regularizer added to the loss. ``0.0``
-        is a no-op (bit-identical to the unregularized loss). A reasonable
-        starting point is to pick ``lambda`` such that ``lambda * K`` is a
-        small percent of the typical NLL, where ``K`` is the number of
-        sources.
+        Relative coefficient of the regularizer: the target ratio of the
+        penalty to the initial NLL. ``fit()`` evaluates the NLL and the
+        unweighted penalty once at initialization and rescales internally
+        so that ``R = weight * |NLL_init|`` at the start of optimization.
+        ``0.0`` is a no-op (bit-identical to the unregularized loss).
+        Empirically a value around ``0.01`` (penalty ~1% of the NLL)
+        works well.
     eps : float, optional
         Small constant added to cosine denominators for numerical stability.
 
@@ -513,6 +515,20 @@ def fit(
     # default: regularizers off (weight=0.0 short-circuits to a no-op)
     resp_cfg = responsibility if responsibility is not None else Responsibility(weight=0.0)
     pair_cfg = pair_similarity if pair_similarity is not None else PairSimilarity(weight=0.0)
+
+    # Calibrate pair-similarity: user-facing `weight` is relative to the initial NLL.
+    # We compute |NLL_init| and R_init (unweighted) once, then replace the cfg with
+    # one carrying the absolute multiplier. Skip when weight=0 (no-op) or R_init==0.
+    if pair_cfg.weight != 0.0:
+        values_init = _constraint_replace(values, params)
+        scene_init = scene.set(values_init)
+        nll_init = -sum(obs.set(values_init).log_likelihood(scene_init()) for obs in observations)
+        r_init = _pair_similarity_from_stack(
+            jnp.stack([scene_init.evaluate_source(s) for s in scene_init.sources], axis=0),
+            pair_cfg,
+        )
+        scale = jnp.where(r_init > 0, jnp.abs(nll_init) / (r_init + pair_cfg.eps), 0.0)
+        pair_cfg = PairSimilarity(weight=float(pair_cfg.weight * scale), eps=pair_cfg.eps)
 
     # initialize best-fit tracker (loss is minimized, so start at +inf).
     # Use an explicit dtype so the array is strongly-typed: jnp.where()'s output
