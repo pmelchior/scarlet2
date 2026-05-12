@@ -61,6 +61,116 @@ def _dict_to_eqx_module(name: str, data: dict):
     return cls(**data)
 
 
+# -----------------------------------------------------------------------------
+# Pair-similarity regularizer
+# -----------------------------------------------------------------------------
+#
+# Penalizes the source-pair similarity that is the geometric signature of
+# parasitic flux: when source A acquires a B-shaped bump, the cosine
+# similarity between A's and B's morphologies rises. The penalty is
+#
+#     R = sum_{A != B} sigma_AB * rho_AB
+#
+# where rho_AB is the cosine similarity of the band-summed morphologies and
+# sigma_AB is the cosine similarity of the SEDs. The SED factor scales the
+# penalty by the strength of the spectral degeneracy: maximal where the
+# data likelihood cannot tell A and B apart, fading where SEDs differ.
+# -----------------------------------------------------------------------------
+
+
+class PairSimilarity(eqx.Module):
+    """Configuration for the pair-similarity regularizer used by :func:`fit`.
+
+    Penalizes the morphology-cosine x SED-cosine similarity summed over
+    source pairs. Targets the parasitic-flux failure mode: when source A
+    absorbs flux in the shape of a neighbour B, the morphology cosine
+    rises, and the penalty pushes that B-shaped component back down.
+    The SED-cosine factor scales the penalty by the degree of spectral
+    degeneracy between the pair.
+
+    Parameters
+    ----------
+    weight : float
+        Relative coefficient of the regularizer: the target ratio of the
+        penalty to the initial NLL. ``fit()`` evaluates the NLL and the
+        unweighted penalty once at initialization and rescales internally
+        so that ``R = weight * |NLL_init|`` at the start of optimization.
+        ``0.0`` is a no-op (bit-identical to the unregularized loss).
+        Empirically a value around ``0.01`` (penalty ~1% of the NLL)
+        works well.
+    eps : float, optional
+        Small constant added to cosine denominators for numerical stability.
+
+    Notes
+    -----
+    Implemented as an ``eqx.Module`` with all-static fields so it threads
+    through ``eqx.filter_jit`` without being treated as a differentiable
+    leaf and without forcing recompilation across identical configs.
+    """
+
+    weight: float = eqx.field(static=True)
+    eps: float = eqx.field(static=True, default=1e-12)
+
+
+def _cosine_matrix(X, eps):
+    """Cosine similarity between rows of X. Shape (N, D) -> (N, N)."""
+    norms = jnp.sqrt(jnp.sum(X * X, axis=1, keepdims=True))
+    Xn = X / (norms + eps)
+    return Xn @ Xn.T
+
+
+def _pair_similarity_from_stack(per_source, cfg: PairSimilarity):
+    """Compute R from a stack of per-source models in a common frame.
+
+    ``per_source`` has shape ``(K, C, H, W)`` for multi-band scenes or
+    ``(K, H, W)`` for single-band. Pure tensor math so it can be exercised
+    in tests without a Scene. Does not apply ``cfg.weight``; the caller
+    multiplies.
+    """
+    per_source = jnp.maximum(per_source, 0.0)
+
+    if per_source.ndim == 4:
+        M = per_source.sum(axis=1)  # (K, H, W)
+        f = per_source.sum(axis=(2, 3))  # (K, C)
+    else:
+        M = per_source
+        # Degenerate single-band case: SED cosine is identically 1, so
+        # only morphology contributes.
+        f = jnp.ones((per_source.shape[0], 1))
+
+    M_flat = M.reshape(M.shape[0], -1)
+    rho = _cosine_matrix(M_flat, eps=cfg.eps)
+    sigma = _cosine_matrix(f, eps=cfg.eps)
+
+    # rho, sigma are matmuls of non-negative matrices and thus non-negative
+    # element-wise; the maxima are belt-and-braces against any roundoff dust.
+    pair_term = jnp.maximum(sigma, 0.0) * jnp.maximum(rho, 0.0)
+    # Sum the strict upper triangle directly. We avoid `(sum - trace) / 2`:
+    # in float32 those are two reductions of comparable magnitude (~K) summed
+    # in different orders, so when off-diagonals are tiny the diagonals do
+    # not cancel exactly and the result can flip slightly negative.
+    return jnp.sum(jnp.triu(pair_term, k=1))
+
+
+def _evaluate_per_source(scene_obj):
+    """Stack of per-source models in the scene frame: shape ``(K, C, H, W)``."""
+    return jnp.stack([scene_obj.evaluate_source(s) for s in scene_obj.sources], axis=0)
+
+
+def _pair_similarity_penalty(scene_obj, cfg: PairSimilarity, per_source=None):
+    """Compute the pair-similarity regularizer for a rendered Scene.
+
+    If ``per_source`` (the ``(K, C, H, W)`` stack) is already available from the
+    caller, pass it in to avoid re-evaluating each source.
+    """
+    if cfg.weight == 0.0:
+        return jnp.array(0.0)
+
+    if per_source is None:
+        per_source = _evaluate_per_source(scene_obj)
+    return cfg.weight * _pair_similarity_from_stack(per_source, cfg)
+
+
 def sample(scene, observations, *args, seed=0, num_warmup=100, num_samples=200, progress_bar=True, **kwargs):
     """Sample `parameters` of every source in `scene` to get posteriors given `observations`.
 
@@ -159,6 +269,7 @@ def fit(
     e_rel=1e-4,
     progress_bar=True,
     callback=None,
+    pair_similarity=None,
     **kwargs,
 ):
     """Fit model `parameters` of every source in `scene` to match `observations`.
@@ -188,8 +299,15 @@ def fit(
         Signature `callback(scene, convergence, loss) -> None`, where
         `convergence` is a tree of the same structure as `scene`, and `loss`
         is the current value of the log_posterior.
+    pair_similarity : :py:class:`~scarlet2.PairSimilarity`, optional
+        If given, adds a pair-similarity regularizer to the loss. ``None``
+        (default) disables it (bit-identical to the un-regularized version).
+        Penalizes the cosine similarity of source-pair morphologies, scaled
+        by the cosine similarity of their SEDs. Targets parasitic flux
+        directly via the morphology cosine. See
+        :py:class:`~scarlet2.PairSimilarity` for the available options.
     **kwargs: dict, optional
-        Additional keyword arguments passed to the `optax.scale_by_adam` optimizer.
+        Additional keyword arguments passed to the `optax.scale_by_yogi` optimizer.
 
     Notes
     -----
@@ -202,7 +320,9 @@ def fit(
     -------
     Scene, list(Observation)
         The scene and observation(s) with best-fit parameters. ``scene.fit_info``
-        contains ``{"losses", "best_loss", "n_iter"}``.
+        contains ``{"loss", "pair_similarity", "best_loss", "n_iter"}``.
+        The ``pair_similarity`` array report zero when the regularizer is
+        disabled.
     """
     try:
         from tqdm.auto import trange
@@ -248,6 +368,20 @@ def fit(
     values = _constraint_replace(values, params, inv=True)
     opt_state = optim.init(values)
 
+    # default: regularizer off (weight=0.0 short-circuits to a no-op)
+    pair_cfg = pair_similarity if pair_similarity is not None else PairSimilarity(weight=0.0)
+
+    # Calibrate pair-similarity: user-facing `weight` is relative to the initial NLL.
+    # We compute |NLL_init| and R_init (unweighted) once, then replace the cfg with
+    # one carrying the absolute multiplier. Skip when weight=0 (no-op) or R_init==0.
+    if pair_cfg.weight != 0.0:
+        values_init = _constraint_replace(values, params)
+        scene_init = scene.set(values_init)
+        nll_init = -sum(obs.set(values_init).log_likelihood(scene_init()) for obs in observations)
+        r_init = _pair_similarity_from_stack(_evaluate_per_source(scene_init), pair_cfg)
+        scale = jnp.where(r_init > 0, jnp.abs(nll_init) / (r_init + pair_cfg.eps), 0.0)
+        pair_cfg = PairSimilarity(weight=float(pair_cfg.weight * scale), eps=pair_cfg.eps)
+
     # initialize best-fit tracker (loss is minimized, so start at +inf).
     # Use an explicit dtype so the array is strongly-typed: jnp.where()'s output
     # in iter 1 is strongly-typed, and JAX caches weak vs. strong separately —
@@ -255,14 +389,25 @@ def fit(
     best_loss = jnp.array(jnp.inf, dtype=jnp.float32)
     best_values = values
     losses = []
+    pair_history = []
 
     with trange(max_iter, disable=not progress_bar) as t:
         for step in t:  # noqa: B007
             # optimizer step
-            values, loss, opt_state, convergence, best_loss, best_values = _make_step(
-                values, params, scene, observations, optim, opt_state, steps, best_loss, best_values
+            values, loss, pair, opt_state, convergence, best_loss, best_values = _make_step(
+                values,
+                params,
+                scene,
+                observations,
+                optim,
+                opt_state,
+                steps,
+                best_loss,
+                best_values,
+                pair_cfg,
             )
             losses.append(loss)
+            pair_history.append(pair)
 
             # compute max change across all non-fixed parameters for convergence test
             max_change = jax.tree_util.tree_reduce(lambda a, b: max(a, b), convergence)
@@ -288,7 +433,8 @@ def fit(
 
     # attach diagnostic info to the returned scene
     fit_info = {
-        "losses": jnp.stack(losses),
+        "loss": jnp.stack(losses),
+        "pair_similarity": jnp.stack(pair_history),
         "best_loss": best_loss,
         "n_iter": step + 1,
     }
@@ -344,14 +490,26 @@ def _build_optim(kwargs_items, schedule):
 
 # update step for optax optimizer
 @eqx.filter_jit
-def _make_step(values, params, scene, observations, optim, opt_state, steps, best_loss, best_values):
+def _make_step(
+    values, params, scene, observations, optim, opt_state, steps, best_loss, best_values, pair_cfg
+):
     def loss_fn(values):
         # parameters now obey constraints
         # transformation happens in the grad path, so gradients are wrt to unconstrained variables
         # likelihood and prior grads transparently apply the Jacobians of these transformations
         values_ = _constraint_replace(values, params)
-        scene_ = scene.set(values_)()
-        log_like = sum(obs.set(values_).log_likelihood(scene_) for obs in observations)
+        scene_ = scene.set(values_)
+        # If any regularizer is active, we need the per-source stack anyway —
+        # build it once and reuse its sum as the model so we don't loop over
+        # sources twice.
+        needs_per_source = pair_cfg.weight != 0.0
+        if needs_per_source:
+            per_source = _evaluate_per_source(scene_)
+            model = per_source.sum(axis=0)
+        else:
+            per_source = None
+            model = scene_()
+        log_like = sum(obs.set(values_).log_likelihood(model) for obs in observations)
 
         # add log prior for all parameters which define priors
         # Note: This calls priors separately even if they support batched execution
@@ -366,9 +524,14 @@ def _make_step(values, params, scene, observations, optim, opt_state, steps, bes
             ),
         )
 
-        return -(log_like + log_prior)
+        # pair-similarity regularizer (no-op when pair_cfg.weight == 0.0)
+        pair = _pair_similarity_penalty(scene_, pair_cfg, per_source=per_source)
 
-    loss, grads = eqx.filter_value_and_grad(loss_fn)(values)
+        # has_aux=True: return penalty values alongside the loss so they can be
+        # tracked in fit_info without a second forward pass
+        return -(log_like + log_prior) + pair, (pair,)
+
+    (loss, (pair,)), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(values)
     updates, opt_state = optim.update(grads, opt_state, values)
     # apply per-parameter stepsizes; minus sign because we want gradient descent
     updates = jt.map(
@@ -390,7 +553,7 @@ def _make_step(values, params, scene, observations, optim, opt_state, steps, bes
     best_loss = jnp.where(is_better, loss, best_loss)
     best_values = jt.map(lambda b, v: jnp.where(is_better, v, b), best_values, values)
 
-    return values_, loss, opt_state, convergence, best_loss, best_values
+    return values_, loss, pair, opt_state, convergence, best_loss, best_values
 
 
 class FitValidator(metaclass=ValidationMethodCollector):
