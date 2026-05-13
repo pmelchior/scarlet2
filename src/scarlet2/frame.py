@@ -402,8 +402,11 @@ def _wcs_default(shape):
     shape_ = shape[-2:][::-1]  # x/y
     wcs = astropy.wcs.WCS(naxis=2)
     wcs._naxis = shape_
-    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
-    wcs.wcs.crpix = jnp.array((shape_[0] // 2, shape_[1] // 2)) + 1  # 1-based pixel coordinates
+    wcs.wcs.crpix = [shape_[0] // 2 + 1, shape_[1] // 2 + 1]  # 1-based pixel coordinates
+    wcs.wcs.ctype = ["RA---CAR", "DEC--CAR"]  # Pseudo-Euclidean
+    wcs.wcs.crval = [180.0, 0.0]  # Avoid wrapping at RA=0, Dec=0 for Caree
+    wcs.wcs.cdelt = [-0.000278, 0.000278]  # 1 arcsec/pixel
+    wcs.wcs.cunit = ["deg", "deg"]
     return wcs
 
 
