@@ -9,6 +9,7 @@ import jax.tree as jt
 import numpyro
 import numpyro.distributions as dist
 import numpyro.distributions.constraints as constraints
+from jax.flatten_util import ravel_pytree
 from numpyro.infer import MCMC, NUTS
 
 from .scene import Scene
@@ -493,44 +494,7 @@ def _build_optim(kwargs_items, schedule):
 def _make_step(
     values, params, scene, observations, optim, opt_state, steps, best_loss, best_values, pair_cfg
 ):
-    def loss_fn(values):
-        # parameters now obey constraints
-        # transformation happens in the grad path, so gradients are wrt to unconstrained variables
-        # likelihood and prior grads transparently apply the Jacobians of these transformations
-        values_ = _constraint_replace(values, params)
-        scene_ = scene.set(values_)
-        # If any regularizer is active, we need the per-source stack anyway —
-        # build it once and reuse its sum as the model so we don't loop over
-        # sources twice.
-        needs_per_source = pair_cfg.weight != 0.0
-        if needs_per_source:
-            per_source = _evaluate_per_source(scene_)
-            model = per_source.sum(axis=0)
-        else:
-            per_source = None
-            model = scene_()
-        log_like = sum(obs.set(values_).log_likelihood(model) for obs in observations)
-
-        # add log prior for all parameters which define priors
-        # Note: This calls priors separately even if they support batched execution
-        # see https://github.com/pmelchior/scarlet2/issues/103 for a possible solution
-        # however, testing after #103 got merged suggests that tree_reduce is faster than grouping
-        log_prior = jt.reduce(
-            operator.add,
-            jt.map(
-                lambda value, param: param.prior.log_prob(value) if param.prior is not None else 0,
-                values_,
-                params,
-            ),
-        )
-
-        # pair-similarity regularizer (no-op when pair_cfg.weight == 0.0)
-        pair = _pair_similarity_penalty(scene_, pair_cfg, per_source=per_source)
-
-        # has_aux=True: return penalty values alongside the loss so they can be
-        # tracked in fit_info without a second forward pass
-        return -(log_like + log_prior) + pair, (pair,)
-
+    loss_fn = lambda values: _loss_fn(values, params, scene, observations, pair_cfg)
     (loss, (pair,)), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(values)
     updates, opt_state = optim.update(grads, opt_state, values)
     # apply per-parameter stepsizes; minus sign because we want gradient descent
@@ -554,6 +518,204 @@ def _make_step(
     best_values = jt.map(lambda b, v: jnp.where(is_better, v, b), best_values, values)
 
     return values_, loss, pair, opt_state, convergence, best_loss, best_values
+
+
+# loss function for the optimizer;
+# returns the loss and a tuple of aux values (pair-similarity penalty) for tracking in fit_info
+def _loss_fn(values, params, scene, observations, pair_cfg):
+    # parameters now obey constraints
+    # transformation happens in the grad path, so gradients are wrt to unconstrained variables
+    # likelihood and prior grads transparently apply the Jacobians of these transformations
+    values_ = _constraint_replace(values, params)
+    scene_ = scene.set(values_)
+    # If any regularizer is active, we need the per-source stack anyway —
+    # build it once and reuse its sum as the model so we don't loop over
+    # sources twice.
+    needs_per_source = pair_cfg.weight != 0.0
+    if needs_per_source:
+        per_source = _evaluate_per_source(scene_)
+        model = per_source.sum(axis=0)
+    else:
+        per_source = None
+        model = scene_()
+    log_like = sum(obs.set(values_).log_likelihood(model) for obs in observations)
+
+    # add log prior for all parameters which define priors
+    # Note: This calls priors separately even if they support batched execution
+    # see https://github.com/pmelchior/scarlet2/issues/103 for a possible solution
+    # however, testing after #103 got merged suggests that tree_reduce is faster than grouping
+    log_prior = jt.reduce(
+        operator.add,
+        jt.map(
+            lambda value, param: param.prior.log_prob(value) if param.prior is not None else 0,
+            values_,
+            params,
+        ),
+    )
+
+    # pair-similarity regularizer (no-op when pair_cfg.weight == 0.0)
+    pair = _pair_similarity_penalty(scene_, pair_cfg, per_source=per_source)
+
+    # has_aux=True: return penalty values alongside the loss so they can be
+    # tracked in fit_info without a second forward pass
+    return -(log_like + log_prior) + pair, (pair,)
+
+
+# Compute Hessian-vector products (HVPs) using JAX's jvp and grad.
+# for regular functions f
+def hvp(f, primals, tangents):
+    """Calculate the Hessian-vector product of a function f"""
+    return jax.jvp(jax.grad(f), primals, tangents)[1]
+
+
+# for score functions
+def hvp_grad(grad_f, primals, tangents):
+    """Calculate the Hessian-vector product of a gradient function grad_f"""
+    return jax.jvp(grad_f, primals, tangents)[1]
+
+
+# diagonals of Hessian from HVPs
+def hvp_rad(hvp, shape, key=None, max_iter=100):
+    """Approximate the diagonal of the Hessian
+
+    Uses the Hutchinson's method to approximate the diagonal of the Hessian by computing the
+    Hessian-vector products with random Rademacher vectors.
+
+    Parameters
+    ----------
+    hvp : callable
+        A function that computes the Hessian-vector product.
+    shape : tuple
+        The shape of the input to the Hessian-vector product function.
+    key : jax.random.PRNGKey, optional
+        A random key for generating Rademacher vectors. If None, a new key will be generated.
+    max_iter : int, optional
+        The maximum number of iterations for the approximation. Default is 100.
+
+    Returns
+    -------
+    jax.numpy.ndarray
+        An array containing the approximate diagonal of the Hessian.
+    """
+    h = jnp.zeros(shape, dtype=jnp.float32)
+    if key is None:
+        key = jax.random.PRNGKey(0)
+
+    # Fixed-length loop (no data-dependent early stop) so this is jittable. A fresh
+    # Rademacher probe per iteration is essential: reusing one `key` would draw the
+    # same vector every time and never average out the off-diagonal contamination.
+    for _ in range(max_iter):
+        key, subkey = jax.random.split(key)
+        z = jax.random.rademacher(subkey, shape, dtype=jnp.float32)
+        h += jnp.multiply(z, hvp(z))
+    return h / max_iter
+
+
+def uncertainty(scene, observations, pair_similarity=None, max_iter=100, return_hessian=False):
+    """Estimate the per-parameter curvature (diagonal Hessian) of a fitted model.
+
+    Computes the diagonal of the Hessian of the negative log-posterior loss
+    (:func:`_loss_fn`) at the current (assumed best-fit) parameter values, i.e.
+    the local marginal precision of each parameter. Under a Laplace
+    approximation the "1-sigma" uncertainty of a parameter is ``1 / sqrt(H)``
+    for the corresponding (positive) diagonal entry.
+
+    If ``return_hessian`` is ``True``,  the raw Hessian curvature is returned
+    instead so the caller can handle non-positive entries (a direction not at a
+    minimum) explicitly rather than receiving NaNs from the square root.
+
+    The Hessian diagonal is estimated stochastically with Hutchinson's method
+    (:func:`hvp_rad`) applied to the Hessian-vector product of :func:`_loss_fn`
+    (:func:`hvp`). Every non-fixed parameter of ``scene`` and ``observations``
+    is flattened into a single vector, so the estimate is taken jointly across
+    all parameters.
+
+    Parameters
+    ----------
+    scene : :py:class:`~scarlet2.Scene`
+        The (fitted) model of the scene.
+    observations : :py:class:`~scarlet2.Observation` or list
+        The observations the model was fit to.
+    pair_similarity : :py:class:`~scarlet2.PairSimilarity`, optional
+        Same regularizer configuration as passed to :func:`fit`. Must match
+        what was used during fitting so that the loss (and hence its Hessian)
+        is identical. ``None`` (default) disables it.
+    max_iter : int, optional
+        Maximum number of Rademacher probes to estimate the Hessian diagonal.
+    return_hessian : bool, optional
+        If ``True``, return the raw Hessian diagonal rather than the uncertainty (1/sqrt(H)).
+
+    Returns
+    -------
+    dict
+        Maps every non-fixed parameter name to the diagonal uncertainty/Hessian of the same
+        shape as the parameter, expressed in the natural (constrained) parameter
+        space. The Hessian is evaluated in the unconstrained space and transformed via the exact
+        change-of-variables ``H_phi = H_theta / (d phi / d theta)^2`` (valid at
+        an extremum). Parameters without a constraint are returned unchanged.
+    """
+    # making sure we can iterate
+    if not isinstance(observations, (list, tuple)):
+        observations = (observations,)
+    obs_params = {}
+    for obs in observations:
+        obs.check_set_renderer(scene.frame)
+        obs_params.update(obs.parameters)
+
+    # scene and observations can have parameters: combine them into one model
+    parameters = scene.parameters | obs_params
+    if len(parameters) == 0:
+        msg = "Scene and Observation(s) must have at least one parameter. Found none."
+        raise AttributeError(msg)
+
+    # canonicalize like fit(): strip fit_info so the pytree/JIT cache key is stable
+    scene = scene.replace("fit_info", None)
+
+    values = scene.get()
+    for obs in observations:
+        values |= obs.get()
+    value_names = tuple(values.keys())
+
+    # construct eqx.Module containing all parameter arrays as attributes (as in fit)
+    values = _dict_to_eqx_module("ParamModel", values)
+    treedef = jt.structure(values)
+    params = tuple(param for name, (node, param) in parameters.items())
+    params = jt.unflatten(treedef, params)
+
+    # default: regularizer off (weight=0.0 short-circuits to a no-op)
+    pair_cfg = pair_similarity if pair_similarity is not None else PairSimilarity(weight=0.0)
+
+    # _loss_fn differentiates wrt unconstrained variables, so evaluate the Hessian there
+    values_u = _constraint_replace(values, params, inv=True)
+
+    # scalar loss over a single flat vector spanning all parameters
+    flat, unravel = ravel_pytree(values_u)
+    loss_fn = lambda x: _loss_fn(unravel(x), params, scene, observations, pair_cfg)[0]
+
+    # jit the Hessian-vector product so the ~max_iter Hutchinson probes reuse one compile
+    hvp_z = jax.jit(lambda z: hvp(loss_fn, (flat,), (z,)))
+    diag = hvp_rad(hvp_z, flat.shape, max_iter=max_iter)
+
+    # unconstrained-space diagonal Hessian, as a parameter tree
+    diag_u = unravel(diag)
+
+    # Transform the diagonal Hessian to the natural (constrained) space. At an
+    # extremum the score dL/dtheta vanishes, so the change-of-variables keeps only
+    # the quadratic term:
+    #     H_phi = H_theta (d theta / d phi)^2 = H_theta / (d phi / d theta)^2.
+    # The constraint bijectors are elementwise, so a jvp with unit tangents gives the
+    # per-element derivative jac = d(constrained)/d(unconstrained). Parameters without
+    # a constraint have jac == 1, so their curvature is returned unchanged. Keeping the
+    # Hessian (rather than converting to 1/sqrt(H)) avoids NaNs when a near-boundary
+    # constrained parameter has a small or slightly-negative unconstrained curvature.
+    ones = jt.map(jnp.ones_like, values_u)
+    _, jac = jax.jvp(lambda v: _constraint_replace(v, params), (values_u,), (ones,))
+    hess = jt.map(lambda h, j: h / j**2, diag_u, jac)
+
+    if return_hessian:
+        return {name: getattr(hess, name) for name in value_names}
+    # uncertainty = 1/sqrt(H) in the natural (constrained) space
+    return {name: 1 / jnp.sqrt(getattr(hess, name)) for name in value_names}
 
 
 class FitValidator(metaclass=ValidationMethodCollector):
