@@ -79,6 +79,14 @@ issues_github_path = "pmelchior/scarlet2"
 nb_execution_timeout = 60
 nb_execution_excludepatterns = ["_build", "jupyter_execute"]
 
+# MyST parser extensions (myst-nb uses the MyST Markdown parser for notebooks).
+# "dollarmath" enables $...$ inline and $$...$$ block math like JupyterLab;
+# "amsmath" enables LaTeX environments such as \begin{align}.
+myst_enable_extensions = [
+    "dollarmath",
+    "amsmath",
+]
+
 # Napoleon settings
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True
