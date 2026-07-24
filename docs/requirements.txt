@@ -5,3 +5,4 @@ ipywidgets
 corner
 arviz
 galaxygrad >= 0.3.0
+huggingface_hub
