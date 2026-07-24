@@ -5,6 +5,38 @@
 
 # -- Path setup --------------------------------------------------------------
 
+import os
+
+# -- Example data ------------------------------------------------------------
+# The notebooks download their data with hf_hub_download. Each notebook runs in
+# its own kernel, and every call hits the Hub with a HEAD request even when the
+# file is already cached, which trips the anonymous per-IP rate limit (429).
+# Fetch each file once here, then put the notebook kernels into offline mode so
+# they read straight from the local cache without any further requests.
+HF_REPO_ID = "astro-data-lab/scarlet-test-data"
+HF_FILES = [
+    "hsc_cosmos_35.npz",
+    "lsbg.pkl",
+    "multiresolution_tutorial/data.fits.gz",
+    "transient_tutorial/data.fits.gz",
+]
+
+
+def _prefetch_example_data():
+    from huggingface_hub import hf_hub_download
+
+    for filename in HF_FILES:
+        hf_hub_download(repo_id=HF_REPO_ID, filename=filename, repo_type="dataset")
+
+
+try:
+    _prefetch_example_data()
+except Exception as e:  # noqa: BLE001
+    # Let the notebooks try on their own rather than failing the whole build.
+    print(f"WARNING: could not prefetch example data ({e}); notebooks will download individually")
+else:
+    os.environ["HF_HUB_OFFLINE"] = "1"
+
 # -- Project information -----------------------------------------------------
 
 project = "scarlet2"
@@ -78,6 +110,14 @@ issues_github_path = "pmelchior/scarlet2"
 
 nb_execution_timeout = 60
 nb_execution_excludepatterns = ["_build", "jupyter_execute"]
+
+# MyST parser extensions (myst-nb uses the MyST Markdown parser for notebooks).
+# "dollarmath" enables $...$ inline and $$...$$ block math like JupyterLab;
+# "amsmath" enables LaTeX environments such as \begin{align}.
+myst_enable_extensions = [
+    "dollarmath",
+    "amsmath",
+]
 
 # Napoleon settings
 napoleon_google_docstring = False

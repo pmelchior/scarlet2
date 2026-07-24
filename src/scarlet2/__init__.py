@@ -42,7 +42,7 @@ __citation__ = __bibtex__ = (Path(__file__).parent / "citation.bib").read_text()
 
 from .bbox import Box
 from .frame import Frame
-from .infer import PairSimilarity, fit, sample
+from .infer import PairSimilarity
 from .module import Module, Parameter, Parameters, relative_step
 from .morphology import (
     GaussianMorphology,
@@ -56,51 +56,45 @@ from .psf import PSF, ArrayPSF, GaussianPSF
 from .scene import Scene
 from .source import Component, DustComponent, PointSource, Source
 from .spectrum import Spectrum, StaticArraySpectrum, TransientArraySpectrum
-from .validation import check_fit, check_observation, check_scene, check_source
-from .validation_utils import VALIDATION_SWITCH, set_validation
+from .validation_utils import set_validation
 from .wavelets import Starlet
 
 # for * imports and docs
 __all__ = [
     "constraint",
     "detect",
+    "infer",
     "init",
     "measure",
     "plot",
-    "fit",
-    "sample",
-    "PairSimilarity",
-    "Scenery",
-    "Parameterization",
+    "validation",
+    "ArrayPSF",
     "Box",
+    "Component",
+    "CorrelatedObservation",
+    "DustComponent",
     "Frame",
-    "Parameter",
-    "Parameters",
+    "GaussianMorphology",
+    "GaussianPSF",
     "Module",
     "Morphology",
-    "ProfileMorphology",
-    "GaussianMorphology",
-    "SersicMorphology",
-    "StarletMorphology",
     "Observation",
-    "CorrelatedObservation",
-    "PSF",
-    "ArrayPSF",
-    "GaussianPSF",
-    "Scene",
-    "Component",
-    "DustComponent",
-    "Source",
+    "PairSimilarity",
+    "Parameter",
+    "Parameterization",
+    "Parameters",
     "PointSource",
+    "ProfileMorphology",
+    "PSF",
+    "Scene",
+    "Scenery",
+    "SersicMorphology",
+    "Source",
     "Spectrum",
+    "Starlet",
+    "StarletMorphology",
     "StaticArraySpectrum",
     "TransientArraySpectrum",
-    "Starlet",
-    "check_fit",
-    "check_observation",
-    "check_scene",
-    "check_source",
     "relative_step",
     "set_validation",
-    "VALIDATION_SWITCH",
 ]

@@ -16,6 +16,7 @@ API Documentation
    scarlet2.constraint
    scarlet2.detect
    scarlet2.fft
+   scarlet2.infer
    scarlet2.init
    scarlet2.interpolation
    scarlet2.io
@@ -24,4 +25,3 @@ API Documentation
    scarlet2.plot
    scarlet2.renderer
    scarlet2.wavelets
-
