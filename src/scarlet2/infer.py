@@ -625,9 +625,9 @@ def uncertainty(
     """Estimate the per-parameter curvature (diagonal Hessian) of a fitted model.
 
     Computes the diagonal of the Hessian :math:`H` of the negative log-posterior loss
-    (:func:`_loss_fn`) at the current (assumed best-fit) parameter values, i.e.
+    at the current (assumed best-fit) parameter values of `scene`, which estimates
     the local marginal precision of each parameter. Under a Laplace
-    approximation the "1-sigma" uncertainty of a parameter is :math:`1 / \\sqrt(H)`
+    approximation the "1-sigma" uncertainty of a parameter is :math:`1 / \\sqrt{H}`
     for the corresponding (positive) diagonal entry.
 
     If ``return_hessian`` is ``True``,  the raw Hessian curvature is returned
@@ -641,7 +641,7 @@ def uncertainty(
     all parameters.
 
     If the loss contains priors (either per-parameter or pairwise), their
-    curvature will be taken into account: this method provide the curvature as
+    curvature will be taken into account: This method provide the curvature as
     experienced by the optimizer, not necessarily limited to the log-likelihood.
 
     The Hessian is evaluated in the unconstrained space and transformed via the exact
