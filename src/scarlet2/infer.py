@@ -1,3 +1,5 @@
+"""Inference methods"""
+
 import functools
 import operator
 from pprint import pformat
@@ -611,13 +613,21 @@ def hvp_rad(hvp, shape, key=None, max_iter=100):
     return h / max_iter
 
 
-def uncertainty(scene, observations, pair_similarity=None, max_iter=100, return_hessian=False):
+def uncertainty(
+    scene,
+    observations,
+    pair_similarity=None,
+    max_iter=100,
+    return_hessian=False,
+    return_samples=False,
+    key=None,
+):
     """Estimate the per-parameter curvature (diagonal Hessian) of a fitted model.
 
     Computes the diagonal of the Hessian of the negative log-posterior loss
     (:func:`_loss_fn`) at the current (assumed best-fit) parameter values, i.e.
     the local marginal precision of each parameter. Under a Laplace
-    approximation the "1-sigma" uncertainty of a parameter is ``1 / sqrt(H)``
+    approximation the "1-sigma" uncertainty of a parameter is $1 / sqrt(H)$
     for the corresponding (positive) diagonal entry.
 
     If ``return_hessian`` is ``True``,  the raw Hessian curvature is returned
@@ -629,6 +639,10 @@ def uncertainty(scene, observations, pair_similarity=None, max_iter=100, return_
     (:func:`hvp`). Every non-fixed parameter of ``scene`` and ``observations``
     is flattened into a single vector, so the estimate is taken jointly across
     all parameters.
+
+    The Hessian is evaluated in the unconstrained space and transformed via the exact
+    change-of-variables ``H_phi = H_theta / (d phi / d theta)^2`` (valid at
+    an extremum). Parameters without a constraint are returned unchanged.
 
     Parameters
     ----------
@@ -644,15 +658,18 @@ def uncertainty(scene, observations, pair_similarity=None, max_iter=100, return_
         Maximum number of Rademacher probes to estimate the Hessian diagonal.
     return_hessian : bool, optional
         If ``True``, return the raw Hessian diagonal rather than the uncertainty (1/sqrt(H)).
+    return_samples: bool or int
+        If not ``False``, return the stated number samples according to the Gaussian uncertainties.
+        The dictionary has the same shape as flattened chains from :func:`sample`.
+    key : jax.random.PRNGKey, optional
+        A random key for generating Rademacher vectors. If None, a new key will be generated.
 
     Returns
     -------
     dict
-        Maps every non-fixed parameter name to the diagonal uncertainty/Hessian of the same
+        Maps every non-fixed parameter name to the diagonal uncertainty of the same
         shape as the parameter, expressed in the natural (constrained) parameter
-        space. The Hessian is evaluated in the unconstrained space and transformed via the exact
-        change-of-variables ``H_phi = H_theta / (d phi / d theta)^2`` (valid at
-        an extremum). Parameters without a constraint are returned unchanged.
+        space.
     """
     # making sure we can iterate
     if not isinstance(observations, (list, tuple)):
@@ -693,8 +710,10 @@ def uncertainty(scene, observations, pair_similarity=None, max_iter=100, return_
     loss_fn = lambda x: _loss_fn(unravel(x), params, scene, observations, pair_cfg)[0]
 
     # jit the Hessian-vector product so the ~max_iter Hutchinson probes reuse one compile
+    if key is None:
+        key = jax.random.PRNGKey(0)
     hvp_z = jax.jit(lambda z: hvp(loss_fn, (flat,), (z,)))
-    diag = hvp_rad(hvp_z, flat.shape, max_iter=max_iter)
+    diag = hvp_rad(hvp_z, flat.shape, key=key, max_iter=max_iter)
 
     # unconstrained-space diagonal Hessian, as a parameter tree
     diag_u = unravel(diag)
@@ -714,8 +733,22 @@ def uncertainty(scene, observations, pair_similarity=None, max_iter=100, return_
 
     if return_hessian:
         return {name: getattr(hess, name) for name in value_names}
+
     # uncertainty = 1/sqrt(H) in the natural (constrained) space
-    return {name: 1 / jnp.sqrt(getattr(hess, name)) for name in value_names}
+    def sigma(h):
+        # remove unreliable Hessian elements
+        h_0 = h[h > 0]
+        med = jnp.median(h_0)
+        std = jnp.std(h_0)
+        h = jnp.where((h > 0) & (jnp.abs(h - med) < 10 * std), h, med)
+        return 1 / jnp.sqrt(h)
+
+    errors = {name: sigma(getattr(hess, name)) for name in value_names}
+    if return_samples is False:
+        return errors
+    normals = {name: dist.Normal(scene.get(name), scale=errors.get(name)).to_event(1) for name in errors}
+    # dictionary: parameter name -> sampled values
+    return {name: normals[name].sample(key, sample_shape=(return_samples,)) for name in errors}
 
 
 class FitValidator(metaclass=ValidationMethodCollector):
