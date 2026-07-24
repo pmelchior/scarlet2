@@ -624,10 +624,10 @@ def uncertainty(
 ):
     """Estimate the per-parameter curvature (diagonal Hessian) of a fitted model.
 
-    Computes the diagonal of the Hessian of the negative log-posterior loss
+    Computes the diagonal of the Hessian :math:`H` of the negative log-posterior loss
     (:func:`_loss_fn`) at the current (assumed best-fit) parameter values, i.e.
     the local marginal precision of each parameter. Under a Laplace
-    approximation the "1-sigma" uncertainty of a parameter is $1 / sqrt(H)$
+    approximation the "1-sigma" uncertainty of a parameter is :math:`1 / \\sqrt(H)`
     for the corresponding (positive) diagonal entry.
 
     If ``return_hessian`` is ``True``,  the raw Hessian curvature is returned
@@ -635,13 +635,17 @@ def uncertainty(
     minimum) explicitly rather than receiving NaNs from the square root.
 
     The Hessian diagonal is estimated stochastically with Hutchinson's method
-    (:func:`hvp_rad`) applied to the Hessian-vector product of :func:`_loss_fn`
-    (:func:`hvp`). Every non-fixed parameter of ``scene`` and ``observations``
+    (:func:`hvp_rad`) applied to the Hessian-vector product the loss function.
+    Every non-fixed parameter of ``scene`` and ``observations``
     is flattened into a single vector, so the estimate is taken jointly across
     all parameters.
 
+    If the loss contains priors (either per-parameter or pairwise), their
+    curvature will be taken into account: this method provide the curvature as
+    experienced by the optimizer, not necessarily limited to the log-likelihood.
+
     The Hessian is evaluated in the unconstrained space and transformed via the exact
-    change-of-variables ``H_phi = H_theta / (d phi / d theta)^2`` (valid at
+    change-of-variables :math:`H_\\phi = H_\\theta / (d \\phi / d \\theta)^2` (valid at
     an extremum). Parameters without a constraint are returned unchanged.
 
     Parameters

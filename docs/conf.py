@@ -13,20 +13,25 @@ import os
 # file is already cached, which trips the anonymous per-IP rate limit (429).
 # Fetch each file once here, then put the notebook kernels into offline mode so
 # they read straight from the local cache without any further requests.
-HF_REPO_ID = "astro-data-lab/scarlet-test-data"
+# (repo_id, filename, repo_type) for every file the notebooks pull from the Hub.
+# The "model" files are the galaxygrad score-based priors used in priors.ipynb;
+# galaxygrad fetches them internally via hf_hub_download, so prefetching them
+# here populates the same cache and lets that notebook run offline too.
 HF_FILES = [
-    "hsc_cosmos_35.npz",
-    "lsbg.pkl",
-    "multiresolution_tutorial/data.fits.gz",
-    "transient_tutorial/data.fits.gz",
+    ("astro-data-lab/scarlet-test-data", "hsc_cosmos_35.npz", "dataset"),
+    ("astro-data-lab/scarlet-test-data", "lsbg.pkl", "dataset"),
+    ("astro-data-lab/scarlet-test-data", "multiresolution_tutorial/data.fits.gz", "dataset"),
+    ("astro-data-lab/scarlet-test-data", "transient_tutorial/data.fits.gz", "dataset"),
+    ("sampsonML/galaxy-score-based-diffusion-models", "eqx_hsc_ScoreNet32.eqx", "model"),
+    ("sampsonML/galaxy-score-based-diffusion-models", "eqx_hsc_ScoreNet64.eqx", "model"),
 ]
 
 
 def _prefetch_example_data():
     from huggingface_hub import hf_hub_download
 
-    for filename in HF_FILES:
-        hf_hub_download(repo_id=HF_REPO_ID, filename=filename, repo_type="dataset")
+    for repo_id, filename, repo_type in HF_FILES:
+        hf_hub_download(repo_id=repo_id, filename=filename, repo_type=repo_type)
 
 
 try:
