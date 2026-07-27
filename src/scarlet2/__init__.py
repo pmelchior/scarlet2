@@ -29,8 +29,6 @@ class Parameterization:
 parameter_registry = dict()
 
 
-from . import constraint, detect, init, measure, plot
-
 try:
     from ._version import __version__
 except ImportError:
@@ -40,6 +38,7 @@ from pathlib import Path
 
 __citation__ = __bibtex__ = (Path(__file__).parent / "citation.bib").read_text()
 
+from . import constraint, detect, infer, init, measure, plot
 from .bbox import Box
 from .frame import Frame
 from .infer import PairSimilarity
@@ -67,7 +66,6 @@ __all__ = [
     "init",
     "measure",
     "plot",
-    "validation",
     "ArrayPSF",
     "Box",
     "Component",
@@ -98,3 +96,23 @@ __all__ = [
     "relative_step",
     "set_validation",
 ]
+
+from warnings import warn
+
+
+def fit(*args, **kwargs):
+    warn(
+        "`scarlet2.fit` is deprecated, use `scarlet2.infer.fit` instead!",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return infer.fit(*args, **kwargs)
+
+
+def sample(*args, **kwargs):
+    warn(
+        "`scarlet2.sample` is deprecated, use `scarlet2.infer.sample` instead!",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return infer.sample(*args, **kwargs)

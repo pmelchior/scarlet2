@@ -3,7 +3,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy
 
-from . import Scenery, measure
+from . import Scenery
 from .module import Module
 from .wavelets import starlet_reconstruction, starlet_transform
 
@@ -143,6 +143,8 @@ class GaussianMorphology(ProfileMorphology):
         -------
         GaussianMorphology
         """
+        from . import measure
+
         assert image.ndim == 2
         center = measure.centroid(image)
         # compute moments and create Gaussian from it

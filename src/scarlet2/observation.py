@@ -115,7 +115,7 @@ class Observation(Module):
 
         For a Gaussian noise model, the gof is defined as the averaged squared deviation of the model from the
         data, scaled by the variance of the data, aka mean chi squared
-        :math:`\frac{1}{N}\\sum_i=1^N w_i (m_i - d_i)^2` with inverse variance weights :math:`w_i`.
+        :math:`\\frac{1}{N}\\sum_i=1^N w_i (m_i - d_i)^2` with inverse variance weights :math:`w_i`.
 
         Up to a normalization, the gof is identical to :py:class:`~scarlet2.Observation.log-likelihood`.
 
