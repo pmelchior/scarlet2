@@ -653,9 +653,15 @@ def correlation_function(img, maxlength=2, threshold=0):
     # expand to image cubes for faster ellipsis
     img_ = img[None, :, :] if img.ndim == 2 else img
     height, width = img_.shape[-2:]
+    # measure the dy >= 0 half plane; the other half follows from xi(-dy,-dx) == xi(dy,dx).
+    # both signs of dx are needed because (dy,dx) and (dy,-dx) are independent offsets
     for dy in range(maxlength + 1):
-        for dx in range(maxlength + 1):
-            overlap = img_[..., dy:, dx:] * img_[..., : height - dy, : width - dx]
+        # for dy == 0, dx < 0 is the mirror of dx > 0, so only the positive side is measured
+        for dx in range(-maxlength if dy > 0 else 0, maxlength + 1):
+            if dx >= 0:
+                overlap = img_[..., dy:, dx:] * img_[..., : height - dy, : width - dx]
+            else:
+                overlap = img_[..., dy:, : width + dx] * img_[..., : height - dy, -dx:]
             xi[dy, dx] = jnp.sum(overlap, axis=(-2, -1))
             n[dy, dx] = jnp.sum(overlap != 0, axis=(-2, -1))
 
@@ -664,14 +670,9 @@ def correlation_function(img, maxlength=2, threshold=0):
     for k in xi:
         xi[k] = jnp.maximum(xi[k] / jnp.maximum(n[k], 1), threshold)  # prevent division by 0
 
-    # fill in the symmetric negative offsets
-    offsets = list(xi.keys())
-    for k in offsets:
-        dy, dx = k
-        if dy > 0:
-            dy *= -1
-        if dx > 0:
-            dx *= -1
-        xi[dy, dx] = xi[k]
+    # fill in the symmetric offsets
+    for (dy, dx), v in list(xi.items()):
+        if dy != 0 or dx != 0:
+            xi[-dy, -dx] = v
 
     return xi
