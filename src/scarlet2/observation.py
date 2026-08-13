@@ -249,6 +249,50 @@ def _power_spectrum_from(xi, shape):
     return ps
 
 
+def _padded_power_spectrum(power_spectrum, shape, fft_shape, n_realizations=128, seed=0):
+    """Noise power spectrum for residuals that are zero-padded from `shape` to `fft_shape`
+
+    Zero-padding is not a stationary operation: the modes of the padded residual are correlated, and
+    their variance is not the power spectrum evaluated on the padded grid. Using the latter overweights
+    the leakage into high-k modes by many orders of magnitude, because those are exactly the modes where
+    the power spectrum is smallest. The variance of the padded modes is instead measured here directly,
+    from noise realizations drawn with `power_spectrum` and zero-padded the same way the residual is.
+
+    The normalization is by the number of data pixels rather than padded pixels, which accounts for the
+    fact that only those carry data.
+
+    Parameters
+    ----------
+    power_spectrum: array
+        Power spectrum on the data grid, in `rfft2` layout
+    shape: tuple
+        Shape of the data
+    fft_shape: tuple
+        Shape of the padded grid the residual is transformed on
+    n_realizations: int
+        Number of noise realizations averaged over. This is a one-time cost per :py:meth:`match`.
+    seed: int
+        Seed of the noise realizations
+
+    Returns
+    -------
+    array
+        Power spectrum in `rfft2` layout of `fft_shape`
+    """
+    height, width = shape[-2:]
+    amplitude = jnp.sqrt(power_spectrum)
+
+    def _periodogram(key):
+        # filtering white noise with sqrt(power_spectrum) yields a field with exactly that spectrum
+        white = jnp.fft.rfft2(jax.random.normal(key, shape=shape), axes=(-2, -1))
+        noise = jnp.fft.irfft2(white * amplitude, s=(height, width), axes=(-2, -1))
+        return jnp.abs(transform(noise, fft_shape[-2:], axes=(-2, -1))) ** 2
+
+    keys = jax.random.split(jax.random.key(seed), n_realizations)
+    # lax.map is sequential, so memory stays at one noise field regardless of n_realizations
+    return jax.lax.map(_periodogram, keys).mean(axis=0) / (height * width)
+
+
 class CorrelatedObservation(Observation):
     """Content and definition of an observation with pixel correlations
 
@@ -264,6 +308,13 @@ class CorrelatedObservation(Observation):
     """
     mask: jnp.ndarray
     """Mask for invalid pixels"""
+    _data_fft: jnp.ndarray = eqx.field(repr=False)
+    """:py:attr:`data`, transformed onto the padded grid. `None` whenever `_power_spectrum_padded` is."""
+    _power_spectrum_padded: jnp.ndarray = eqx.field(repr=False)
+    """Power spectrum on the padded grid of a trailing :py:class:`~scarlet2.ConvolutionTransformation`
+
+    `None` unless :py:meth:`_match_power_spectrum` found that the faster Fourier-space path applies.
+    """
 
     def __init__(
         self,
@@ -299,9 +350,47 @@ class CorrelatedObservation(Observation):
 
         self.mask = mask if mask is not None else jnp.zeros(data.shape, dtype=bool)
         weights = jnp.ones(data.shape) / variance[:, None, None] * ~self.mask
+        self._power_spectrum_padded = None
+        self._data_fft = None
         super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer, name=name)
+        if self.renderer is not None:
+            self._match_power_spectrum()
+
+    def match(self, frame, renderer=None):
+        """Construct the mapping between `frame` (from the model) and this observation frame
+
+        See :py:meth:`Observation.match`. In addition, this method determines whether chi^2 can be
+        evaluated on the padded grid of the renderer.
+        """
+        super().match(frame, renderer=renderer)
+        self._match_power_spectrum()
+
+    def _match_power_spectrum(self):
+        # If the last transformation is a convolution, it can hand us the model in Fourier space on its
+        # padded grid, which saves the inverse transform and the transform back for every likelihood
+        # evaluation. chi^2 is then evaluated there, against a power spectrum that accounts for the data
+        # being zero-padded onto the same grid.
+        # Masked pixels rule this out: masking is a real-space operation, so the model cannot be masked in
+        # Fourier space, and masked pixels would score the model against zero data.
+        _renderer = self.renderer[-1]
+        power_spectrum, data_fft = None, None
+        if isinstance(_renderer, ConvolutionTransformation) and not self.mask.any():
+            fft_shape = tuple(_renderer._fft_shape)
+            power_spectrum = _padded_power_spectrum(self.power_spectrum, self.data.shape, fft_shape)
+            data_fft = transform(self.data, fft_shape, axes=(-2, -1))
+        object.__setattr__(self, "_power_spectrum_padded", power_spectrum)
+        object.__setattr__(self, "_data_fft", data_fft)
 
     def _chisquare(self, model):
+        if self._power_spectrum_padded is not None:
+            # take the model straight from the convolution in Fourier space and zero-pad the data onto the
+            # same grid, so that the residual there is the zero-padded data-grid residual that
+            # `_padded_power_spectrum` is matched to
+            model_fft = self.render(model, return_fft=True)
+            n_pad = jnp.prod(jnp.asarray(self.renderer[-1]._fft_shape))
+            res_fft = (model_fft - self._data_fft) / jnp.sqrt(n_pad / 2)
+            return jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self._power_spectrum_padded)
+
         # The Fourier-space chi^2 diagonalizes the noise covariance only if that covariance is circulant
         # on the transformed grid, which holds on the data grid alone. Renderers work on a padded
         # `_fft_shape` to suppress convolution wrap-around; transforming the residual on that grid breaks
