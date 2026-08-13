@@ -3,16 +3,17 @@ import jax
 import jax.numpy as jnp
 
 from .bbox import Box, insert_into, overlap_slices
+from .fft import transform
 from .frame import Frame, get_affine
 from .measure import correlation_function
 from .module import Module
 from .renderer import (
-    ChannelRenderer,
-    ConvolutionRenderer,
-    LanczosResamplingRenderer,
+    ChannelTransformation,
+    ConvolutionTransformation,
+    LanczosResamplingTranformation,
     Renderer,
-    ResamplingRenderer,
-    TrimSpatialBox,
+    ResamplingTransformation,
+    SpatialTrimTransformation,
 )
 from .validation_utils import (
     ValidationError,
@@ -33,7 +34,7 @@ class Observation(Module):
     """Statistical weights (usually inverse variance) for :py:meth:`log_likelihood`"""
     frame: Frame
     """Metadata to describe what view of the sky `data` amounts to"""
-    renderer: (None, Renderer, eqx.nn.Sequential)
+    renderer: Renderer
     """Renderer to translate from the model frame the observation frame"""
     name: str
     """Name to describe the observation"""
@@ -67,13 +68,15 @@ class Observation(Module):
         """Number of unmasked pixels in the observation"""
         return jnp.prod(jnp.asarray(self.data.shape)) - jnp.sum(self.weights == 0)
 
-    def render(self, model):
+    def render(self, model, **kwargs):
         """Render `model` in the frame of this observation
 
         Parameters
         ----------
         model: array
             The (pre-rendered) predicted data cube, typically from evaluating :py:class:`~scarlet2.Scene`
+        kwargs: dict
+            Additional keyword arguments to pass to the renderer
 
         Returns
         -------
@@ -83,8 +86,8 @@ class Observation(Module):
         assert self.renderer is not None, (
             "Observation.render() requires a renderer. Call Observation.match(model_frame) first"
         )
-        model_ = model() if isinstance(model, eqx.Module) else model
-        return self.renderer(model_)
+        model_ = model() if isinstance(model, Module) else model
+        return self.renderer(model_, **kwargs)
 
     def log_likelihood(self, model):
         """The logarithm the likelihood of :py:attr:`data` given `model`
@@ -171,7 +174,7 @@ class Observation(Module):
             # note the order of renderers!
             # 1) match channels of frame
             if self.frame.channels != frame.channels:
-                renderers.append(ChannelRenderer(frame, self.frame))
+                renderers.append(ChannelTransformation(frame, self.frame))
 
             # 2) match spatial properties of frame
             # if image has pixel grid (modulo an integer shift), avoid resampling
@@ -185,20 +188,14 @@ class Observation(Module):
 
             if same_matrix and integer_shift:
                 if self.frame.psf != frame.psf:
-                    renderers.append(ConvolutionRenderer(frame, self.frame))
+                    renderers.append(ConvolutionTransformation(frame, self.frame))
                 if self.frame.bbox.spatial != frame.bbox.spatial:
-                    renderers.append(TrimSpatialBox(frame, self.frame))
+                    renderers.append(SpatialTrimTransformation(frame, self.frame))
             else:
-                renderers.append(ResamplingRenderer(frame, self.frame))
-
-            if len(renderers) == 0:
-                renderer = lambda x, key=None: x
-            elif len(renderers) == 1:
-                renderer = renderers[0]
-            else:
-                renderer = eqx.nn.Sequential(renderers)
+                renderers.append(ResamplingTransformation(frame, self.frame))
+            renderer = Renderer(renderers)
         else:
-            assert isinstance(renderer, (Renderer, eqx.nn.Sequential))
+            assert isinstance(renderer, Renderer)
             # TODO: avoid call to renderer, use validator instead
             assert renderer(jnp.zeros(frame.bbox.shape)).shape == self.frame.bbox.shape, (
                 "Renderer does not map model frame to observation frame"
@@ -232,6 +229,25 @@ class Observation(Module):
 
         return chi_dict
 
+def _noise_kernel(xi):
+    channels = len(xi[0, 0])
+    maxlength = max(max(k) for k in xi)
+    kernel = jnp.zeros((channels, 2 * maxlength + 1, 2 * maxlength + 1))
+    for k in xi:
+        dy, dx = k
+        kernel = kernel.at[:, dy + maxlength, dx + maxlength].set(xi[k])
+    return kernel
+
+def _power_spectrum_from(xi, shape):
+    # NOTE: this conversion is not ideal because the correlation function is likely undersampled
+    # Better would be a pure correlated noise field to measure the power spectrum directly
+    kernel = _noise_kernel(xi)
+    kernel_fft = transform(kernel, shape[-2:], axes=(-2, -1))
+    # NOTE: the truncated correlation function is not positive semi-definite, so the power spectrum
+    # has negative modes. abs() folds them over, which strongly overweights modes near the zero crossing
+    ps = jnp.abs(kernel_fft)
+    return ps
+
 
 class CorrelatedObservation(Observation):
     """Content and definition of an observation with pixel correlations
@@ -242,7 +258,10 @@ class CorrelatedObservation(Observation):
     """
 
     power_spectrum: jnp.ndarray
-    """Noise power spectrum for :py:meth:`log_likelihood`"""
+    """Noise power spectrum on the data grid, in `rfft2` layout
+
+    Has shape `(C, H, W // 2 + 1)` for data of shape `(C, H, W)`.
+    """
     mask: jnp.ndarray
     """Mask for invalid pixels"""
 
@@ -258,84 +277,91 @@ class CorrelatedObservation(Observation):
         correlation_function=None,
         mask=None,
     ):
-        assert power_spectrum is not None or correlation_function is not None, (
+        data = jnp.asarray(data, dtype=float)
+        if data.ndim == 2:
+            data = data[None, ...]
+
+        assert (power_spectrum is None) != (correlation_function is None), (
             "Provide either power_spectrum or correlation_function"
         )
-
+        # weights ignore pixel covariance: per-pixel variance only, i.e. the zero-lag correlation xi(0,0).
+        # Prefer the measured value when the correlation function is given: it is the direct estimate,
+        # whereas inverting the power spectrum picks up the distortion that abs() introduces there
         if power_spectrum is None:
+            variance = correlation_function[0, 0]
+            power_spectrum = _power_spectrum_from(correlation_function, data.shape)
+        else:
+            variance = jnp.fft.irfft2(power_spectrum, s=data.shape[-2:], axes=(-2, -1))[..., 0, 0]
+        self.power_spectrum = jnp.asarray(power_spectrum, dtype=float)
+        assert self.power_spectrum.shape == data.shape[:-1] + (data.shape[-1] // 2 + 1,), (
+            f"power_spectrum shape {self.power_spectrum.shape} does not match data shape {data.shape}"
+        )
 
-            def noise_kernel(xi):
-                channels = len(xi[0, 0])
-                maxlength = max(max(k) for k in xi)
-                kernel = jnp.zeros((channels, 2 * maxlength + 1, 2 * maxlength + 1))
-                for k in xi:
-                    dy, dx = k
-                    kernel = kernel.at[:, dy + maxlength, dx + maxlength].set(xi[k])
-                return kernel
-
-            def pad_kernel(kernel, shape):
-                pads = ((0, 0),) + tuple(
-                    ((s - l) // 2, (s - l) // 2 + (1 if (s - l) % 2 == 1 else 0))
-                    for s, l in zip(shape[-2:], kernel.shape[-2:], strict=False)  # noqa: E741
-                )
-                kernel_padded = jnp.pad(kernel, pads)
-                return kernel_padded
-
-            def power_spectrum_from(xi, shape):
-                # NOTE: this conversion is not ideal because the correlation function is likely undersampled
-                # Better would be a pure correlated noise field to measure the power spectrum directly
-                kernel = noise_kernel(xi)
-                kernel_padded = pad_kernel(kernel, shape)
-                kernel_fft = jnp.fft.rfft2(kernel_padded, axes=(-2, -1))
-                ps = jnp.abs(kernel_fft)
-                return ps
-
-            power_spectrum = power_spectrum_from(correlation_function, data.shape)
-
-        self.power_spectrum = power_spectrum
-        self.mask = mask if mask is not None else (self.weights == 0)
-        # weights ignore pixel covariance: per-pixel variance only
-        weights = jnp.ones(data.shape) / self.power_spectrum[:, 0, 0][:, None, None] * ~self.mask
+        self.mask = mask if mask is not None else jnp.zeros(data.shape, dtype=bool)
+        weights = jnp.ones(data.shape) / variance[:, None, None] * ~self.mask
         super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer, name=name)
 
     def _chisquare(self, model):
-        # compute residuals
-        # need to mask invalid pixel; that's not quite correct because it suppresses the flutuations to below
-        # the level indicated by the powerspectrum, so will bias chi^2 low, but it won't fit garbage
+        # The Fourier-space chi^2 diagonalizes the noise covariance only if that covariance is circulant
+        # on the transformed grid, which holds on the data grid alone. Renderers work on a padded
+        # `_fft_shape` to suppress convolution wrap-around; transforming the residual on that grid breaks
+        # stationarity (the padding zeros are not data) and mismatches the sqrt(N/2) Parseval factor.
+        # The residual therefore has to be brought back to the data grid before the FFT.
         res = ~self.mask * (self.render(model) - self.data)
-        # compute chi square in Fourier space
-        # TODO: We could avoid the FFT because the last step of a typical renderer is an inverse FFT.
-        #       The problem is that image shapes in Fourier space are usually padded, so shapes don't match.
-        # normalization sqrt(n/2) added because it's missing in numpy/jax forward fft
-        res_fft = jnp.fft.rfft2(res, axes=(-2, -1)) / jnp.sqrt(self.N / 2)
+        # normalization sqrt(n_pix / 2) added because it's missing in numpy/jax forward fft.
+        # This is the *spatial* pixel count: rfft2 transforms every channel separately, so Parseval
+        # applies per channel. Using self.N here would scale chi^2 by 1 / n_channels. Masked pixels need
+        # no accounting either, they carry zero residual and drop out of the transform on their own.
+        n_pix = jnp.prod(jnp.asarray(self.data.shape[-2:]))
+        res_fft = jnp.fft.rfft2(res, axes=(-2, -1)) / jnp.sqrt(n_pix / 2)
         return jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum)
 
     @classmethod
     def from_observation(
-        cls, obs, patch_size=50, maxlength=2, resample_to_frame=None, lanczos_order=9, resample_psf=True
+        cls,
+        obs,
+        patch_size=50,
+        maxlength=2,
+        resample_to_frame=None,
+        lanczos_order=9,
+        resample_psf=True,
+        n_realizations=64,
     ):
         """Create a :py:class:`CorrelatedObservation` from :py:class:`Observation`
 
         The method will construct a new Observation instance with a modified likelihood that takes into
-        account the pixel correlation. To do so, it finds a patch of size `L` with as few sources as possible,
-        measures the pixel correlations in that patch, and compute the corresponding 2D power spectrum.
+        account the pixel correlation. How the noise power spectrum is obtained depends on
+        `resample_to_frame`:
+
+        * If it is set, the resampling itself creates the correlations, so the power spectrum is measured
+          directly by averaging periodograms of `n_realizations` resampled noise fields.
+        * If it is `None`, there is no generative noise model. The method then finds a patch of size
+          `patch_size` with as few sources as possible, measures the pixel correlations in that patch, and
+          converts them to a power spectrum. Note that truncating the correlation function at `maxlength`
+          biases the resulting power spectrum, severely so if the correlation length approaches `maxlength`.
 
         Parameters
         ----------
         obs: :py:class:`Observation`
             Observation containing the data and original weight map
         patch_size: int
-            Linear size of the patch for measuring the correlation function
+            Linear size of the patch for measuring the correlation function.
+            The argument has no effect if `resample_to_frame` is set.
         maxlength: int
-            Maximum distance (in pixels) for the 2D correlation function
+            Maximum distance (in pixels) for the 2D correlation function.
+            The argument has no effect if `resample_to_frame` is set.
         resample_to_frame: None, :py:class:`~scarlet2.Frame`
-            Frame describing the desired spatial sampling
+            Frame describing the desired spatial sampling. Is assumed to be a model frame.
         lanczos_order: int
             Lanczos order used by the resampling operation
             The argument has no effect if `resample_to_frame` is `None`.
         resample_psf: bool, optional
             Whether to resample `obs.psf` to `resample_to_frame`.
             Should be set to False only if PSF is already sampled with the resolution of `resample_to_frame`.
+            The argument has no effect if `resample_to_frame` is `None`.
+        n_realizations: int
+            Number of noise realizations averaged into the power spectrum estimate. The relative scatter
+            per mode is `1 / sqrt(n_realizations)`, so values below ~16 bias the likelihood badly.
             The argument has no effect if `resample_to_frame` is `None`.
 
         Returns
@@ -347,11 +373,11 @@ class CorrelatedObservation(Observation):
             _obs_frame = Frame(obs.frame.bbox, psf=None, wcs=obs.frame.wcs, channels=obs.frame.channels)
             _new_box = obs.frame.bbox[:-2] @ resample_to_frame.bbox.spatial
             _model_frame = Frame(_new_box, psf=None, wcs=resample_to_frame.wcs, channels=obs.frame.channels)
-            _renderer = LanczosResamplingRenderer(_obs_frame, _model_frame, lanczos_order=lanczos_order)
+            trafo = LanczosResamplingTranformation(_obs_frame, _model_frame, lanczos_order=lanczos_order)
             wcs = resample_to_frame.wcs
 
             # resample data
-            data = _renderer(obs.data)
+            data = trafo(obs.data)
 
             # resample PSF: first insert PSF into middle of image with same size of obs
             psf_image = obs.frame.psf()
@@ -363,23 +389,34 @@ class CorrelatedObservation(Observation):
                 )
                 psf_box = Box(psf_image.shape) + shift
                 full_psf_image = insert_into(full_psf_image, psf_image, psf_box)
-                psf = _renderer(full_psf_image)
+                psf = trafo(full_psf_image)
             else:
                 psf = psf_image
 
             # resample mask plane (weights themselves are not needed)
             mask = jnp.asarray(obs.weights == 0, dtype=jnp.float32)
-            mask = _renderer(mask) > 0.3  # edge of mask gets blurry, include fractional masking
+            mask = trafo(mask) > 0.3  # edge of mask gets blurry, include fractional masking
 
-            # measure the correlation function:
-            # resample a noise instance from the original weights
+            # measure the noise power spectrum directly:
+            # the resampling is what creates the pixel correlations, so noise instances drawn from the
+            # original (uncorrelated) weights and pushed through `trafo` have the correct correlation
+            # structure. This avoids the detour via a correlation function truncated at `maxlength`,
+            # which is not positive semi-definite and therefore yields negative power spectrum modes.
+            # Averaging is essential: a single periodogram has 100% scatter per mode.
             key = jax.random.key(hash(obs.frame))
-            # TODO: deal with masked regions, where weights = 0
-            noise_field = jax.random.normal(key, shape=obs.data.shape) / jnp.sqrt(obs.weights)
-            noise_field_ = _renderer(noise_field)
-            patch_size = min(patch_size, min(data.shape[-2:]))
-            # TODO: set maxlength to multiple of resampling factor
-            xi = correlation_function(noise_field_[..., :patch_size, :patch_size], maxlength=maxlength)
+            # masked pixels are given the median noise level rather than 0, so that the noise field stays
+            # stationary and the periodogram does not pick up leakage from the mask boundaries
+            sigma = jnp.where(obs.weights > 0, 1 / jnp.sqrt(jnp.where(obs.weights > 0, obs.weights, 1)), 0)
+            sigma = jnp.where(sigma > 0, sigma, jnp.median(sigma))
+
+            def _periodogram(key):
+                noise_field = jax.random.normal(key, shape=obs.data.shape) * sigma
+                return jnp.abs(jnp.fft.rfft2(trafo(noise_field), axes=(-2, -1))) ** 2
+
+            # lax.map is sequential, so memory stays at one noise field regardless of n_realizations
+            power_spectrum = jax.lax.map(_periodogram, jax.random.split(key, n_realizations)).mean(axis=0)
+            power_spectrum /= jnp.prod(jnp.asarray(data.shape[-2:]))
+            xi = None
 
             # we need a new renderer for this resampled observation
             renderer = None
@@ -417,7 +454,11 @@ class CorrelatedObservation(Observation):
             img_ = jax.vmap(best_patch, in_axes=(0, 0), out_axes=0)(img_, gaps)
 
             # 3) measure correlation function in patch
+            # there is no generative noise model here, so the power spectrum cannot be averaged over
+            # realizations and has to be estimated from the correlation function. Pair counting in
+            # `correlation_function` handles the masked pixels, which a periodogram of `img_` would not.
             xi = correlation_function(img_, maxlength=maxlength)
+            power_spectrum = None
 
             # define the remaining items
             psf = obs.frame.psf
@@ -431,6 +472,7 @@ class CorrelatedObservation(Observation):
             psf=psf,
             wcs=wcs,
             renderer=renderer,
+            power_spectrum=power_spectrum,
             correlation_function=xi,
             channels=obs.frame.channels,
             name=obs.name,
