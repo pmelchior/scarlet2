@@ -12,7 +12,7 @@ from matplotlib.patches import Polygon
 from . import measure
 from .bbox import Box, insert_into
 from .detect import HierarchicalFootprint
-from .renderer import ChannelRenderer
+from .renderer import ChannelTransformation
 
 
 def channels_to_rgb(channels):
@@ -844,7 +844,7 @@ def sources(
         model = src()
         if show_model:
             if observation is not None:
-                c = ChannelRenderer(scene.frame, observation.frame)
+                c = ChannelTransformation(scene.frame, observation.frame)
                 model = c(model)
             # Show the unrendered model in it's bbox
             extent = src.bbox.get_extent()
@@ -1009,7 +1009,7 @@ def scene(
         observation.check_set_renderer(scene.frame)
         model_rendered = observation.render(model)
     if show_model and observation is not None:
-        c = ChannelRenderer(scene.frame, observation.frame)
+        c = ChannelTransformation(scene.frame, observation.frame)
         model = c(model)
     if show_observed or show_residual:
         data = observation.data

@@ -18,11 +18,55 @@ class Renderer(Module):
 
     Renderers are (potentially parameterized) transformations between the model
     frame and the observation frame, or elements of such a transformation.
-    """
 
-    def __call__(self, model, key=None):  # key is needed to chain renderers with eqx.nn.Sequential
-        """What to run when Renderer is called"""
-        raise NotImplementedError
+    This class is almost a clone of eqx.nn.Sequential, but uses a different call signature.
+    """
+    layers: tuple
+    """Tuple of layers that make up the renderer. This is used to chain renderers together in a sequential manner."""
+
+    def __init__(self, layers):
+        """Initialize the renderer with a sequence of layers
+
+        Parameters
+        ----------
+        layers: sequence of callable
+            The layers that make up the renderer. Each layer should be a callable that takes a model and returns a transformed model.
+        """
+        self.layers = tuple(layers)
+
+    def __getitem__(self, i: int | slice):
+        if isinstance(i, int):
+            return self.layers[i]
+        elif isinstance(i, slice):
+            return Renderer(self.layers[i])
+        else:
+            raise TypeError(f"Indexing with type {type(i)} is not supported")
+
+    def __iter__(self):
+        yield from self.layers
+
+    def __len__(self):
+        return len(self.layers)
+
+    def __call__(self, model, **kwargs):  # key is needed to chain renderers with eqx.nn.Sequential
+        """What to run when Renderer is called
+
+        Parameters
+        ----------
+        model: array
+            The hyperspectral model
+        key: optional
+            Key is needed to chain renderers with eqx.nn.Sequential
+        kwargs: dict, optional
+            Additional keyword arguments passed to the `Renderer` call
+        Returns
+        -------
+        model_: array
+            `model` after the transformation of the `Renderer` has been applied
+        """
+        for layer in self.layers:
+            model = layer(model, **kwargs)
+        return model
 
 
 class HashableSlice(Module):
@@ -41,11 +85,33 @@ class HashableSlice(Module):
         """Return standard python slice"""
         return slice(self.start, self.stop, self.step)
 
+class Transformation(Module):
+    """Transformation base class
 
-class ChannelRenderer(Renderer):
+    Transformations are (potentially parameterized) transformations between the model
+    frame and the observation frame.
+    """
+
+    def __call__(self, model, **kwargs):
+        """What to run when Transformation is called
+
+        Parameters
+        ----------
+        model: array
+            The hyperspectral model
+        kwargs: dict, optional
+            Additional keyword arguments passed to the `Transformation` call
+        Returns
+        -------
+        model_: array
+            `model` after the transformation of the `Transformation` has been applied
+        """
+        raise NotImplementedError("Transformation is an abstract base class")
+
+class ChannelTransformation(Transformation):
     """Map model to observed channels
 
-    This renderer only affects to spectral dimension of the model. It needs to
+    This transformation only affects to spectral dimension of the model. It needs to
     be combined with spatial renderers for a full transformation to the observed frame.
     """
 
@@ -93,20 +159,8 @@ class ChannelRenderer(Renderer):
                 channel_map = HashableSlice(min_channel, max_channel + 1)
         self.channel_map = channel_map
 
-    def __call__(self, model, key=None):
-        """Map model channels onto the observation channels
-
-        Parameters
-        ----------
-        model: array
-            The hyperspectral model
-        key: optional
-            Key is needed to chain renderers with eqx.nn.Sequential
-        Returns
-        -------
-        obs_model: array
-            `model` mapped onto the observation channels
-        """
+    def __call__(self, model, **kwargs):
+        """Map model channels onto the observation channels"""
         if self.channel_map is None:
             return model
         if isinstance(self.channel_map, HashableSlice):
@@ -117,7 +171,7 @@ class ChannelRenderer(Renderer):
         return jnp.dot(self.channel_map, model)
 
 
-class ConvolutionRenderer(Renderer):
+class ConvolutionTransformation(Transformation):
     """Convolve model with observed PSF
 
     The convolution is performed in Fourier space and applies the difference kernel
@@ -166,14 +220,15 @@ class ConvolutionRenderer(Renderer):
             -1,
         )
 
-    def __call__(self, model, key=None):
-        """What to run when ConvolutionRenderer is called"""
+    def __call__(self, model, return_fft=False, **kwargs):
+        """What to run when ConvolutionTransformation is called"""
         # apply shift to diff kernel
         return convolve(
             model,
             self.kernel_fft * self._phase_factor,
             axes=(-2, -1),
             fft_shape=self._fft_shape,
+            return_fft=return_fft,
         )
 
     @property
@@ -185,7 +240,7 @@ class ConvolutionRenderer(Renderer):
         return jnp.exp(-1j * 2 * jnp.pi * phase)
 
 
-class TrimSpatialBox(Renderer):
+class SpatialTrimTransformation(Transformation):
     """Extract cutout the observation box from the model frame box"""
 
     slices: HashableSlice
@@ -208,13 +263,13 @@ class TrimSpatialBox(Renderer):
             HashableSlice.from_slice(im_slices[-1]),  # width
         )
 
-    def __call__(self, model, key=None):
+    def __call__(self, model, **kwargs):
         """What to run when TrimSpatialBox is called"""
         sub = model[:, self.slices[-2].get_slice(), self.slices[-1].get_slice()]
         return sub
 
 
-class ResamplingRenderer(Renderer):
+class ResamplingTransformation(Transformation):
     """Renderer to resample image to different pixel grid (subpixel position, resolution, orientation)"""
 
     padding: int
@@ -246,7 +301,7 @@ class ResamplingRenderer(Renderer):
 
         # TODO: Check for SIP distortions, which are not covered by this code!
         # If those exists:
-        # 1) Use ConvolutionRenderer in model frame (obs PSF needs to be resampled to this frame)
+        # 1) Use ConvolutionTransformation in model frame (obs PSF needs to be resampled to this frame)
         # 2) Apply Lanczos resampling to observed frame
         #
         # This should be much more flexible than the Kspace resampler and more accurate than
@@ -317,8 +372,8 @@ class ResamplingRenderer(Renderer):
             )
         self.kernel_fft = obs_kpsf_interp / model_kpsf_interp
 
-    def __call__(self, model, key=None):
-        """What to run when ResamplingRenderer is called"""
+    def __call__(self, model, **kwargs):
+        """What to run when ResamplingTransformation is called"""
         # Fourier transform model
         model_kim = jnp.fft.fftshift(
             transform(model, (self.fft_shape_model_im, self.fft_shape_model_im), (-2, -1)), (-2)
@@ -362,7 +417,7 @@ class ResamplingRenderer(Renderer):
         return img_trimed
 
 
-class LanczosResamplingRenderer(Renderer):
+class LanczosResamplingTranformation(Transformation):
     """Renderer to resample image to different pixel grid with a Lanczos kernel."""
 
     interpolant: Interpolant
@@ -432,7 +487,7 @@ class LanczosResamplingRenderer(Renderer):
                 return_fft=True,
             )
 
-    def __call__(self, model, key=None, warp=None):
+    def __call__(self, model, warp=None, **kwargs):
         """What to run when renderer is called"""
         if warp is None:
             warp = self._warp
@@ -450,3 +505,10 @@ class LanczosResamplingRenderer(Renderer):
             model_ = model
 
         return _resample3d(model_) / self.scale**2  # conservation of surface brightness / photons
+
+# backwards compatibility with old names
+ChannelRenderer = ChannelTransformation
+ConvolutionRenderer = ConvolutionTransformation
+TrimSpatialBox = SpatialTrimTransformation
+ResamplingRenderer = ResamplingTransformation
+LanczosResamplingRenderer = LanczosResamplingTranformation
