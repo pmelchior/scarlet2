@@ -632,7 +632,7 @@ def forced_photometry(scene, obs):
     return spectra
 
 
-def correlation_function(img, maxlength=2, threshold=0):
+def correlation_function(img, maxlength=12, threshold=None):
     """Computes the 2D correlation function of the image.
 
     Parameters
@@ -640,9 +640,13 @@ def correlation_function(img, maxlength=2, threshold=0):
     img: :py:class:`numpy.ndarray`
         Image array, 2D or 3D. Masked pixels must be set to 0 in `img`.
     maxlength: int
-        Maximum length of the correlation function
-    threshold: float
-        Minimum correlation coefficient to maintain
+        Maximum length of the correlation function. It needs to be large enough to cover the extent of
+        the correlations, otherwise the derived power spectrum is biased. `img` should be substantially
+        larger, so that every lag is still averaged over many pixel pairs.
+    threshold: float, optional
+        Minimum correlation coefficient to maintain. Clipping is a non-linear operation that destroys the
+        positive semi-definiteness of the correlation function, and with it the non-negativity of the
+        power spectrum derived from it, so it is off by default.
 
     Returns
     -------
@@ -665,10 +669,11 @@ def correlation_function(img, maxlength=2, threshold=0):
             xi[dy, dx] = jnp.sum(overlap, axis=(-2, -1))
             n[dy, dx] = jnp.sum(overlap != 0, axis=(-2, -1))
 
-    # normalize and filter correlations below threshold
-    # Note: possibly safer to set the largest negative correlation (which should not exist) as threshold
+    # normalize by the number of contributing pixel pairs, which corrects for masked pixels
     for k in xi:
-        xi[k] = jnp.maximum(xi[k] / jnp.maximum(n[k], 1), threshold)  # prevent division by 0
+        xi[k] = xi[k] / jnp.maximum(n[k], 1)  # prevent division by 0
+        if threshold is not None:
+            xi[k] = jnp.maximum(xi[k], threshold)
 
     # fill in the symmetric offsets
     for (dy, dx), v in list(xi.items()):

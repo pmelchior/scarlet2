@@ -238,15 +238,25 @@ def _noise_kernel(xi):
         kernel = kernel.at[:, dy + maxlength, dx + maxlength].set(xi[k])
     return kernel
 
+def _parzen_window(maxlength):
+    # Parzen lag window, separable in y and x. Truncating the correlation function at `maxlength` is
+    # equivalent to a rectangular lag window, which is not positive semi-definite: the resulting power
+    # spectrum has negative modes, and the ones near the zero crossing then dominate chi^2. The Parzen
+    # window is positive semi-definite, so the spectrum stays non-negative. It trades that for a bias
+    # towards smoother spectra, which shrinks as `maxlength` grows.
+    u = jnp.arange(-maxlength, maxlength + 1) / (maxlength + 1)
+    w = jnp.where(jnp.abs(u) <= 0.5, 1 - 6 * u**2 + 6 * jnp.abs(u) ** 3, 2 * (1 - jnp.abs(u)) ** 3)
+    return w[:, None] * w[None, :]
+
+
 def _power_spectrum_from(xi, shape):
     # NOTE: this conversion is not ideal because the correlation function is likely undersampled
     # Better would be a pure correlated noise field to measure the power spectrum directly
     kernel = _noise_kernel(xi)
-    kernel_fft = transform(kernel, shape[-2:], axes=(-2, -1))
-    # NOTE: the truncated correlation function is not positive semi-definite, so the power spectrum
-    # has negative modes. abs() folds them over, which strongly overweights modes near the zero crossing
-    ps = jnp.abs(kernel_fft)
-    return ps
+    maxlength = (kernel.shape[-1] - 1) // 2
+    kernel = kernel * _parzen_window(maxlength)
+    # the tapered correlation function is positive semi-definite, so the spectrum is real and non-negative
+    return transform(kernel, shape[-2:], axes=(-2, -1)).real
 
 
 def _padded_power_spectrum(power_spectrum, shape, fft_shape, n_realizations=128, seed=0):
@@ -410,7 +420,7 @@ class CorrelatedObservation(Observation):
         cls,
         obs,
         patch_size=50,
-        maxlength=2,
+        maxlength=12,
         resample_to_frame=None,
         lanczos_order=9,
         resample_psf=True,
@@ -437,7 +447,9 @@ class CorrelatedObservation(Observation):
             Linear size of the patch for measuring the correlation function.
             The argument has no effect if `resample_to_frame` is set.
         maxlength: int
-            Maximum distance (in pixels) for the 2D correlation function.
+            Maximum distance (in pixels) for the 2D correlation function. It needs to be large enough to
+            cover the extent of the correlations, and small compared to `patch_size` so that every lag is
+            averaged over many pixel pairs.
             The argument has no effect if `resample_to_frame` is set.
         resample_to_frame: None, :py:class:`~scarlet2.Frame`
             Frame describing the desired spatial sampling. Is assumed to be a model frame.
@@ -525,6 +537,10 @@ class CorrelatedObservation(Observation):
 
             # 2) find patch of size length (at most image size) with the largest number of unmasked pixels
             patch_size = min(patch_size, min(data.shape[-2:]))
+            assert 4 * maxlength <= patch_size, (
+                f"maxlength={maxlength} is too large for patch_size={patch_size}: the longest lags would "
+                "be averaged over too few pixel pairs"
+            )
             shape = (patch_size, patch_size)
             kernel = jnp.ones(shape)
             # correlated with tophat = sliding sum
