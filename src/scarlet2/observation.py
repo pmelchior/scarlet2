@@ -259,7 +259,7 @@ def _power_spectrum_from(xi, shape):
     return transform(kernel, shape[-2:], axes=(-2, -1)).real
 
 
-def _padded_power_spectrum(power_spectrum, shape, fft_shape, n_realizations=128, seed=0):
+def _padded_power_spectrum(power_spectrum, shape, fft_shape, n_realizations=64, seed=0):
     """Noise power spectrum for residuals that are zero-padded from `shape` to `fft_shape`
 
     Zero-padding is not a stationary operation: the modes of the padded residual are correlated, and
@@ -280,7 +280,8 @@ def _padded_power_spectrum(power_spectrum, shape, fft_shape, n_realizations=128,
     fft_shape: tuple
         Shape of the padded grid the residual is transformed on
     n_realizations: int
-        Number of noise realizations averaged over. This is a one-time cost per :py:meth:`match`.
+        Number of noise realizations averaged over. This is a one-time cost per :py:meth:`match`, and it
+        is dominated by the transforms, so batching does not help; lower it to trade accuracy for speed.
     seed: int
         Seed of the noise realizations
 
@@ -425,6 +426,7 @@ class CorrelatedObservation(Observation):
         lanczos_order=9,
         resample_psf=True,
         n_realizations=64,
+        batch_size=8,
     ):
         """Create a :py:class:`CorrelatedObservation` from :py:class:`Observation`
 
@@ -464,6 +466,10 @@ class CorrelatedObservation(Observation):
             Number of noise realizations averaged into the power spectrum estimate. The relative scatter
             per mode is `1 / sqrt(n_realizations)`, so values below ~16 bias the likelihood badly.
             The argument has no effect if `resample_to_frame` is `None`.
+        batch_size: int
+            Number of noise realizations resampled at once. Larger values are faster but hold that many
+            noise fields in memory at a time.
+            The argument has no effect if `resample_to_frame` is `None`.
 
         Returns
         -------
@@ -482,6 +488,9 @@ class CorrelatedObservation(Observation):
 
             # resample PSF: first insert PSF into middle of image with same size of obs
             psf_image = obs.frame.psf()
+            if psf_image.ndim == 2:
+                # a single-band PSF (e.g. GaussianPSF) needs the channel dimension to line up with the data
+                psf_image = jnp.tile(psf_image, (obs.data.shape[0], 1, 1))
             if resample_psf:
                 full_psf_image = jnp.zeros(obs.data.shape)
                 full_box = Box(full_psf_image.shape)
@@ -514,8 +523,10 @@ class CorrelatedObservation(Observation):
                 noise_field = jax.random.normal(key, shape=obs.data.shape) * sigma
                 return jnp.abs(jnp.fft.rfft2(trafo(noise_field), axes=(-2, -1))) ** 2
 
-            # lax.map is sequential, so memory stays at one noise field regardless of n_realizations
-            power_spectrum = jax.lax.map(_periodogram, jax.random.split(key, n_realizations)).mean(axis=0)
+            # the resampling dominates this loop, and it vectorizes well, so realizations are processed in
+            # batches. lax.map keeps memory at `batch_size` noise fields instead of `n_realizations`
+            keys = jax.random.split(key, n_realizations)
+            power_spectrum = jax.lax.map(_periodogram, keys, batch_size=batch_size).mean(axis=0)
             power_spectrum /= jnp.prod(jnp.asarray(data.shape[-2:]))
             xi = None
 
