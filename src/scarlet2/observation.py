@@ -1,6 +1,7 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from .bbox import Box, insert_into, overlap_slices
 from .fft import transform
@@ -229,6 +230,7 @@ class Observation(Module):
 
         return chi_dict
 
+
 def _noise_kernel(xi):
     channels = len(xi[0, 0])
     maxlength = max(max(k) for k in xi)
@@ -237,6 +239,7 @@ def _noise_kernel(xi):
         dy, dx = k
         kernel = kernel.at[:, dy + maxlength, dx + maxlength].set(xi[k])
     return kernel
+
 
 def _parzen_window(maxlength):
     # Parzen lag window, separable in y and x. Truncating the correlation function at `maxlength` is
@@ -259,37 +262,47 @@ def _power_spectrum_from(xi, shape):
     return transform(kernel, shape[-2:], axes=(-2, -1)).real
 
 
-def _padded_power_spectrum(power_spectrum, shape, fft_shape, n_realizations=64, seed=0):
-    """Noise power spectrum for residuals that are zero-padded from `shape` to `fft_shape`
+def _padded_power_spectrum_bartlett(power_spectrum, shape, fft_shape, max_dynamic_range=1e12):
+    # Exact form of the padded power spectrum, P(k) = 1/N sum_lag L(lag) xi(lag) exp(-i k lag), where
+    # L(lag) = (H - |lag_y|)(W - |lag_x|) counts the pixel pairs of the data box at that lag. This is a
+    # Fejer/Bartlett smoothing of `power_spectrum`, and it takes a single transform instead of the many
+    # realizations that `_padded_power_spectrum_mc` needs.
+    # The lag sum has terms of order N * xi(0) while its result in the tail is many orders of magnitude
+    # smaller, so it cancels catastrophically once the dynamic range of `power_spectrum` approaches the
+    # floating point precision. Hence float64, plus the two guards below; `None` asks for the fallback.
+    height, width = shape[-2:]
+    m_0, m_1 = fft_shape[-2:]
+    ps = np.asarray(power_spectrum, dtype=np.float64)
+    if ps.min() <= 0 or ps.max() / ps.min() > max_dynamic_range:
+        return None
 
-    Zero-padding is not a stationary operation: the modes of the padded residual are correlated, and
-    their variance is not the power spectrum evaluated on the padded grid. Using the latter overweights
-    the leakage into high-k modes by many orders of magnitude, because those are exactly the modes where
-    the power spectrum is smallest. The variance of the padded modes is instead measured here directly,
-    from noise realizations drawn with `power_spectrum` and zero-padded the same way the residual is.
+    xi = np.fft.irfft2(ps, s=(height, width), axes=(-2, -1))
+    # smallest lag grid that holds every lag of the data box and whose frequencies are a superset of
+    # those of `fft_shape`, so that the result can be subsampled onto the latter
+    g_0 = m_0 * int(np.ceil((2 * height - 1) / m_0))
+    g_1 = m_1 * int(np.ceil((2 * width - 1) / m_1))
 
-    The normalization is by the number of data pixels rather than padded pixels, which accounts for the
-    fact that only those carry data.
+    def _lags(g, n):
+        lag = np.arange(g)
+        lag = np.where(lag <= g // 2, lag, lag - g)
+        return np.where(np.abs(lag) < n, n - np.abs(lag), 0).astype(np.float64), lag % n
 
-    Parameters
-    ----------
-    power_spectrum: array
-        Power spectrum on the data grid, in `rfft2` layout
-    shape: tuple
-        Shape of the data
-    fft_shape: tuple
-        Shape of the padded grid the residual is transformed on
-    n_realizations: int
-        Number of noise realizations averaged over. This is a one-time cost per :py:meth:`match`, and it
-        is dominated by the transforms, so batching does not help; lower it to trade accuracy for speed.
-    seed: int
-        Seed of the noise realizations
+    pairs_y, index_y = _lags(g_0, height)
+    pairs_x, index_x = _lags(g_1, width)
+    xi = xi[..., index_y[:, None], index_x[None, :]] * (pairs_y[:, None] * pairs_x[None, :])
+    ps_padded = np.fft.rfft2(xi, axes=(-2, -1)).real[..., :: g_0 // m_0, :: g_1 // m_1]
+    ps_padded /= height * width
 
-    Returns
-    -------
-    array
-        Power spectrum in `rfft2` layout of `fft_shape`
-    """
+    if ps_padded.min() <= 0:  # residual cancellation that the dynamic range guard did not catch
+        return None
+    return jnp.asarray(ps_padded, dtype=power_spectrum.dtype)
+
+
+def _padded_power_spectrum_mc(power_spectrum, shape, fft_shape, n_realizations=64, seed=0):
+    # Measure the padded power spectrum from noise realizations drawn with `power_spectrum` and
+    # zero-padded exactly like the residual. Slower and noisier than the Bartlett form, but immune to its
+    # cancellation: a periodogram is a sum of squares, and it carries the same numerical floor as the
+    # residual it will be divided into, so their ratio stays sane even where both are meaningless.
     height, width = shape[-2:]
     amplitude = jnp.sqrt(power_spectrum)
 
@@ -304,6 +317,48 @@ def _padded_power_spectrum(power_spectrum, shape, fft_shape, n_realizations=64, 
     return jax.lax.map(_periodogram, keys).mean(axis=0) / (height * width)
 
 
+def _padded_power_spectrum(power_spectrum, shape, fft_shape, n_realizations=64, seed=0):
+    """Noise power spectrum for residuals that are zero-padded from `shape` to `fft_shape`
+
+    Zero-padding is not a stationary operation: the modes of the padded residual are correlated, and
+    their variance is not the power spectrum evaluated on the padded grid. Using the latter overweights
+    the leakage into high-k modes by many orders of magnitude, because those are exactly the modes where
+    the power spectrum is smallest.
+
+    The normalization is by the number of data pixels rather than padded pixels, which accounts for the
+    fact that only those carry data.
+
+    Parameters
+    ----------
+    power_spectrum: array
+        Power spectrum on the data grid, in `rfft2` layout
+    shape: tuple
+        Shape of the data
+    fft_shape: tuple
+        Shape of the padded grid the residual is transformed on
+    n_realizations: int
+        Number of noise realizations for the Monte Carlo fallback. Has no effect unless `power_spectrum`
+        has too large a dynamic range for the exact form to be computed.
+    seed: int
+        Seed of the noise realizations of the Monte Carlo fallback
+
+    Returns
+    -------
+    array
+        Power spectrum in `rfft2` layout of `fft_shape`
+    """
+    ps = _padded_power_spectrum_bartlett(power_spectrum, shape, fft_shape)
+    if ps is not None:
+        return ps
+    return _padded_power_spectrum_mc(power_spectrum, shape, fft_shape, n_realizations, seed)
+
+
+# TODO: sampled power spectrum computations are very slow, and might be done twice (when resampling and when padding)
+# Option is to compute it only when the padded PS is needed as a lazy init when calling match()
+# Requires that the original observation is stored in the CorrelatedObservation.
+# TODO: Performance testing and checking for edge sources
+# TODO: More through testing on the correlation_function -> PS path, or a mechanism to avoid it entirely
+# TODO: Move all PS/correlation_function handling to fft module
 class CorrelatedObservation(Observation):
     """Content and definition of an observation with pixel correlations
 

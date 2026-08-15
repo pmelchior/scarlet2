@@ -21,6 +21,7 @@ class Renderer(Module):
 
     This class is almost a clone of eqx.nn.Sequential, but uses a different call signature.
     """
+
     layers: tuple
     """Tuple of layers that make up the renderer. This is used to chain renderers together in a sequential manner."""
 
@@ -85,6 +86,7 @@ class HashableSlice(Module):
         """Return standard python slice"""
         return slice(self.start, self.stop, self.step)
 
+
 class Transformation(Module):
     """Transformation base class
 
@@ -107,6 +109,7 @@ class Transformation(Module):
             `model` after the transformation of the `Transformation` has been applied
         """
         raise NotImplementedError("Transformation is an abstract base class")
+
 
 class ChannelTransformation(Transformation):
     """Map model to observed channels
@@ -505,6 +508,7 @@ class LanczosResamplingTranformation(Transformation):
             model_ = model
 
         return _resample3d(model_) / self.scale**2  # conservation of surface brightness / photons
+
 
 # backwards compatibility with old names
 ChannelRenderer = ChannelTransformation
