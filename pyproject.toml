@@ -113,8 +113,9 @@ ignore = [
     "UP015", # Allow redundant open parameters
     "UP028", # Allow yield in for loop
     "E731", # Allow assignment of lambda expressions
-    "N803", # Allow uppercase arguments 
+    "N803", # Allow uppercase arguments
     "N806", # Allow uppercase variables
+    "E501", # Line length is enforced by the formatter on a best-effort basis; don't fight it in the linter
 ]
 
 

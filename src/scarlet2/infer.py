@@ -2,6 +2,7 @@
 
 import functools
 import operator
+from dataclasses import dataclass
 from pprint import pformat
 
 import equinox as eqx
@@ -619,7 +620,6 @@ def uncertainty(
     pair_similarity=None,
     max_iter=100,
     return_hessian=False,
-    return_samples=False,
     key=None,
 ):
     """Estimate the per-parameter curvature (diagonal Hessian) of a fitted model.
@@ -662,9 +662,6 @@ def uncertainty(
         Maximum number of Rademacher probes to estimate the Hessian diagonal.
     return_hessian : bool, optional
         If ``True``, return the raw Hessian diagonal rather than the uncertainty (1/sqrt(H)).
-    return_samples: bool or int
-        If not ``False``, return the stated number samples according to the Gaussian uncertainties.
-        The dictionary has the same shape as flattened chains from :func:`sample`.
     key : jax.random.PRNGKey, optional
         A random key for generating Rademacher vectors. If None, a new key will be generated.
 
@@ -747,12 +744,120 @@ def uncertainty(
         h = jnp.where((h > 0) & (jnp.abs(h - med) < 10 * std), h, med)
         return 1 / jnp.sqrt(h)
 
-    errors = {name: sigma(getattr(hess, name)) for name in value_names}
-    if return_samples is False:
-        return errors
-    normals = {name: dist.Normal(scene.get(name), scale=errors.get(name)).to_event(1) for name in errors}
+    return {name: sigma(getattr(hess, name)) for name in value_names}
+
+
+def get_scene_samples(scene, uncertainties, samples=100, key=None):
+    """Draw posterior sample scenes from a Laplace approximation.
+
+    Treats every parameter named in ``uncertainties`` as normally distributed,
+    with mean taken from `scene` and standard deviation from ``uncertainties``
+    (e.g. as returned by :func:`uncertainty`), and draws independent joint
+    samples. Each sample is inserted back into `scene` to produce one
+    self-consistent variant of the model.
+
+    Parameters
+    ----------
+    scene : :py:class:`~scarlet2.Scene`
+        The (fitted) model of the scene whose parameter means are sampled around.
+    uncertainties : dict
+        Maps parameter name to its standard deviation, of the same shape as the
+        parameter (e.g. the output of :func:`uncertainty`).
+    samples : int, optional
+        Number of scene samples to draw.
+    key : jax.random.PRNGKey, optional
+        A random key for sampling. If None, a new key will be generated.
+
+    Returns
+    -------
+    list of :py:class:`~scarlet2.Scene`
+        ``samples`` scene variants, each with one joint draw of the parameters
+        in ``uncertainties`` substituted in.
+    """
+    # define normal distribution with parameter means from `scene` and stds from `uncertainties`
+    normals = {name: dist.Normal(scene.get(name), scale=uncertainties.get(name)) for name in uncertainties}
+    # if parameters are higher-dimensional, we need to declare these dimensions as event dim
+    for name in normals:
+        if jnp.ndim(scene.get(name)) > 1:
+            normals[name] = normals[name].to_event(1)
+
     # dictionary: parameter name -> sampled values
-    return {name: normals[name].sample(key, sample_shape=(return_samples,)) for name in errors}
+    if key is None:
+        key = jax.random.PRNGKey(0)
+    samples = {name: normals[name].sample(key, sample_shape=(samples,)) for name in uncertainties}
+    # convert dict of lists to list of dicts
+    samples = [dict(zip(samples, s, strict=False)) for s in zip(*samples.values(), strict=False)]
+
+    # each element of samples is now 1 draw for all parameters
+    # insert them into the scene as 1 variant that is consistent with the data
+    scenes = [scene.set(s) for s in samples]
+    return scenes
+
+
+@dataclass
+class Measurement:
+    """The mean and standard deviation of a measured quantity for one source.
+
+    Parameters
+    ----------
+    name : str
+        Name of the measurement, taken from the ``measurement_fct.__name__``
+        that produced it (see :func:`source_uncertainty`).
+    mean : jnp.array
+        Value of the measurement at the (fitted) parameter means.
+    std : jnp.array
+        Standard deviation of the measurement estimated from scene samples.
+    """
+
+    name: str
+    mean: jnp.array
+    std: jnp.array
+
+
+def source_uncertainty(scene, uncertainties, measurement_fct, samples=100, key=None):
+    """Propagate parameter uncertainties to a per-source measurement.
+
+    Draws sample scenes with :func:`get_scene_samples` and evaluates
+    ``measurement_fct`` on every source in every sample to estimate the
+    spread of the measured quantity under the Laplace approximation implied
+    by ``uncertainties``.
+
+    Parameters
+    ----------
+    scene : :py:class:`~scarlet2.Scene`
+        The (fitted) model of the scene.
+    uncertainties : dict
+        Maps parameter name to its standard deviation, of the same shape as the
+        parameter (e.g. the output of :func:`uncertainty`).
+    measurement_fct : callable
+        Function that takes a :py:class:`~scarlet2.Source` and returns the
+        quantity of interest, e.g. a function from :py:mod:`scarlet2.measure`.
+    samples : int, optional
+        Number of scene samples to draw for estimating the spread.
+    key : jax.random.PRNGKey, optional
+        A random key for sampling. If None, a new key will be generated.
+
+    Returns
+    -------
+    list of :py:class:`Measurement`
+        One `Measurement` per source in ``scene.sources``, in the same order,
+        with the mean evaluated on `scene` directly and the standard deviation
+        estimated across the samples.
+    """
+    # getting samples of the scene according to the uncertainties
+    scenes = get_scene_samples(scene, uncertainties, samples=samples, key=key)
+
+    # measure the spread of the desired quantity for each source in each scene sample
+    sigma = [
+        jnp.std(jnp.asarray([measurement_fct(s.sources[k]) for s in scenes]), axis=0)
+        for k in range(len(scene.sources))
+    ]
+
+    # also compute the mean directly from `scene`: it's the mean of the normals we defined earlier
+    mu = [measurement_fct(scene.sources[k]) for k in range(len(scene.sources))]
+
+    # make (mean, sigma) dict per source
+    return [Measurement(measurement_fct.__name__, m, s) for m, s in zip(mu, sigma, strict=False)]
 
 
 class FitValidator(metaclass=ValidationMethodCollector):

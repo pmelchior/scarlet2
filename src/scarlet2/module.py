@@ -364,7 +364,7 @@ class Parameters(dict):
         name: str
             Parameter name in the base model
         """
-        self._params.pop(name, None)
+        self.pop(name, None)
         return self
 
 
