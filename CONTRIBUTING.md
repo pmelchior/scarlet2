@@ -33,7 +33,7 @@ in all interactions. Harassment or discriminatory behavior of any kind will not 
 - **Feature requests**: Have an idea for a new model, prior, or utility? Start
   a [Discussion](https://github.com/pmelchior/scarlet2/discussions) first to gauge interest.
 - **Code contributions**: Fix a bug, implement a feature, or improve performance.
-- **Documentation**: Improve docstrings, tutorials, or the ReadTheDocs pages.
+- **Documentation**: Improve docstrings, tutorials, or the documentation pages.
 - **Benchmarks**: Add or improve benchmarks for model performance.
 - **Examples and notebooks**: Share use cases (strong lensing, transients, deblending, etc.) as notebooks in
   `docs/`.
@@ -144,8 +144,13 @@ If your change touches performance-sensitive code paths, consider adding or upda
 
 ## Documentation
 
-Documentation is built with [Sphinx](https://www.sphinx-doc.org/) and hosted
-on [ReadTheDocs](https://scarlet2.readthedocs.io). Source files are in `docs/`.
+Documentation is built with [Sphinx](https://www.sphinx-doc.org/) by the `Docs`
+GitHub Actions workflow and hosted on
+[GitHub Pages](https://pmelchior.github.io/scarlet2/). Source files are in `docs/`.
+
+Every notebook is executed during the build, so tutorial code is tested against
+the current API. The build runs on any PR that touches `src/` or `docs/`, and a
+failing cell (or Sphinx warning) fails the check.
 
 To build the docs locally:
 
@@ -155,7 +160,9 @@ pip install -r requirements.txt
 make html
 ```
 
-Then open `docs/_build/html/index.html` in your browser.
+Then open `docs/_build/html/index.html` in your browser. The first build executes
+all notebooks; later builds reuse the `docs/.jupyter_cache` and only re-run
+notebooks whose source changed.
 
 **Guidelines:**
 
@@ -212,6 +219,6 @@ list or Slack at this time.
 If you use scarlet2 in published research, please cite:
 
 > Melchior et al. (2018) for the original scarlet algorithm, and the scarlet2 documentation
-> at https://scarlet2.readthedocs.io for the JAX reimplementation.
+> at https://pmelchior.github.io/scarlet2/ for the JAX reimplementation.
 
 Thank you for helping make scarlet2 better!

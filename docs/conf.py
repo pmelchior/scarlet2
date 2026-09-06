@@ -6,6 +6,7 @@
 # -- Path setup --------------------------------------------------------------
 
 import os
+from pathlib import Path
 
 # -- Example data ------------------------------------------------------------
 # The notebooks download their data with hf_hub_download. Each notebook runs in
@@ -94,7 +95,7 @@ html_theme_options = {
     "use_download_button": True,
     "show_toc_level": 3,
 }
-html_baseurl = "https://scarlet2.readthedocs.io/en/latest/"
+html_baseurl = "https://pmelchior.github.io/scarlet2/"
 
 autoclass_content = "both"
 autosummary_generate = True
@@ -113,6 +114,14 @@ intersphinx_mapping = {
 
 issues_github_path = "pmelchior/scarlet2"
 
+# Execute notebooks through a persistent jupyter-cache: a notebook is only re-run
+# when its source changes. CI (.github/workflows/docs.yml) additionally busts the
+# whole cache whenever anything under src/ changes, so the tutorials are always
+# re-tested against the current API. A failing cell fails the build.
+nb_execution_mode = "cache"
+nb_execution_cache_path = str(Path(__file__).parent / ".jupyter_cache")
+nb_execution_raise_on_error = True
+nb_execution_show_tb = True
 nb_execution_timeout = 60
 nb_execution_excludepatterns = ["_build", "jupyter_execute"]
 

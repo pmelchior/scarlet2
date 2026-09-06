@@ -73,6 +73,7 @@ instance/
 docs/_autosummary/
 docs/_build/
 docs/jupyter_execute/
+docs/.jupyter_cache/
 
 # PyBuilder
 target/
