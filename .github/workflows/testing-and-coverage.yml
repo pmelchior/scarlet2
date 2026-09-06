@@ -5,10 +5,19 @@
 name: Unit test and code coverage
 
 on:
+  # On push to main we only need to refresh the Codecov baseline, so a single
+  # Python version runs (see the matrix expression below). The full version
+  # matrix runs on pull_request, before anything is merged.
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
 
 jobs:
   build:
@@ -16,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13']
+        python-version: ${{ fromJSON(github.event_name == 'pull_request' && '["3.10","3.11","3.12","3.13"]' || '["3.11"]') }}
 
     steps:
     - uses: actions/checkout@v7

@@ -1,14 +1,18 @@
 
-# This workflow runs pre-commit hooks on pushes and pull requests to main
-# to enforce coding style. To ensure correct configuration, please refer to:
+# This workflow runs pre-commit hooks on pull requests to main to enforce coding
+# style. To ensure correct configuration, please refer to:
 #  https://lincc-ppt.readthedocs.io/en/latest/practices/ci_precommit.html
+#
+# It intentionally does NOT run on push to main: linting the merge commit tells us
+# nothing that the (required) PR run did not already verify.
 name: Run pre-commit hooks
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
 
 jobs:
   pre-commit-ci:
@@ -31,6 +35,12 @@ jobs:
       with:
         extra_args: --all-files --verbose
       env:
+        # SKIP hooks that are irrelevant or handled elsewhere in CI:
+        # - pytest-check runs in testing-and-coverage.yml (with the full Python matrix)
+        # - sphinx-build has no pre-commit hook here; docs are built and
+        #   notebook-tested by the Docs workflow (.github/workflows/docs.yml)
+        # - the remaining hooks are local-developer guardrails (template version,
+        #   branch protection, large files, pyproject schema)
         SKIP: "check-lincc-frameworks-template-version,no-commit-to-branch,check-added-large-files,validate-pyproject,sphinx-build,pytest-check"
     - uses: pre-commit-ci/lite-action@v1.1.0
       if: failure() && github.event_name == 'pull_request' && github.event.pull_request.draft == false
