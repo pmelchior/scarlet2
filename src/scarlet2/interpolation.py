@@ -358,7 +358,8 @@ def resample_fourier(
     jacobian: jnp.array
         2x2 transformation matrix from warped to unwarped coordinates (in x/y convention)
     shift: tuple
-        Shift of the output image (in units of output pixels)
+        Shift of the output image (in units of output pixels), in (y, x) convention.
+        Either a single ``(2,)`` shift or per-channel shifts of shape ``(C, 2)``.
     interpolant: Interpolant
         Interpolation kernel function
 
@@ -401,8 +402,9 @@ def resample_fourier(
 
     # apply shift
     if shift is not None:
-        shift_ = shift[::-1]  # x,y needed here
-        pfac = jnp.exp(-1j * 2 * jnp.pi * (kcoords_out @ shift_))[..., :, :]
+        # shift is either (2,) for a common shift or (C, 2) for per-channel shifts, in (y, x) convention
+        shift_ = jnp.atleast_2d(shift)[:, ::-1]  # x,y needed here; (n, 2), n in {1, C}
+        pfac = jnp.exp(-1j * 2 * jnp.pi * jnp.einsum("yxi,ni->nyx", kcoords_out, shift_))
     else:
         pfac = 1
 
