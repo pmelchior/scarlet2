@@ -156,7 +156,7 @@ class ConvolutionRenderer(Renderer):
         )
         self.kernel_fft = diff_kernel_fft
 
-        # for shift operations
+        # for shift operations: (2,) for a common shift, or (C, 2) for per-channel shifts
         self.shift = jnp.zeros(2)
         self._kcoords_out = jnp.stack(
             jnp.meshgrid(
@@ -171,7 +171,7 @@ class ConvolutionRenderer(Renderer):
         # apply shift to diff kernel
         return convolve(
             model,
-            self.kernel_fft * self._phase_factor[..., :, :],
+            self.kernel_fft * self._phase_factor,
             axes=(-2, -1),
             fft_shape=self._fft_shape,
         )
@@ -179,7 +179,10 @@ class ConvolutionRenderer(Renderer):
     @property
     def _phase_factor(self):
         # apply shift to frequencies in Fourier space
-        return jnp.exp(-1j * 2 * jnp.pi * (self._kcoords_out @ self.shift))
+        # self.shift is either (2,) for a common shift or (C, 2) for per-channel shifts, in (y, x) convention
+        shift = jnp.atleast_2d(self.shift)  # (n, 2), n in {1, C}
+        phase = jnp.einsum("yxi,ni->nyx", self._kcoords_out, shift)  # (n, fy, fx)
+        return jnp.exp(-1j * 2 * jnp.pi * phase)
 
 
 class TrimSpatialBox(Renderer):
