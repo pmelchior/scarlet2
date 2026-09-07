@@ -1,0 +1,90 @@
+# Build the documentation (executing every notebook) and, on push to main,
+# publish it to GitHub Pages.
+#
+# Executing the notebooks is a contract test: the tutorial code shown to users
+# must stay valid against the current API, so this runs whenever `src/` or
+# `docs/` change. This is the canonical docs build -- ReadTheDocs was retired.
+name: Docs
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'docs/**'
+      - 'pyproject.toml'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'docs/**'
+      - 'pyproject.toml'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.11'
+        cache: pip
+        cache-dependency-path: |
+          pyproject.toml
+          docs/requirements.txt
+    # Cache steps run before `pip install -e .` so setuptools_scm has not yet
+    # written src/scarlet2/_version.py (which would otherwise change the hash on
+    # every commit and defeat the cache).
+    - name: Cache example data from the Hugging Face Hub
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/huggingface
+        key: hf-data-${{ hashFiles('docs/conf.py') }}
+        restore-keys: hf-data-
+    - name: Cache notebook execution results
+      uses: actions/cache@v6
+      with:
+        path: docs/.jupyter_cache
+        # Any change under src/ invalidates every notebook (the API they exercise
+        # may have moved); a change to a single notebook re-executes only that one.
+        key: nb-cache-${{ hashFiles('src/**/*.py') }}-${{ hashFiles('docs/**/*.ipynb') }}
+        restore-keys: nb-cache-${{ hashFiles('src/**/*.py') }}-
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install -r docs/requirements.txt
+    - name: Build docs
+      run: sphinx-build -b html -W --keep-going docs docs/_build/html
+    - name: Upload Pages artifact
+      uses: actions/upload-pages-artifact@v5
+      with:
+        path: docs/_build/html
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v5

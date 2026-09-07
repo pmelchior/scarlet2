@@ -402,7 +402,7 @@ questions:
   - question: Click to continue
     answers:
     - answer: Continue
-      commentary: "We can extract the fitted parameter fluxes with syntax like this. Want to sample over the posteriors to get uncertainties on fitted parameters? [Check out the tutorial here.](https://scarlet2.readthedocs.io/en/latest/howto/sampling.html)"
+      commentary: "We can extract the fitted parameter fluxes with syntax like this. Want to sample over the posteriors to get uncertainties on fitted parameters? [Check out the tutorial here.](https://pmelchior.github.io/scarlet2/howto/sampling.html)"
       templates:
         - replacement: fit
           code: "print(\"----------------- {}\".format(channels))

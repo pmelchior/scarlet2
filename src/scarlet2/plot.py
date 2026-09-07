@@ -570,10 +570,10 @@ def observation(
 # ruff: noqa: F821
 # ignore jnp functions for outdated hallucination score
 def cut_square_box(arr, center, size):
-    """
-    Cut out a square box from a 2D array based on the center and size.
+    """Cut out a square box from a 2D array based on the center and size.
 
-    Parameters:
+    Parameters
+    ----------
     arr: numpy.ndarray
         The input 2D array.
     center: tuple
@@ -581,8 +581,10 @@ def cut_square_box(arr, center, size):
     size: int
         The size of the square box (side length).
 
-    Returns:
-        numpy.ndarray: The square box extracted from the input array.
+    Returns
+    -------
+    numpy.ndarray
+        The square box extracted from the input array.
     """
 
     # get the dimensions of the data
