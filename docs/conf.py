@@ -70,7 +70,17 @@ source_suffix = {
 }
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "jupyter_execute"]
+# ".jupyter_cache" holds jupyter-cache's stored notebook executions (see
+# nb_execution_cache_path below). Sphinx would otherwise glob the base.ipynb
+# files it contains as orphan documents.
+exclude_patterns = [
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "jupyter_execute",
+    ".jupyter_cache",
+    ".jupyter_cache/**",
+]
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
