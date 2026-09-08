@@ -358,6 +358,24 @@ def _padded_power_spectrum(power_spectrum, shape, fft_shape, n_realizations=64, 
     return _padded_power_spectrum_mc(power_spectrum, shape, fft_shape, n_realizations, seed)
 
 
+def _informative_mode_mask(power_spectrum, n_keep):
+    """Boolean `rfft2` mask keeping the `n_keep` highest-power modes.
+
+    A power spectrum measured from resampled noise falls by orders of magnitude past the original
+    Nyquist frequency. Those modes carry only interpolation leakage, no independent noise, so summing
+    chi^2 over them only adds unmodeled variance. Because every leakage mode sits below every genuine
+    mode, keeping the `n_keep` strongest ones selects exactly the informative band, whatever its
+    (possibly rotated) shape. `n_keep` is set by the caller so the retained modes carry ~`n_eff`
+    degrees of freedom.
+    """
+    ps = np.asarray(power_spectrum)
+    n_keep = int(np.clip(n_keep, 1, ps.size))
+    keep = np.argpartition(ps.reshape(-1), ps.size - n_keep)[ps.size - n_keep :]
+    mask = np.zeros(ps.size, dtype=bool)
+    mask[keep] = True
+    return jnp.asarray(mask.reshape(ps.shape))
+
+
 # TODO: sampled power spectrum computations are very slow, and might be done twice (when resampling and when padding)
 # Option is to compute it only when the padded PS is needed as a lazy init when calling match()
 # Requires that the original observation is stored in the CorrelatedObservation.
@@ -387,6 +405,12 @@ class CorrelatedObservation(Observation):
     """Power spectrum on the padded grid of a trailing :py:class:`~scarlet2.ConvolutionTransformation`
 
     `None` unless :py:meth:`_match_power_spectrum` found that the faster Fourier-space path applies.
+    """
+    _mode_mask: jnp.ndarray = eqx.field(repr=False)
+    """`rfft2` mask of the modes that enter chi^2, on the grid `_chisquare` evaluates on.
+
+    `None` unless the noise model is rank-deficient (resampled onto a finer grid), in which case the
+    modes above the original Nyquist hold only resampling leakage and are excluded from the sum.
     """
 
     def __init__(
@@ -429,6 +453,7 @@ class CorrelatedObservation(Observation):
         self.n_eff = int(data.size - jnp.sum(self.mask)) if n_eff is None else int(n_eff)
         self._power_spectrum_padded = None
         self._data_fft = None
+        self._mode_mask = None
         super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer, name=name)
         if self.renderer is not None:
             self._match_power_spectrum()
@@ -470,7 +495,27 @@ class CorrelatedObservation(Observation):
         object.__setattr__(self, "_power_spectrum_padded", power_spectrum)
         object.__setattr__(self, "_data_fft", data_fft)
 
+        # A rank-deficient (resampled) noise model has independent noise only in the modes below the
+        # original Nyquist; the rest is resampling leakage and must not enter chi^2. Build the mask on
+        # whichever grid `_chisquare` evaluates on, keeping just enough modes to carry `n_eff` degrees
+        # of freedom so that `goodness_of_fit` stays ~1 for a calibrated fit. Every retained mode
+        # contributes on average `2` to chi^2 on the data grid, and `2 * n_pix / n_pad` on the padded
+        # grid (where the padded power spectrum is normalized by the data pixel count, not `n_pad`).
+        mode_mask = None
+        if self.n_eff < int(self.data.size - jnp.sum(self.mask)):
+            n_pix = int(np.prod(self.data.shape[-2:]))
+            if power_spectrum is not None:
+                n_keep = round(self.n_eff * int(np.prod(fft_shape[-2:])) / (2 * n_pix))
+                mode_mask = _informative_mode_mask(power_spectrum, n_keep)
+            else:
+                mode_mask = _informative_mode_mask(self.power_spectrum, round(self.n_eff / 2))
+        object.__setattr__(self, "_mode_mask", mode_mask)
+
     def _chisquare(self, model):
+        # NOTE: when `power_spectrum` was built from resampled noise (see `from_observation`), the modes
+        # above the original Nyquist carry no independent information. `_mode_mask` drops them from the
+        # sum below. It also sidesteps the fact that convolution and resampling do not commute in that
+        # band, so the render and the noise model would otherwise disagree there.
         if self._power_spectrum_padded is not None:
             # take the model straight from the convolution in Fourier space and zero-pad the data onto the
             # same grid, so that the residual there is the zero-padded data-grid residual that
@@ -478,7 +523,10 @@ class CorrelatedObservation(Observation):
             model_fft = self.render(model, return_fft=True)
             n_pad = jnp.prod(jnp.asarray(self.renderer[-1]._fft_shape))
             res_fft = (model_fft - self._data_fft) / jnp.sqrt(n_pad / 2)
-            return jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self._power_spectrum_padded)
+            chi2_modes = (res_fft * jnp.conjugate(res_fft)).real / self._power_spectrum_padded
+            if self._mode_mask is not None:
+                chi2_modes = chi2_modes * self._mode_mask
+            return jnp.sum(chi2_modes)
 
         # The Fourier-space chi^2 diagonalizes the noise covariance only if that covariance is circulant
         # on the transformed grid, which holds on the data grid alone. Renderers work on a padded
@@ -492,7 +540,10 @@ class CorrelatedObservation(Observation):
         # no accounting either, they carry zero residual and drop out of the transform on their own.
         n_pix = jnp.prod(jnp.asarray(self.data.shape[-2:]))
         res_fft = jnp.fft.rfft2(res, axes=(-2, -1)) / jnp.sqrt(n_pix / 2)
-        return jnp.sum((res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum)
+        chi2_modes = (res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum
+        if self._mode_mask is not None:
+            chi2_modes = chi2_modes * self._mode_mask
+        return jnp.sum(chi2_modes)
 
     @classmethod
     def from_observation(
@@ -591,6 +642,15 @@ class CorrelatedObservation(Observation):
             # structure. This avoids the detour via a correlation function truncated at `maxlength`,
             # which is not positive semi-definite and therefore yields negative power spectrum modes.
             # Averaging is essential: a single periodogram has 100% scatter per mode.
+            #
+            # CAVEAT: the noise here is resampled (`trafo(noise)`), but during the fit the model is
+            # rendered by convolving on the resampled grid with the resampled PSF (`match()` builds a
+            # ConvolutionTransformation, not a resampler). Convolution and resampling commute only for
+            # band-limited signals. Above the original (coarser) Nyquist frequency the resampled data
+            # carry no independent information (`n_eff` counts the modes below it), and there the
+            # resampled power spectrum, the render, and `trafo(model_coarse * psf)` all disagree at the
+            # Lanczos side-lobe level. `_chisquare` therefore drops those modes from the sum entirely
+            # via `_mode_mask`, which also removes this ambiguity.
             key = jax.random.key(hash(obs.frame))
             # masked pixels are given the median noise level rather than 0, so that the noise field stays
             # stationary and the periodogram does not pick up leakage from the mask boundaries
