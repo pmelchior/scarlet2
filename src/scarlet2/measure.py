@@ -632,13 +632,13 @@ def forced_photometry(scene, obs):
     return spectra
 
 
-def correlation_function(img, maxlength=12, threshold=None):
+def correlation_function(img, maxlength=12, threshold=None, mask=None):
     """Computes the 2D correlation function of the image.
 
     Parameters
     ----------
     img: :py:class:`numpy.ndarray`
-        Image array, 2D or 3D. Masked pixels must be set to 0 in `img`.
+        Image array, 2D or 3D.
     maxlength: int
         Maximum length of the correlation function. It needs to be large enough to cover the extent of
         the correlations, otherwise the derived power spectrum is biased. `img` should be substantially
@@ -647,6 +647,11 @@ def correlation_function(img, maxlength=12, threshold=None):
         Minimum correlation coefficient to maintain. Clipping is a non-linear operation that destroys the
         positive semi-definiteness of the correlation function, and with it the non-negativity of the
         power spectrum derived from it, so it is off by default.
+    mask: :py:class:`numpy.ndarray`, optional
+        Boolean array (same shape as `img`, or 2D broadcast over the channels) marking invalid pixels.
+        A pixel pair is only counted at a given lag if neither of its pixels is masked, so `xi` is an
+        unbiased pairwise estimate regardless of mask geometry. If `None`, pixels that are exactly zero
+        in `img` are treated as masked.
 
     Returns
     -------
@@ -657,17 +662,26 @@ def correlation_function(img, maxlength=12, threshold=None):
     # expand to image cubes for faster ellipsis
     img_ = img[None, :, :] if img.ndim == 2 else img
     height, width = img_.shape[-2:]
+    if mask is None:
+        # legacy convention: masked pixels are set to zero in `img`, so a zero factor marks an excluded pair
+        valid = img_ != 0
+    else:
+        valid = ~(mask[None, :, :] if mask.ndim == 2 else mask)
+        valid = jnp.broadcast_to(valid, img_.shape)
+        img_ = jnp.where(valid, img_, 0.0)  # keep masked pixels out of the lag sums
     # measure the dy >= 0 half plane; the other half follows from xi(-dy,-dx) == xi(dy,dx).
     # both signs of dx are needed because (dy,dx) and (dy,-dx) are independent offsets
     for dy in range(maxlength + 1):
         # for dy == 0, dx < 0 is the mirror of dx > 0, so only the positive side is measured
         for dx in range(-maxlength if dy > 0 else 0, maxlength + 1):
             if dx >= 0:
-                overlap = img_[..., dy:, dx:] * img_[..., : height - dy, : width - dx]
+                a = (Ellipsis, slice(dy, None), slice(dx, None))
+                b = (Ellipsis, slice(None, height - dy), slice(None, width - dx))
             else:
-                overlap = img_[..., dy:, : width + dx] * img_[..., : height - dy, -dx:]
-            xi[dy, dx] = jnp.sum(overlap, axis=(-2, -1))
-            n[dy, dx] = jnp.sum(overlap != 0, axis=(-2, -1))
+                a = (Ellipsis, slice(dy, None), slice(None, width + dx))
+                b = (Ellipsis, slice(None, height - dy), slice(-dx, None))
+            xi[dy, dx] = jnp.sum(img_[a] * img_[b], axis=(-2, -1))
+            n[dy, dx] = jnp.sum(valid[a] & valid[b], axis=(-2, -1))
 
     # normalize by the number of contributing pixel pairs, which corrects for masked pixels
     for k in xi:

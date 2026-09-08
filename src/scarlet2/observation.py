@@ -252,14 +252,19 @@ def _parzen_window(maxlength):
     return w[:, None] * w[None, :]
 
 
-def _power_spectrum_from(xi, shape):
+def _power_spectrum_from(xi, shape, floor=1e-6):
     # NOTE: this conversion is not ideal because the correlation function is likely undersampled
     # Better would be a pure correlated noise field to measure the power spectrum directly
     kernel = _noise_kernel(xi)
     maxlength = (kernel.shape[-1] - 1) // 2
     kernel = kernel * _parzen_window(maxlength)
-    # the tapered correlation function is positive semi-definite, so the spectrum is real and non-negative
-    return transform(kernel, shape[-2:], axes=(-2, -1)).real
+    # the tapered correlation function is positive semi-definite, so the spectrum should be non-negative.
+    # But that only holds if the *measured* xi is itself positive semi-definite, which it need not be:
+    # for sharply band-limited noise (e.g. after upsampling) the spectrum still goes negative, and the
+    # near-zero modes then dominate chi^2. Clip to `floor` times the per-channel maximum so the spectrum
+    # is strictly positive and no mode can be weighted by more than 1 / floor relative to the peak.
+    ps = transform(kernel, shape[-2:], axes=(-2, -1)).real
+    return jnp.maximum(ps, floor * ps.max(axis=(-2, -1), keepdims=True))
 
 
 def _padded_power_spectrum_bartlett(power_spectrum, shape, fft_shape, max_dynamic_range=1e12):
@@ -599,7 +604,6 @@ class CorrelatedObservation(Observation):
             _correlate2d = lambda x, kernel: jax.scipy.signal.correlate2d(x, kernel, mode="same")
             correlate3d = jax.vmap(_correlate2d, in_axes=(0, None), out_axes=0)
             mask = correlate3d(mask, kernel) > 0
-            img_ = data.at[mask].set(0)
 
             # 2) find patch of size length (at most image size) with the largest number of unmasked pixels
             patch_size = min(patch_size, min(data.shape[-2:]))
@@ -607,28 +611,38 @@ class CorrelatedObservation(Observation):
                 f"maxlength={maxlength} is too large for patch_size={patch_size}: the longest lags would "
                 "be averaged over too few pixel pairs"
             )
-            shape = (patch_size, patch_size)
-            kernel = jnp.ones(shape)
-            # correlated with tophat = sliding sum
-            gaps = correlate3d(mask == 0, kernel)
+            if patch_size >= min(data.shape[-2:]):
+                # the patch already covers the whole image: skip the search, `correlation_function`
+                # accounts for the masked pixels through its pair count
+                patch, patch_mask = data, mask
+            else:
+                kernel = jnp.ones((patch_size, patch_size))
+                # correlated with tophat = sliding count of unmasked pixels
+                gaps = correlate3d(~mask, kernel)
 
-            # location of lower-left pixel of patch with fewest masked pixels
-            def best_patch(img, gaps):
-                # trim off L//2 to avoid the center of patch is to close to image border
-                trimmed_shape = tuple(s - patch_size for s in gaps.shape[-2:])
-                y, x = jnp.unravel_index(
-                    jnp.argmax(gaps[patch_size // 2 : -patch_size // 2, patch_size // 2 : -patch_size // 2]),
-                    trimmed_shape,
-                )
-                return jax.lax.dynamic_slice(img, (y, x), (patch_size, patch_size))
+                # location of lower-left pixel of the patch with the fewest masked pixels
+                def best_patch(img, msk, gaps):
+                    # trim off patch_size // 2 so the patch center stays away from the image border
+                    trimmed_shape = tuple(s - patch_size for s in gaps.shape[-2:])
+                    y, x = jnp.unravel_index(
+                        jnp.argmax(
+                            gaps[patch_size // 2 : -patch_size // 2, patch_size // 2 : -patch_size // 2]
+                        ),
+                        trimmed_shape,
+                    )
+                    slice_shape = (patch_size, patch_size)
+                    return (
+                        jax.lax.dynamic_slice(img, (y, x), slice_shape),
+                        jax.lax.dynamic_slice(msk, (y, x), slice_shape),
+                    )
 
-            img_ = jax.vmap(best_patch, in_axes=(0, 0), out_axes=0)(img_, gaps)
+                patch, patch_mask = jax.vmap(best_patch, in_axes=(0, 0, 0), out_axes=0)(data, mask, gaps)
 
-            # 3) measure correlation function in patch
+            # 3) measure correlation function in the patch
             # there is no generative noise model here, so the power spectrum cannot be averaged over
-            # realizations and has to be estimated from the correlation function. Pair counting in
-            # `correlation_function` handles the masked pixels, which a periodogram of `img_` would not.
-            xi = correlation_function(img_, maxlength=maxlength)
+            # realizations and has to be estimated from the correlation function. Its pair count excludes
+            # every lag pair that touches a masked pixel, which a periodogram of the patch would not.
+            xi = correlation_function(patch, maxlength=maxlength, mask=patch_mask)
             power_spectrum = None
 
             # define the remaining items
