@@ -1,3 +1,4 @@
+import astropy.units as u
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -556,6 +557,7 @@ class CorrelatedObservation(Observation):
         resample_psf=True,
         n_realizations=64,
         batch_size=8,
+        native_scale=None,
     ):
         """Create a :py:class:`CorrelatedObservation` from :py:class:`Observation`
 
@@ -569,6 +571,9 @@ class CorrelatedObservation(Observation):
           `patch_size` with as few sources as possible, measures the pixel correlations in that patch, and
           converts them to a power spectrum. Note that truncating the correlation function at `maxlength`
           biases the resulting power spectrum, severely so if the correlation length approaches `maxlength`.
+          If the data were already resampled onto a finer grid by an upstream pipeline, pass
+          `native_scale` so that the likelihood only uses the spatial frequencies the true sampling
+          supports.
 
         Parameters
         ----------
@@ -599,11 +604,26 @@ class CorrelatedObservation(Observation):
             Number of noise realizations resampled at once. Larger values are faster but hold that many
             noise fields in memory at a time.
             The argument has no effect if `resample_to_frame` is `None`.
+        native_scale: :py:class:`astropy.units.Quantity`, optional
+            Angular size of a native, pre-resampling pixel, e.g. ``0.17 * u.arcsec``. Set this only if
+            the data reached you already resampled onto a finer grid by an upstream pipeline (a drizzled
+            or reprojected coadd): the pixels are then correlated *and* not all independent, so chi^2
+            must be restricted to the spatial frequencies the native sampling supports. The delivered
+            pixel scale is read from `obs`. Ignored if `resample_to_frame` is set, where the sampling is
+            known exactly.
 
         Returns
         -------
         :py:class:`CorrelatedObservation`
         """
+        if native_scale is not None:
+            assert u.get_physical_type(native_scale) == "angle", (
+                "native_scale must be an astropy angle Quantity, e.g. 0.17 * u.arcsec"
+            )
+            assert resample_to_frame is None, (
+                "native_scale applies to already-resampled data; drop it when resample_to_frame is set"
+            )
+
         if resample_to_frame is not None:
             # create a reverse renderer without PSF corrections or channel filtering
             _obs_frame = Frame(obs.frame.bbox, psf=None, wcs=obs.frame.wcs, channels=obs.frame.channels)
@@ -733,8 +753,16 @@ class CorrelatedObservation(Observation):
             wcs = obs.frame.wcs
             renderer = obs.renderer
             mask = obs.weights == 0
-            # no resampling: the data-grid noise covariance is full rank
+
+            # the data-grid noise covariance is full rank, unless the data were resampled from a coarser
+            # native grid upstream: then only 1 / oversampling^2 of the pixels are independent
             n_eff = None
+            if native_scale is not None:
+                axis_scales = obs.frame.wcs.proj_plane_pixel_scales()
+                pixel_scale = (axis_scales[0] * axis_scales[1]) ** 0.5  # geometric mean
+                oversampling = float((native_scale / pixel_scale).to_value(u.dimensionless_unscaled))
+                if oversampling > 1.01:  # ignore a native scale within rounding of the delivered one
+                    n_eff = max(1, round(int(data.size - jnp.sum(mask)) / oversampling**2))
 
         return CorrelatedObservation(
             data,
