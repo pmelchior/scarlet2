@@ -379,6 +379,8 @@ class CorrelatedObservation(Observation):
     """
     mask: jnp.ndarray
     """Mask for invalid pixels"""
+    n_eff: int = eqx.field(static=True)
+    """Effective number of degrees of freedom of the noise model, see :py:attr:`N`"""
     _data_fft: jnp.ndarray = eqx.field(repr=False)
     """:py:attr:`data`, transformed onto the padded grid. `None` whenever `_power_spectrum_padded` is."""
     _power_spectrum_padded: jnp.ndarray = eqx.field(repr=False)
@@ -398,6 +400,7 @@ class CorrelatedObservation(Observation):
         power_spectrum=None,
         correlation_function=None,
         mask=None,
+        n_eff=None,
     ):
         data = jnp.asarray(data, dtype=float)
         if data.ndim == 2:
@@ -421,11 +424,26 @@ class CorrelatedObservation(Observation):
 
         self.mask = mask if mask is not None else jnp.zeros(data.shape, dtype=bool)
         weights = jnp.ones(data.shape) / variance[:, None, None] * ~self.mask
+        # default: every unmasked pixel is an independent constraint. `from_observation` overrides this
+        # for the resampling case, where the noise covariance is rank-deficient.
+        self.n_eff = int(data.size - jnp.sum(self.mask)) if n_eff is None else int(n_eff)
         self._power_spectrum_padded = None
         self._data_fft = None
         super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer, name=name)
         if self.renderer is not None:
             self._match_power_spectrum()
+
+    @property
+    def N(self):  # noqa: N802
+        """Effective number of degrees of freedom of the noise model
+
+        For an observation without resampling this is the number of unmasked pixels, as in
+        :py:attr:`Observation.N`. When the correlations come from resampling onto a finer grid, the noise
+        covariance is rank-deficient: there are only as many independent noise values as unmasked pixels
+        in the *original* observation. Using the pixel count there would dilute :py:meth:`goodness_of_fit`
+        and the likelihood normalization by the surplus modes, which carry no information.
+        """
+        return self.n_eff
 
     def match(self, frame, renderer=None):
         """Construct the mapping between `frame` (from the model) and this observation frame
@@ -590,6 +608,11 @@ class CorrelatedObservation(Observation):
             power_spectrum /= jnp.prod(jnp.asarray(data.shape[-2:]))
             xi = None
 
+            # the resampling operator is generically full rank, so the number of independent noise
+            # values is the smaller of the unmasked pixel counts before and after resampling. For
+            # upsampling this is the original count; for downsampling it is the resampled count.
+            n_eff = int(min(obs.data.size - jnp.sum(obs.weights == 0), data.size - jnp.sum(mask)))
+
             # we need a new renderer for this resampled observation
             renderer = None
 
@@ -650,6 +673,8 @@ class CorrelatedObservation(Observation):
             wcs = obs.frame.wcs
             renderer = obs.renderer
             mask = obs.weights == 0
+            # no resampling: the data-grid noise covariance is full rank
+            n_eff = None
 
         return CorrelatedObservation(
             data,
@@ -661,6 +686,7 @@ class CorrelatedObservation(Observation):
             correlation_function=xi,
             channels=obs.frame.channels,
             name=obs.name,
+            n_eff=n_eff,
         )
 
 
