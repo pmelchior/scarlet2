@@ -35,6 +35,7 @@ def test_rescale():
     m = scarlet2.frame.get_affine(wcs_obs)
     m = scale * m
     wcs_obs.wcs.pc = m
+    wcs_obs.wcs.cdelt = [1.0, 1.0]  # full pixel scale now lives in PC
 
     obs_frame = scarlet2.Frame(scarlet2.Box(shape), wcs=wcs_obs)
     renderer = cls(model_frame, obs_frame)
@@ -64,8 +65,9 @@ def test_rotate():
     wcs_obs = _wcs_default(shape)
     m = scarlet2.frame.get_affine(wcs_obs)
     r = _rot_matrix(phi)
-    m = r @ m
+    m = m @ r  # rotate the pixel axes, so the relative jacobian is a pure rotation
     wcs_obs.wcs.pc = m
+    wcs_obs.wcs.cdelt = [1.0, 1.0]  # full pixel scale now lives in PC
 
     obs_frame = scarlet2.Frame(scarlet2.Box(shape), wcs=wcs_obs)
     renderer = cls(model_frame, obs_frame)
@@ -85,8 +87,9 @@ def test_flip():
     wcs_obs = _wcs_default(shape)
     m = scarlet2.frame.get_affine(wcs_obs)
     f = _flip_matrix(-1)
-    m = f @ m
+    m = m @ f
     wcs_obs.wcs.pc = m
+    wcs_obs.wcs.cdelt = [1.0, 1.0]  # full pixel scale now lives in PC
 
     obs_frame = scarlet2.Frame(scarlet2.Box(shape), wcs=wcs_obs)
     renderer = cls(model_frame, obs_frame)
@@ -159,7 +162,10 @@ def test_all():
     shape = (int(model.shape[1] // scale), int(model.shape[2] // scale))
     wcs_obs = _wcs_default(shape)
     m = get_affine(wcs_obs)
-    wcs_obs.wcs.pc = scale * _rot_matrix(phi) @ _flip_matrix(-1) @ m
+    # compose the scale/rotation/flip onto the pixel axes (right side) so the
+    # relative jacobian is independent of the base WCS orientation
+    wcs_obs.wcs.pc = scale * m @ _rot_matrix(phi) @ _flip_matrix(-1)
+    wcs_obs.wcs.cdelt = [1.0, 1.0]  # full pixel scale now lives in PC
     wcs_obs.wcs.crpix += shift[::-1]  # x/y
 
     # create model PSF and convolve g

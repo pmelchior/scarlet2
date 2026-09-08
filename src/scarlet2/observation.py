@@ -6,7 +6,7 @@ import numpy as np
 
 from .bbox import Box, insert_into, overlap_slices
 from .fft import transform
-from .frame import Frame, get_affine
+from .frame import Frame, get_affine, get_pixel_size
 from .measure import correlation_function
 from .module import Module
 from .renderer import (
@@ -758,7 +758,7 @@ class CorrelatedObservation(Observation):
             # native grid upstream: then only 1 / oversampling^2 of the pixels are independent
             n_eff = None
             if native_scale is not None:
-                axis_scales = obs.frame.wcs.proj_plane_pixel_scales()
+                axis_scales = get_pixel_size(obs.frame.wcs)
                 pixel_scale = (axis_scales[0] * axis_scales[1]) ** 0.5  # geometric mean
                 oversampling = float((native_scale / pixel_scale).to_value(u.dimensionless_unscaled))
                 if oversampling > 1.01:  # ignore a native scale within rounding of the delivered one

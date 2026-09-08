@@ -334,7 +334,10 @@ def get_affine(wcs=None, linear=True):
     """Return the WCS transformation matrix
 
     The transformation to intermediate world coordinates is given by the equation
-    $q = M\\cdot (p - r)$, where $p$ is the pixel coordinate, $r$ is `CRPIX`, and $M$ is the `CD` matrix.
+    $q = M\\cdot (p - r)$, where $p$ is the pixel coordinate, $r$ is `CRPIX`, and $M$ is the linear
+    pixel-to-intermediate-world matrix. Following the FITS WCS standard, $M$ is the `CD` matrix if
+    present, otherwise the product of the `PC` matrix and the `CDELT` scaling (an identity `PC` is
+    assumed when only `CDELT` is given). This is exactly what `wcs.pixel_scale_matrix` returns.
 
     This method provides the augmented matrix of the affine transformation:
     $T = \begin{bmatrix} M & -M\\cdot r\\ 0 & 1\\end{bmatrix}$, for the extended vector $(p,1)$.
@@ -354,15 +357,10 @@ def get_affine(wcs=None, linear=True):
     """
     if wcs is None:
         return jnp.diag(jnp.ones(3))
-    wcs_ = wcs.celestial
-    try:
-        m = wcs_.wcs.pc
-    except AttributeError:
-        try:
-            m = wcs_.cd
-        except AttributeError:
-            m = wcs_.wcs.cd
-    m = m[:2, :2]  # avoid using channel information that is not declared "spectral" in the WCS
+    wcs_ = wcs.celestial  # drop any non-celestial (e.g. spectral) axes
+    # pixel_scale_matrix is the CD matrix, or PC @ diag(CDELT) if no CD is given;
+    # this covers CD, PC+CDELT and PC-only (CDELT defaulting to 1) WCS definitions
+    m = np.asarray(wcs_.pixel_scale_matrix)[:2, :2]
     if linear:
         return m
     r = wcs_.wcs.crpix - 1  # CRPIX is 1-based!?!
