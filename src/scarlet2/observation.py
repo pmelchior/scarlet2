@@ -377,11 +377,6 @@ def _informative_mode_mask(power_spectrum, n_keep):
     return jnp.asarray(mask.reshape(ps.shape))
 
 
-# TODO: sampled power spectrum computations are very slow, and might be done twice (when resampling and when padding)
-# Option is to compute it only when the padded PS is needed as a lazy init when calling match()
-# Requires that the original observation is stored in the CorrelatedObservation.
-# TODO: Performance testing and checking for edge sources
-# TODO: Move all PS/correlation_function handling to fft module
 class CorrelatedObservation(Observation):
     """Content and definition of an observation with pixel correlations
 
@@ -753,26 +748,14 @@ class CorrelatedObservation(Observation):
         # the data's native resolution is the pre-resampling pixel scale
         native_scale = get_pixel_size(obs.frame.wcs)
 
-        # resample data
-        data = trafo(obs.data)
-
-        # resample PSF: first insert PSF into middle of image with same size of obs
+        # resample data, mask plane, PSF, and (on the default noise-model path) one noise field in a
+        # single pass. They all sit on obs's grid and `trafo` resamples each channel independently, so
+        # concatenating them along the channel axis and resampling once is equivalent to -- and several
+        # times faster than -- the separate calls it replaces.
         psf_image = obs.frame.psf()
         if psf_image.ndim == 2:
             # a single-band PSF (e.g. GaussianPSF) needs the channel dimension to line up with the data
             psf_image = jnp.tile(psf_image, (obs.data.shape[0], 1, 1))
-        if resample_psf:
-            full_psf_image = jnp.zeros(obs.data.shape)
-            full_box = Box(full_psf_image.shape)
-            shift = tuple(full_psf_image.shape[d] // 2 - psf_image.shape[d] // 2 for d in range(full_box.D))
-            psf_box = Box(psf_image.shape) + shift
-            full_psf_image = insert_into(full_psf_image, psf_image, psf_box)
-            psf = trafo(full_psf_image)
-        else:
-            psf = psf_image
-
-        # resample the mask plane
-        mask = trafo(jnp.asarray(obs.weights == 0, dtype=float)) > 0.3  # mask edges blur, keep fractional
 
         # per-pixel noise sigma on the original grid, masked pixels filled with the median so the noise
         # field stays stationary under resampling
@@ -780,13 +763,33 @@ class CorrelatedObservation(Observation):
         sigma = jnp.where(sigma > 0, sigma, jnp.median(sigma))
         key = jax.random.key(hash(obs.frame))
 
+        n_c = obs.data.shape[0]
+        to_resample = [obs.data, jnp.asarray(obs.weights == 0, dtype=float)]
+        if resample_psf:
+            # insert the PSF into the middle of an obs-sized image before resampling
+            full_psf_image = jnp.zeros(obs.data.shape)
+            full_box = Box(full_psf_image.shape)
+            shift = tuple(full_psf_image.shape[d] // 2 - psf_image.shape[d] // 2 for d in range(full_box.D))
+            psf_box = Box(psf_image.shape) + shift
+            to_resample.append(insert_into(full_psf_image, psf_image, psf_box))
+        if not compute_power_spectrum:
+            to_resample.append(jax.random.normal(key, obs.data.shape) * sigma)
+
+        resampled = trafo(jnp.concatenate(to_resample, axis=0))
+        data = resampled[:n_c]
+        mask = resampled[n_c : 2 * n_c] > 0.3  # mask edges blur under resampling, keep fractional
+        next_c = 2 * n_c
+        if resample_psf:
+            psf = resampled[next_c : next_c + n_c]
+            next_c += n_c
+        else:
+            psf = psf_image
+
         if not compute_power_spectrum:
             # from_observation locates bad and bright (i.e. source) pixels from the weight map, and needs
             # the *resampled* noise level to do so. That is not trafo(obs.weights) -- resampling does not
             # propagate inverse variance -- so estimate it per channel from one resampled noise field.
-            sigma_resampled = jnp.std(
-                trafo(jax.random.normal(key, obs.data.shape) * sigma), axis=(-2, -1), keepdims=True
-            )
+            sigma_resampled = jnp.std(resampled[next_c : next_c + n_c], axis=(-2, -1), keepdims=True)
             weights = jnp.where(mask, 0.0, 1 / sigma_resampled**2)
             obs_ = Observation(
                 data,

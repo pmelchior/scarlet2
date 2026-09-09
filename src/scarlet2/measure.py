@@ -1,7 +1,9 @@
 """Measurement methods"""
 
 import copy
+from functools import partial
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from scipy.optimize import nnls
@@ -635,6 +637,8 @@ def forced_photometry(scene, obs):
 def correlation_function(img, maxlength=12, threshold=None, mask=None):
     """Computes the 2D correlation function of the image.
 
+    Uses per-channel jit-compiled calls to the 2D correlation function for performance.
+
     Parameters
     ----------
     img: :py:class:`numpy.ndarray`
@@ -657,6 +661,26 @@ def correlation_function(img, maxlength=12, threshold=None, mask=None):
     -------
     dict, with keys (dy,dx) specifying the 2D offset in image pixels
     """
+    img = jnp.asarray(img)
+    if img.ndim == 2:
+        img = img[None]
+    n_c = img.shape[0]
+
+    if mask is None:
+        masks = [None] * n_c
+    else:
+        mask = jnp.asarray(mask)
+        masks = [mask] * n_c if mask.ndim == 2 else list(mask)
+
+    per_channel = [
+        _corr_fct(img[c], maxlength=maxlength, threshold=threshold, mask=masks[c]) for c in range(n_c)
+    ]
+    # every channel returns the same lag keys; concatenate the length-1 per-channel arrays to (C,)
+    return {k: jnp.concatenate([xi[k] for xi in per_channel]) for k in per_channel[0]}
+
+
+@partial(jax.jit, static_argnames=("maxlength", "threshold"))
+def _corr_fct(img, maxlength=12, threshold=None, mask=None):
     xi = dict()
     n = dict()
     # expand to image cubes for faster ellipsis
