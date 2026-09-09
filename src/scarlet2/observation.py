@@ -381,7 +381,6 @@ def _informative_mode_mask(power_spectrum, n_keep):
 # Option is to compute it only when the padded PS is needed as a lazy init when calling match()
 # Requires that the original observation is stored in the CorrelatedObservation.
 # TODO: Performance testing and checking for edge sources
-# TODO: More through testing on the correlation_function -> PS path, or a mechanism to avoid it entirely
 # TODO: Move all PS/correlation_function handling to fft module
 class CorrelatedObservation(Observation):
     """Content and definition of an observation with pixel correlations
@@ -425,8 +424,35 @@ class CorrelatedObservation(Observation):
         power_spectrum=None,
         correlation_function=None,
         mask=None,
-        n_eff=None,
+        native_scale=None,
     ):
+        """Create an observation with a correlated-noise Gaussian likelihood.
+
+        Provide the noise model either as `power_spectrum` (on the data grid) or as a measured
+        `correlation_function`; exactly one is required. In most cases it is easier to use
+        :py:meth:`from_observation` (for a coadd already on the desired grid) or
+        :py:meth:`from_resampling` (to resample the data here).
+
+        Parameters
+        ----------
+        data: array
+            Observed data, 2D or 3D `(C, H, W)`.
+        psf, wcs, channels, renderer, name:
+            As for :py:class:`Observation`.
+        power_spectrum: array, optional
+            Noise power spectrum on the data grid, in `rfft2` layout, shape `(C, H, W // 2 + 1)`.
+        correlation_function: dict, optional
+            2D pixel correlation function keyed by integer `(dy, dx)` lag, as returned by
+            :py:func:`scarlet2.measure.correlation_function`.
+        mask: array, optional
+            Boolean array marking invalid pixels. Defaults to all-valid.
+        native_scale: :py:class:`astropy.units.Quantity`, optional
+            Angular size of a native, pre-resampling pixel, e.g. ``0.17 * u.arcsec``. Set this if the
+            data sit on a grid finer than their true resolution (resampled by an upstream pipeline or by
+            :py:meth:`from_resampling`). Only ``1 / (native_scale / pixel_scale) ** 2`` of the pixels are
+            then independent, and chi^2 is restricted to the spatial frequencies the native sampling
+            supports. Requires `wcs`.
+        """
         data = jnp.asarray(data, dtype=float)
         if data.ndim == 2:
             data = data[None, ...]
@@ -436,7 +462,7 @@ class CorrelatedObservation(Observation):
         )
         # weights ignore pixel covariance: per-pixel variance only, i.e. the zero-lag correlation xi(0,0).
         # Prefer the measured value when the correlation function is given: it is the direct estimate,
-        # whereas inverting the power spectrum picks up the distortion that abs() introduces there
+        # whereas inverting the power spectrum picks up the distortion that the taper introduces there.
         if power_spectrum is None:
             variance = correlation_function[0, 0]
             power_spectrum = _power_spectrum_from(correlation_function, data.shape)
@@ -449,9 +475,21 @@ class CorrelatedObservation(Observation):
 
         self.mask = mask if mask is not None else jnp.zeros(data.shape, dtype=bool)
         weights = jnp.ones(data.shape) / variance[:, None, None] * ~self.mask
-        # default: every unmasked pixel is an independent constraint. `from_observation` overrides this
-        # for the resampling case, where the noise covariance is rank-deficient.
-        self.n_eff = int(data.size - jnp.sum(self.mask)) if n_eff is None else int(n_eff)
+
+        # effective degrees of freedom: every unmasked pixel, unless the data sit on a grid finer than
+        # their native resolution (`native_scale`). Then the noise covariance is rank-deficient and only
+        # 1 / oversampling^2 of the pixels carry independent information.
+        n_unmasked = int(data.size - jnp.sum(self.mask))
+        self.n_eff = n_unmasked
+        if native_scale is not None:
+            assert wcs is not None, "native_scale requires a wcs"
+            assert u.get_physical_type(native_scale) == "angle", (
+                "native_scale must be an astropy angle Quantity, e.g. 0.17 * u.arcsec"
+            )
+            oversampling = float((native_scale / get_pixel_size(wcs)).to_value(u.dimensionless_unscaled))
+            if oversampling > 1.01:  # ignore a native scale within rounding of the delivered one
+                self.n_eff = max(1, round(n_unmasked / oversampling**2))
+
         self._power_spectrum_padded = None
         self._data_fft = None
         self._mode_mask = None
@@ -552,217 +590,94 @@ class CorrelatedObservation(Observation):
         obs,
         patch_size=50,
         maxlength=12,
-        resample_to_frame=None,
-        lanczos_order=9,
-        resample_psf=True,
-        n_realizations=64,
-        batch_size=8,
         native_scale=None,
     ):
-        """Create a :py:class:`CorrelatedObservation` from :py:class:`Observation`
+        """Create a :py:class:`CorrelatedObservation` from data that already sit on the desired grid.
 
-        The method will construct a new Observation instance with a modified likelihood that takes into
-        account the pixel correlation. How the noise power spectrum is obtained depends on
-        `resample_to_frame`:
+        Use this for a coadd (drizzled, warped, stacked, ...) whose pixel grid matches the model frame.
+        The method finds a patch of size `patch_size` with as few sources as possible, measures the 2D
+        pixel correlation function in it (out to `maxlength`), and turns that into the noise power
+        spectrum used by the likelihood. Truncating the correlation function at `maxlength` biases the
+        power spectrum, severely so once the correlation length approaches `maxlength`.
 
-        * If it is set, the resampling itself creates the correlations, so the power spectrum is measured
-          directly by averaging periodograms of `n_realizations` resampled noise fields.
-        * If it is `None`, there is no generative noise model. The method then finds a patch of size
-          `patch_size` with as few sources as possible, measures the pixel correlations in that patch, and
-          converts them to a power spectrum. Note that truncating the correlation function at `maxlength`
-          biases the resulting power spectrum, severely so if the correlation length approaches `maxlength`.
-          If the data were already resampled onto a finer grid by an upstream pipeline, pass
-          `native_scale` so that the likelihood only uses the spatial frequencies the true sampling
-          supports.
+        To resample the data onto the model grid here instead, use :py:meth:`from_resampling`.
 
         Parameters
         ----------
         obs: :py:class:`Observation`
-            Observation containing the data and original weight map
+            Observation containing the data and weight map. The weights are used only to locate bad and
+            bright pixels for the correlation measurement.
         patch_size: int
-            Linear size of the patch for measuring the correlation function.
-            The argument has no effect if `resample_to_frame` is set.
+            Linear size (in pixels) of the source-free patch used to measure the correlation function.
+            Clamped to the image size; if it reaches the image size the whole image is used.
         maxlength: int
-            Maximum distance (in pixels) for the 2D correlation function. It needs to be large enough to
-            cover the extent of the correlations, and small compared to `patch_size` so that every lag is
-            averaged over many pixel pairs.
-            The argument has no effect if `resample_to_frame` is set.
-        resample_to_frame: None, :py:class:`~scarlet2.Frame`
-            Frame describing the desired spatial sampling. Is assumed to be a model frame.
-        lanczos_order: int
-            Lanczos order used by the resampling operation
-            The argument has no effect if `resample_to_frame` is `None`.
-        resample_psf: bool, optional
-            Whether to resample `obs.psf` to `resample_to_frame`.
-            Should be set to False only if PSF is already sampled with the resolution of `resample_to_frame`.
-            The argument has no effect if `resample_to_frame` is `None`.
-        n_realizations: int
-            Number of noise realizations averaged into the power spectrum estimate. The relative scatter
-            per mode is `1 / sqrt(n_realizations)`, so values below ~16 bias the likelihood badly.
-            The argument has no effect if `resample_to_frame` is `None`.
-        batch_size: int
-            Number of noise realizations resampled at once. Larger values are faster but hold that many
-            noise fields in memory at a time.
-            The argument has no effect if `resample_to_frame` is `None`.
+            Maximum lag (in pixels) of the 2D correlation function. Large enough to cover the extent of
+            the correlations, and small compared to `patch_size` so every lag is averaged over many
+            pixel pairs (the assertion enforces ``4 * maxlength <= patch_size``).
         native_scale: :py:class:`astropy.units.Quantity`, optional
             Angular size of a native, pre-resampling pixel, e.g. ``0.17 * u.arcsec``. Set this only if
-            the data reached you already resampled onto a finer grid by an upstream pipeline (a drizzled
-            or reprojected coadd): the pixels are then correlated *and* not all independent, so chi^2
-            must be restricted to the spatial frequencies the native sampling supports. The delivered
-            pixel scale is read from `obs`. Ignored if `resample_to_frame` is set, where the sampling is
-            known exactly.
+            an upstream pipeline already resampled the data onto a grid finer than their true
+            resolution: the pixels are then correlated *and* not all independent, so chi^2 is restricted
+            to the spatial frequencies the native sampling supports. See
+            :py:meth:`CorrelatedObservation.__init__`.
 
         Returns
         -------
         :py:class:`CorrelatedObservation`
         """
-        if native_scale is not None:
-            assert u.get_physical_type(native_scale) == "angle", (
-                "native_scale must be an astropy angle Quantity, e.g. 0.17 * u.arcsec"
-            )
-            assert resample_to_frame is None, (
-                "native_scale applies to already-resampled data; drop it when resample_to_frame is set"
-            )
+        # compute the pixel correlations in a noisy patch (without correlations from sources)
+        # 1) mask pixels with bright pixels or zero weights
+        data = obs.data
+        mask = obs.weights == 0
+        mask = mask.at[~mask].set(data[~mask] > 3 * jnp.sqrt(1 / obs.weights[~mask]))
+        # extend the mask to remove most of the outskirts of detected galaxies
+        kernel = jnp.ones((9, 9))
+        _correlate2d = lambda x, kernel: jax.scipy.signal.correlate2d(x, kernel, mode="same")
+        correlate3d = jax.vmap(_correlate2d, in_axes=(0, None), out_axes=0)
+        mask = correlate3d(mask, kernel) > 0
 
-        if resample_to_frame is not None:
-            # create a reverse renderer without PSF corrections or channel filtering
-            _obs_frame = Frame(obs.frame.bbox, psf=None, wcs=obs.frame.wcs, channels=obs.frame.channels)
-            _new_box = obs.frame.bbox[:-2] @ resample_to_frame.bbox.spatial
-            _model_frame = Frame(_new_box, psf=None, wcs=resample_to_frame.wcs, channels=obs.frame.channels)
-            trafo = LanczosResamplingTranformation(_obs_frame, _model_frame, lanczos_order=lanczos_order)
-            wcs = resample_to_frame.wcs
-
-            # resample data
-            data = trafo(obs.data)
-
-            # resample PSF: first insert PSF into middle of image with same size of obs
-            psf_image = obs.frame.psf()
-            if psf_image.ndim == 2:
-                # a single-band PSF (e.g. GaussianPSF) needs the channel dimension to line up with the data
-                psf_image = jnp.tile(psf_image, (obs.data.shape[0], 1, 1))
-            if resample_psf:
-                full_psf_image = jnp.zeros(obs.data.shape)
-                full_box = Box(full_psf_image.shape)
-                shift = tuple(
-                    full_psf_image.shape[d] // 2 - psf_image.shape[d] // 2 for d in range(full_box.D)
-                )
-                psf_box = Box(psf_image.shape) + shift
-                full_psf_image = insert_into(full_psf_image, psf_image, psf_box)
-                psf = trafo(full_psf_image)
-            else:
-                psf = psf_image
-
-            # resample mask plane (weights themselves are not needed)
-            mask = jnp.asarray(obs.weights == 0, dtype=jnp.float32)
-            mask = trafo(mask) > 0.3  # edge of mask gets blurry, include fractional masking
-
-            # measure the noise power spectrum directly:
-            # the resampling is what creates the pixel correlations, so noise instances drawn from the
-            # original (uncorrelated) weights and pushed through `trafo` have the correct correlation
-            # structure. This avoids the detour via a correlation function truncated at `maxlength`,
-            # which is not positive semi-definite and therefore yields negative power spectrum modes.
-            # Averaging is essential: a single periodogram has 100% scatter per mode.
-            #
-            # CAVEAT: the noise here is resampled (`trafo(noise)`), but during the fit the model is
-            # rendered by convolving on the resampled grid with the resampled PSF (`match()` builds a
-            # ConvolutionTransformation, not a resampler). Convolution and resampling commute only for
-            # band-limited signals. Above the original (coarser) Nyquist frequency the resampled data
-            # carry no independent information (`n_eff` counts the modes below it), and there the
-            # resampled power spectrum, the render, and `trafo(model_coarse * psf)` all disagree at the
-            # Lanczos side-lobe level. `_chisquare` therefore drops those modes from the sum entirely
-            # via `_mode_mask`, which also removes this ambiguity.
-            key = jax.random.key(hash(obs.frame))
-            # masked pixels are given the median noise level rather than 0, so that the noise field stays
-            # stationary and the periodogram does not pick up leakage from the mask boundaries
-            sigma = jnp.where(obs.weights > 0, 1 / jnp.sqrt(jnp.where(obs.weights > 0, obs.weights, 1)), 0)
-            sigma = jnp.where(sigma > 0, sigma, jnp.median(sigma))
-
-            def _periodogram(key):
-                noise_field = jax.random.normal(key, shape=obs.data.shape) * sigma
-                return jnp.abs(jnp.fft.rfft2(trafo(noise_field), axes=(-2, -1))) ** 2
-
-            # the resampling dominates this loop, and it vectorizes well, so realizations are processed in
-            # batches. lax.map keeps memory at `batch_size` noise fields instead of `n_realizations`
-            keys = jax.random.split(key, n_realizations)
-            power_spectrum = jax.lax.map(_periodogram, keys, batch_size=batch_size).mean(axis=0)
-            power_spectrum /= jnp.prod(jnp.asarray(data.shape[-2:]))
-            xi = None
-
-            # the resampling operator is generically full rank, so the number of independent noise
-            # values is the smaller of the unmasked pixel counts before and after resampling. For
-            # upsampling this is the original count; for downsampling it is the resampled count.
-            n_eff = int(min(obs.data.size - jnp.sum(obs.weights == 0), data.size - jnp.sum(mask)))
-
-            # we need a new renderer for this resampled observation
-            renderer = None
-
+        # 2) find patch of size length (at most image size) with the largest number of unmasked pixels
+        patch_size = min(patch_size, min(data.shape[-2:]))
+        assert 4 * maxlength <= patch_size, (
+            f"maxlength={maxlength} is too large for patch_size={patch_size}: the longest lags would "
+            "be averaged over too few pixel pairs"
+        )
+        if patch_size >= min(data.shape[-2:]):
+            # the patch already covers the whole image: skip the search, `correlation_function`
+            # accounts for the masked pixels through its pair count
+            patch, patch_mask = data, mask
         else:
-            # compute the pixel correlations in a noisy patch (without correlations from sources)
-            # 1) mask pixels with bright pixels or zero weights
-            data = obs.data
-            mask = obs.weights == 0
-            mask = mask.at[~mask].set(data[~mask] > 3 * jnp.sqrt(1 / obs.weights[~mask]))
-            # extend the mask to remove most of the outskirts of detected galaxies
-            kernel = jnp.ones((9, 9))
-            _correlate2d = lambda x, kernel: jax.scipy.signal.correlate2d(x, kernel, mode="same")
-            correlate3d = jax.vmap(_correlate2d, in_axes=(0, None), out_axes=0)
-            mask = correlate3d(mask, kernel) > 0
+            kernel = jnp.ones((patch_size, patch_size))
+            # correlated with tophat = sliding count of unmasked pixels
+            gaps = correlate3d(~mask, kernel)
 
-            # 2) find patch of size length (at most image size) with the largest number of unmasked pixels
-            patch_size = min(patch_size, min(data.shape[-2:]))
-            assert 4 * maxlength <= patch_size, (
-                f"maxlength={maxlength} is too large for patch_size={patch_size}: the longest lags would "
-                "be averaged over too few pixel pairs"
-            )
-            if patch_size >= min(data.shape[-2:]):
-                # the patch already covers the whole image: skip the search, `correlation_function`
-                # accounts for the masked pixels through its pair count
-                patch, patch_mask = data, mask
-            else:
-                kernel = jnp.ones((patch_size, patch_size))
-                # correlated with tophat = sliding count of unmasked pixels
-                gaps = correlate3d(~mask, kernel)
+            # location of lower-left pixel of the patch with the fewest masked pixels
+            def best_patch(img, msk, gaps):
+                # trim off patch_size // 2 so the patch center stays away from the image border
+                trimmed_shape = tuple(s - patch_size for s in gaps.shape[-2:])
+                y, x = jnp.unravel_index(
+                    jnp.argmax(gaps[patch_size // 2 : -patch_size // 2, patch_size // 2 : -patch_size // 2]),
+                    trimmed_shape,
+                )
+                slice_shape = (patch_size, patch_size)
+                return (
+                    jax.lax.dynamic_slice(img, (y, x), slice_shape),
+                    jax.lax.dynamic_slice(msk, (y, x), slice_shape),
+                )
 
-                # location of lower-left pixel of the patch with the fewest masked pixels
-                def best_patch(img, msk, gaps):
-                    # trim off patch_size // 2 so the patch center stays away from the image border
-                    trimmed_shape = tuple(s - patch_size for s in gaps.shape[-2:])
-                    y, x = jnp.unravel_index(
-                        jnp.argmax(
-                            gaps[patch_size // 2 : -patch_size // 2, patch_size // 2 : -patch_size // 2]
-                        ),
-                        trimmed_shape,
-                    )
-                    slice_shape = (patch_size, patch_size)
-                    return (
-                        jax.lax.dynamic_slice(img, (y, x), slice_shape),
-                        jax.lax.dynamic_slice(msk, (y, x), slice_shape),
-                    )
+            patch, patch_mask = jax.vmap(best_patch, in_axes=(0, 0, 0), out_axes=0)(data, mask, gaps)
 
-                patch, patch_mask = jax.vmap(best_patch, in_axes=(0, 0, 0), out_axes=0)(data, mask, gaps)
+        # 3) measure correlation function in the patch
+        # there is no generative noise model here, so the power spectrum cannot be averaged over
+        # realizations and has to be estimated from the correlation function. Its pair count excludes
+        # every lag pair that touches a masked pixel, which a periodogram of the patch would not.
+        xi = correlation_function(patch, maxlength=maxlength, mask=patch_mask)
 
-            # 3) measure correlation function in the patch
-            # there is no generative noise model here, so the power spectrum cannot be averaged over
-            # realizations and has to be estimated from the correlation function. Its pair count excludes
-            # every lag pair that touches a masked pixel, which a periodogram of the patch would not.
-            xi = correlation_function(patch, maxlength=maxlength, mask=patch_mask)
-            power_spectrum = None
-
-            # define the remaining items
-            psf = obs.frame.psf
-            wcs = obs.frame.wcs
-            renderer = obs.renderer
-            mask = obs.weights == 0
-
-            # the data-grid noise covariance is full rank, unless the data were resampled from a coarser
-            # native grid upstream: then only 1 / oversampling^2 of the pixels are independent
-            n_eff = None
-            if native_scale is not None:
-                axis_scales = get_pixel_size(obs.frame.wcs)
-                pixel_scale = (axis_scales[0] * axis_scales[1]) ** 0.5  # geometric mean
-                oversampling = float((native_scale / pixel_scale).to_value(u.dimensionless_unscaled))
-                if oversampling > 1.01:  # ignore a native scale within rounding of the delivered one
-                    n_eff = max(1, round(int(data.size - jnp.sum(mask)) / oversampling**2))
+        # define the remaining items
+        psf = obs.frame.psf
+        wcs = obs.frame.wcs
+        renderer = obs.renderer if native_scale is None else None
+        mask = obs.weights == 0
 
         return CorrelatedObservation(
             data,
@@ -770,11 +685,160 @@ class CorrelatedObservation(Observation):
             psf=psf,
             wcs=wcs,
             renderer=renderer,
-            power_spectrum=power_spectrum,
             correlation_function=xi,
             channels=obs.frame.channels,
             name=obs.name,
-            n_eff=n_eff,
+            native_scale=native_scale,
+        )
+
+    @classmethod
+    def from_resampling(
+        cls,
+        obs,
+        to_frame,
+        lanczos_order=9,
+        resample_psf=True,
+        compute_power_spectrum=False,
+        patch_size=50,
+        maxlength=12,
+        n_realizations=64,
+        batch_size=8,
+    ):
+        """Create a :py:class:`CorrelatedObservation` by resampling `obs` onto the grid of `to_frame`.
+
+        The Lanczos resampling correlates the pixels, so the result needs a correlated-noise
+        likelihood. Two ways to get the noise power spectrum:
+
+        * ``compute_power_spectrum=False`` (default): measure the correlation function of the resampled
+          data via :py:meth:`from_observation`. This is the general route -- it also works if `obs` was
+          itself a coadd with its own (typically shorter-range) correlations.
+        * ``compute_power_spectrum=True``: assume the *original* pixels were uncorrelated and build the
+          power spectrum generatively, by averaging periodograms of `n_realizations` noise fields drawn
+          from `obs.weights` and pushed through the same resampling. Tighter and cheaper to tune, but
+          only valid for genuinely uncorrelated input.
+
+        Either way, `to_frame` is finer than `obs` in the typical (upsampling) case, so the resampled
+        noise is rank-deficient: chi^2 is automatically restricted to the frequencies the native
+        (`obs`) sampling supports.
+
+        Parameters
+        ----------
+        obs: :py:class:`Observation`
+            Observation to resample. Its pixel scale is taken as the native resolution.
+        to_frame: :py:class:`~scarlet2.Frame`
+            Frame describing the desired spatial sampling, typically the model frame.
+        lanczos_order: int
+            Order of the Lanczos resampling kernel.
+        resample_psf: bool, optional
+            Whether to resample `obs.psf` to `to_frame`. Set to False only if the PSF is already
+            sampled at the resolution of `to_frame`.
+        compute_power_spectrum: bool, optional
+            Use the generative periodogram route (see above) instead of the correlation function.
+        patch_size, maxlength: int
+            Passed to :py:meth:`from_observation`. No effect if `compute_power_spectrum` is True.
+        n_realizations, batch_size: int
+            Number of noise fields averaged into the generative power spectrum, and how many are
+            resampled at once. No effect unless `compute_power_spectrum` is True.
+
+        Returns
+        -------
+        :py:class:`CorrelatedObservation`
+        """
+        # reverse renderer without PSF corrections or channel filtering: obs grid -> to_frame grid
+        _obs_frame = Frame(obs.frame.bbox, psf=None, wcs=obs.frame.wcs, channels=obs.frame.channels)
+        _new_box = obs.frame.bbox[:-2] @ to_frame.bbox.spatial
+        _model_frame = Frame(_new_box, psf=None, wcs=to_frame.wcs, channels=obs.frame.channels)
+        trafo = LanczosResamplingTranformation(_obs_frame, _model_frame, lanczos_order=lanczos_order)
+        wcs = to_frame.wcs
+        # the data's native resolution is the pre-resampling pixel scale
+        native_scale = get_pixel_size(obs.frame.wcs)
+
+        # resample data
+        data = trafo(obs.data)
+
+        # resample PSF: first insert PSF into middle of image with same size of obs
+        psf_image = obs.frame.psf()
+        if psf_image.ndim == 2:
+            # a single-band PSF (e.g. GaussianPSF) needs the channel dimension to line up with the data
+            psf_image = jnp.tile(psf_image, (obs.data.shape[0], 1, 1))
+        if resample_psf:
+            full_psf_image = jnp.zeros(obs.data.shape)
+            full_box = Box(full_psf_image.shape)
+            shift = tuple(full_psf_image.shape[d] // 2 - psf_image.shape[d] // 2 for d in range(full_box.D))
+            psf_box = Box(psf_image.shape) + shift
+            full_psf_image = insert_into(full_psf_image, psf_image, psf_box)
+            psf = trafo(full_psf_image)
+        else:
+            psf = psf_image
+
+        # resample the mask plane
+        mask = trafo(jnp.asarray(obs.weights == 0, dtype=float)) > 0.3  # mask edges blur, keep fractional
+
+        # per-pixel noise sigma on the original grid, masked pixels filled with the median so the noise
+        # field stays stationary under resampling
+        sigma = jnp.where(obs.weights > 0, 1 / jnp.sqrt(jnp.where(obs.weights > 0, obs.weights, 1)), 0)
+        sigma = jnp.where(sigma > 0, sigma, jnp.median(sigma))
+        key = jax.random.key(hash(obs.frame))
+
+        if not compute_power_spectrum:
+            # from_observation locates bad and bright (i.e. source) pixels from the weight map, and needs
+            # the *resampled* noise level to do so. That is not trafo(obs.weights) -- resampling does not
+            # propagate inverse variance -- so estimate it per channel from one resampled noise field.
+            sigma_resampled = jnp.std(
+                trafo(jax.random.normal(key, obs.data.shape) * sigma), axis=(-2, -1), keepdims=True
+            )
+            weights = jnp.where(mask, 0.0, 1 / sigma_resampled**2)
+            obs_ = Observation(
+                data,
+                weights,
+                psf=psf,
+                wcs=wcs,
+                channels=obs.frame.channels,
+                name=obs.name,
+                renderer=None,
+            )
+            return CorrelatedObservation.from_observation(
+                obs_, patch_size=patch_size, maxlength=maxlength, native_scale=native_scale
+            )
+
+        # measure the noise power spectrum directly:
+        # the resampling is what creates the pixel correlations, so noise instances drawn from the
+        # original (uncorrelated) weights and pushed through `trafo` have the correct correlation
+        # structure. This avoids the detour via a correlation function truncated at `maxlength`,
+        # which is not positive semi-definite and therefore yields negative power spectrum modes.
+        # Averaging is essential: a single periodogram has 100% scatter per mode.
+        #
+        # CAVEAT: the noise here is resampled (`trafo(noise)`), but during the fit the model is
+        # rendered by convolving on the resampled grid with the resampled PSF (`match()` builds a
+        # ConvolutionTransformation, not a resampler). Convolution and resampling commute only for
+        # band-limited signals. Above the original (coarser) Nyquist frequency the resampled data
+        # carry no independent information (`n_eff` counts the modes below it), and there the
+        # resampled power spectrum, the render, and `trafo(model_coarse * psf)` all disagree at the
+        # Lanczos side-lobe level. `_chisquare` therefore drops those modes from the sum entirely
+        # via `_mode_mask`, which also removes this ambiguity.
+
+        def _periodogram(key):
+            noise_field = jax.random.normal(key, shape=obs.data.shape) * sigma
+            return jnp.abs(jnp.fft.rfft2(trafo(noise_field), axes=(-2, -1))) ** 2
+
+        # the resampling dominates this loop, and it vectorizes well, so realizations are processed in
+        # batches. lax.map keeps memory at `batch_size` noise fields instead of `n_realizations`
+        keys = jax.random.split(key, n_realizations)
+        power_spectrum = jax.lax.map(_periodogram, keys, batch_size=batch_size).mean(axis=0)
+        power_spectrum /= jnp.prod(jnp.asarray(data.shape[-2:]))
+
+        # `native_scale` (the pre-resampling pixel scale) tells the constructor how many of the modes
+        # carry independent noise; nothing else to do about the rank deficiency here.
+        return CorrelatedObservation(
+            data,
+            mask=mask,
+            psf=psf,
+            wcs=wcs,
+            channels=obs.frame.channels,
+            name=obs.name,
+            renderer=None,
+            power_spectrum=power_spectrum,
+            native_scale=native_scale,
         )
 
 
