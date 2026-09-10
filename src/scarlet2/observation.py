@@ -845,6 +845,137 @@ class CorrelatedObservation(Observation):
         )
 
 
+def _align_boxes(observations, model_frame):
+    """Integer placement box of each observation within `model_frame`, in `(C, H, W)` layout.
+
+    Also enforces that no observation needs resampling: every one must share the model frame's WCS
+    matrix and sit at an integer pixel offset from it.
+    """
+    m_model = get_affine(model_frame.wcs)
+    boxes = []
+    for obs in observations:
+        assert jnp.allclose(get_affine(obs.frame.wcs), m_model), (
+            f"Observation '{obs.name}' has a different WCS matrix than the model frame; "
+            "stacking would require resampling"
+        )
+        ref_pixel = jnp.array(obs.frame.bbox.spatial.origin)
+        shift = model_frame.get_pixel(obs.frame.get_sky_coord(ref_pixel)) - ref_pixel
+        assert jnp.allclose(shift, jnp.round(shift), atol=1e-3), (
+            f"Observation '{obs.name}' is offset from the model frame by a non-integer number "
+            f"of pixels ({shift}); stacking would require resampling"
+        )
+        origin = tuple(int(round(float(s))) for s in shift)
+        boxes.append(Box((obs.frame.C,) + obs.frame.bbox.spatial.shape, origin=(0,) + origin))
+    return boxes
+
+
+def _stack_channel_arrays(observations, boxes, model_box):
+    """Pad/trim each observation's `data` and `weights` to `model_box` and concatenate over channels."""
+    data_stack, weight_stack = [], []
+    for obs, box in zip(observations, boxes, strict=True):
+        empty = jnp.zeros((obs.frame.C,) + model_box.shape)
+        data_stack.append(insert_into(empty, obs.data, box))
+        weight_stack.append(insert_into(empty, obs.weights, box))
+    return jnp.concatenate(data_stack, axis=0), jnp.concatenate(weight_stack, axis=0)
+
+
+def _stack_psf(observations):
+    """Per-channel PSF images of all observations, padded to a common odd shape and concatenated."""
+    psf_images = []
+    for obs in observations:
+        p = obs.frame.psf()
+        if p.ndim == 2:
+            p = p[None, ...]
+        if p.shape[0] == 1 and obs.frame.C > 1:
+            # a single-image PSF (e.g. GaussianPSF) applies to every channel
+            p = jnp.tile(p, (obs.frame.C, 1, 1))
+        assert p.shape[0] == obs.frame.C, (
+            f"Observation '{obs.name}' PSF has {p.shape[0]} channels, expected {obs.frame.C}"
+        )
+        psf_images.append(p)
+
+    psf_h = max(p.shape[-2] for p in psf_images)
+    psf_w = max(p.shape[-1] for p in psf_images)
+    psf_h += 1 - psf_h % 2
+    psf_w += 1 - psf_w % 2
+
+    psf_stack = []
+    for p in psf_images:
+        full_psf = jnp.zeros((p.shape[0], psf_h, psf_w))
+        psf_box = Box(p.shape, origin=(0, (psf_h - p.shape[-2]) // 2, (psf_w - p.shape[-1]) // 2))
+        psf_stack.append(insert_into(full_psf, p, psf_box))
+    return jnp.concatenate(psf_stack, axis=0)
+
+
+def stack_observations(observations, model_frame, name=None):
+    """Stack observations that share a pixel grid into a single one
+
+    Observations from different instruments or epochs that sample the *same* sky pixel grid (the
+    same WCS orientation and scale as `model_frame`, up to an integer pixel offset) can be treated
+    as extra channels of one observation. Rendering then vectorizes over all channels at once
+    instead of looping over observations (see :issue:`287`).
+
+    The :py:attr:`~scarlet2.Observation.data`, :py:attr:`~scarlet2.Observation.weights` and PSF of
+    each observation are padded (with zero weight) or trimmed to the spatial extent of `model_frame`
+    and concatenated along the channel axis; the channel lists are concatenated as well.
+
+    Parameters
+    ----------
+    observations: list of :py:class:`~scarlet2.Observation`
+        Observations to stack. They must match `model_frame` without resampling, must all carry a
+        PSF, must all be of the same type (all :py:class:`~scarlet2.Observation` or all
+        :py:class:`~scarlet2.CorrelatedObservation`), and their channels must be mutually distinct.
+    model_frame: :py:class:`~scarlet2.Frame`
+        Frame defining the common spatial grid, typically :py:attr:`scarlet2.Scene.frame`.
+    name: str, optional
+        Name of the stacked observation. Defaults to the joined names of the inputs.
+
+    Returns
+    -------
+    :py:class:`~scarlet2.Observation` or :py:class:`~scarlet2.CorrelatedObservation`
+        A single observation on the spatial grid of `model_frame`, with as many channels as all
+        `observations` combined. The return type matches the type of the inputs.
+    """
+    if not hasattr(observations, "__iter__"):
+        observations = (observations,)
+    observations = list(observations)
+    assert len(observations) > 0, "Need at least one observation to stack"
+
+    types = {type(obs) for obs in observations}
+    assert types in ({Observation}, {CorrelatedObservation}), (
+        "stack_observations() requires all observations to be of the same type, either "
+        f"Observation or CorrelatedObservation; got {sorted(t.__name__ for t in types)}"
+    )
+    assert all(obs.frame.psf is not None for obs in observations), (
+        "stack_observations() requires every observation to carry a PSF"
+    )
+
+    model_box = model_frame.bbox.spatial
+    assert model_box.origin == (0, 0), "model_frame spatial box must have origin (0, 0)"
+
+    # concatenated channels, which have to be distinct so the renderer can map them one-to-one
+    channels = [c for obs in observations for c in obs.frame.channels]
+    assert len(channels) == len(set(channels)), (
+        f"Cannot stack observations with duplicate channels: got {channels}"
+    )
+
+    boxes = _align_boxes(observations, model_frame)
+    data, weights = _stack_channel_arrays(observations, boxes, model_box)
+    psf = _stack_psf(observations)
+
+    if name is None:
+        names = [obs.name for obs in observations if obs.name]
+        name = " + ".join(names) if names else ""
+
+    if types == {CorrelatedObservation}:
+        raise NotImplementedError(
+            "stack_observations() does not support CorrelatedObservation yet; the noise power "
+            "spectra have to be combined on the model grid first"
+        )
+
+    return Observation(data, weights, psf=psf, wcs=model_frame.wcs, channels=channels, name=name)
+
+
 def chi_square_in_box_and_border(residuals, weights, bbox, border_width):
     """
     helper function for :py:meth:`eval_chi_square_in_box_and_border`
