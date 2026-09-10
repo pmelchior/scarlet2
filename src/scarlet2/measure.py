@@ -1,7 +1,9 @@
 """Measurement methods"""
 
 import copy
+from functools import partial
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from scipy.optimize import nnls
@@ -632,46 +634,88 @@ def forced_photometry(scene, obs):
     return spectra
 
 
-def correlation_function(img, maxlength=2, threshold=0):
+def correlation_function(img, maxlength=12, threshold=None, mask=None):
     """Computes the 2D correlation function of the image.
+
+    Uses per-channel jit-compiled calls to the 2D correlation function for performance.
 
     Parameters
     ----------
     img: :py:class:`numpy.ndarray`
-        Image array, 2D or 3D. Masked pixels must be set to 0 in `img`.
+        Image array, 2D or 3D.
     maxlength: int
-        Maximum length of the correlation function
-    threshold: float
-        Minimum correlation coefficient to maintain
+        Maximum length of the correlation function. It needs to be large enough to cover the extent of
+        the correlations, otherwise the derived power spectrum is biased. `img` should be substantially
+        larger, so that every lag is still averaged over many pixel pairs.
+    threshold: float, optional
+        Minimum correlation coefficient to maintain. Clipping is a non-linear operation that destroys the
+        positive semi-definiteness of the correlation function, and with it the non-negativity of the
+        power spectrum derived from it, so it is off by default.
+    mask: :py:class:`numpy.ndarray`, optional
+        Boolean array (same shape as `img`, or 2D broadcast over the channels) marking invalid pixels.
+        A pixel pair is only counted at a given lag if neither of its pixels is masked, so `xi` is an
+        unbiased pairwise estimate regardless of mask geometry. If `None`, pixels that are exactly zero
+        in `img` are treated as masked.
 
     Returns
     -------
     dict, with keys (dy,dx) specifying the 2D offset in image pixels
     """
+    img = jnp.asarray(img)
+    if img.ndim == 2:
+        img = img[None]
+    n_c = img.shape[0]
+
+    if mask is None:
+        masks = [None] * n_c
+    else:
+        mask = jnp.asarray(mask)
+        masks = [mask] * n_c if mask.ndim == 2 else list(mask)
+
+    per_channel = [
+        _corr_fct(img[c], maxlength=maxlength, threshold=threshold, mask=masks[c]) for c in range(n_c)
+    ]
+    # every channel returns the same lag keys; concatenate the length-1 per-channel arrays to (C,)
+    return {k: jnp.concatenate([xi[k] for xi in per_channel]) for k in per_channel[0]}
+
+
+@partial(jax.jit, static_argnames=("maxlength", "threshold"))
+def _corr_fct(img, maxlength=12, threshold=None, mask=None):
     xi = dict()
     n = dict()
     # expand to image cubes for faster ellipsis
     img_ = img[None, :, :] if img.ndim == 2 else img
     height, width = img_.shape[-2:]
+    if mask is None:
+        # legacy convention: masked pixels are set to zero in `img`, so a zero factor marks an excluded pair
+        valid = img_ != 0
+    else:
+        valid = ~(mask[None, :, :] if mask.ndim == 2 else mask)
+        valid = jnp.broadcast_to(valid, img_.shape)
+        img_ = jnp.where(valid, img_, 0.0)  # keep masked pixels out of the lag sums
+    # measure the dy >= 0 half plane; the other half follows from xi(-dy,-dx) == xi(dy,dx).
+    # both signs of dx are needed because (dy,dx) and (dy,-dx) are independent offsets
     for dy in range(maxlength + 1):
-        for dx in range(maxlength + 1):
-            overlap = img_[..., dy:, dx:] * img_[..., : height - dy, : width - dx]
-            xi[dy, dx] = jnp.sum(overlap, axis=(-2, -1))
-            n[dy, dx] = jnp.sum(overlap != 0, axis=(-2, -1))
+        # for dy == 0, dx < 0 is the mirror of dx > 0, so only the positive side is measured
+        for dx in range(-maxlength if dy > 0 else 0, maxlength + 1):
+            if dx >= 0:
+                a = (Ellipsis, slice(dy, None), slice(dx, None))
+                b = (Ellipsis, slice(None, height - dy), slice(None, width - dx))
+            else:
+                a = (Ellipsis, slice(dy, None), slice(None, width + dx))
+                b = (Ellipsis, slice(None, height - dy), slice(-dx, None))
+            xi[dy, dx] = jnp.sum(img_[a] * img_[b], axis=(-2, -1))
+            n[dy, dx] = jnp.sum(valid[a] & valid[b], axis=(-2, -1))
 
-    # normalize and filter correlations below threshold
-    # Note: possibly safer to set the largest negative correlation (which should not exist) as threshold
+    # normalize by the number of contributing pixel pairs, which corrects for masked pixels
     for k in xi:
-        xi[k] = jnp.maximum(xi[k] / jnp.maximum(n[k], 1), threshold)  # prevent division by 0
+        xi[k] = xi[k] / jnp.maximum(n[k], 1)  # prevent division by 0
+        if threshold is not None:
+            xi[k] = jnp.maximum(xi[k], threshold)
 
-    # fill in the symmetric negative offsets
-    offsets = list(xi.keys())
-    for k in offsets:
-        dy, dx = k
-        if dy > 0:
-            dy *= -1
-        if dx > 0:
-            dx *= -1
-        xi[dy, dx] = xi[k]
+    # fill in the symmetric offsets
+    for (dy, dx), v in list(xi.items()):
+        if dy != 0 or dx != 0:
+            xi[-dy, -dx] = v
 
     return xi
