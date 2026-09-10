@@ -125,14 +125,18 @@ class Scene(Module):
     def __exit__(self, exc_type, exc_value, traceback):
         Scenery.scene = None
 
-        # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
-        from .validation_utils import VALIDATION_SWITCH
+        # (re)-import `VALIDATION_MODE` at runtime to avoid using a static/old value
+        from .validation_utils import VALIDATION_MODE
 
-        if VALIDATION_SWITCH:
+        if VALIDATION_MODE != "off":
             from .validation import check_scene
 
             validation_results = check_scene(self)
-            print_validation_results("Source validation results", validation_results)
+            print_validation_results(
+                "Source validation results",
+                validation_results,
+                verbose=VALIDATION_MODE == "verbose",
+            )
 
     def fit(
         self,
