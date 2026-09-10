@@ -24,6 +24,10 @@ object which will one of the following types: Info, Warning, or Error.
 All of the results will be printed along with information about the results of
 the check.
 
+Each result also carries a ``context`` with the values that triggered it. By
+default only the check result is printed; run validation in ``"verbose"`` mode
+(see below) to also print the context.
+
 Below is an example screen shot from a jupyter notebook showing the creation of
 a ``Observation`` object. All the checks returned ``ValidationInfo`` results with
 the exception of the last, which returned a ``ValidationError``.
@@ -33,27 +37,30 @@ the exception of the last, which returned a ``ValidationError``.
 > Note: Validation checks will NEVER cause the program to halt.
 > i.e. Even a ``ValidationError`` will not stop the execution of ``scarlet2``.
 
-### Toggling automatic validation checks
+### Configuring automatic validation checks
 Automatic validation checks are enabled by default, and because the results of
 validation checks will not halt the program, it is generally fine to leave them
 enabled.
 
-However, if you're running ``scarlet2`` in a way that the logged output of
-validation checks won't be seen, or you feel that the checks are bothersome, they
-can be togged as shown here:
+However, if you're running ``scarlet2`` in a way that the output of validation
+checks won't be seen, or you feel that the checks are bothersome, the behavior
+can be configured with ``set_validation``:
 
 ```
 from scarlet2.validation_utils import set_validation
 
 # turn off automatic validation checks
-set_validation(False)
+set_validation("off")     # or set_validation(False)
 
-# turn on automatic validation checks
-set_validation(True)
+# turn on automatic validation checks; print only the check result
+set_validation("on")      # or set_validation(True)
+
+# turn on automatic validation checks; also print the context of each result
+set_validation("verbose")
 ```
 
-> Note: Turning off validation is not persistent. i.e. restarting ``scarlet2``
-> will re-enable automatic validation.
+> Note: This setting is not persistent. i.e. restarting ``scarlet2`` will restore
+> the default (``"on"``).
 
 ### Running validation checks manually
 If automatic checks are disabled, or you would like to run validation checks
@@ -274,15 +281,19 @@ Given that the user has not turned off automatic validation checks, the followin
 code would execute all the ``Thing`` validation checks and print out the results..
 
 ```
-# (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
-from .validation_utils import VALIDATION_SWITCH
+# (re)-import `VALIDATION_MODE` at runtime to avoid using a static/old value
+from .validation_utils import VALIDATION_MODE
 
-if VALIDATION_SWITCH:
+if VALIDATION_MODE != "off":
     # This import happens here to avoid circular dependencies
     from .validation import check_observation
 
     validation_results = check_thing(self)
-    print_validation_results("Observation validation results", validation_results)
+    print_validation_results(
+        "Observation validation results",
+        validation_results,
+        verbose=VALIDATION_MODE == "verbose",
+    )
 ```
 
 #### Create a new test suite

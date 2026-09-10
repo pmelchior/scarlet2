@@ -444,15 +444,19 @@ def fit(
     }
     scene_ = scene_.replace("fit_info", fit_info)
 
-    # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
-    from .validation_utils import VALIDATION_SWITCH
+    # (re)-import `VALIDATION_MODE` at runtime to avoid using a static/old value
+    from .validation_utils import VALIDATION_MODE
 
-    if VALIDATION_SWITCH:
+    if VALIDATION_MODE != "off":
         from .validation import check_fit
 
         for obs in observations:
             validation_results = check_fit(scene_, obs)
-            print_validation_results(f"Fit validation results for observation {obs.name}", validation_results)
+            print_validation_results(
+                f"Fit validation results for observation {obs.name}",
+                validation_results,
+                verbose=VALIDATION_MODE == "verbose",
+            )
 
     return scene_, obs_
 
