@@ -9,8 +9,8 @@ Each check builds a noise model from blank sky, then evaluates the reduced chi^2
 many noise realizations, for:
 
 * **hi-res**: ``from_observation`` -- correlation function -> power spectrum, no resampling
-* **lo-res**: ``from_resampling(..., compute_power_spectrum=True)`` -- a low-resolution observation
-  upsampled onto the finer model grid, generative power spectrum
+* **lo-res**: ``from_resampling`` -- a low-resolution observation
+  upsampled onto the finer model grid, measured correlation function
 * **joint**: both together
 * **delivered pre-resampled**: data that arrived already resampled onto a finer grid, so only
   ``from_observation`` is available -- with and without the ``native_scale`` hint
@@ -166,7 +166,9 @@ def paths():
         channels=["v"],
     )
     lo_corr = CorrelatedObservation.from_resampling(
-        lo_blank, model_frame, resample_psf=True, compute_power_spectrum=True, n_realizations=N_MODEL
+        lo_blank,
+        model_frame,
+        resample_psf=True,
     )
     lo_corr.match(model_frame)
 
@@ -219,7 +221,9 @@ def test_resampled_lowres_power_spectrum_path(paths):
     pure = _reduced_chi2(p["lo_corr"], pure_data, jnp.zeros_like(p["truth"]))
     with_source = _reduced_chi2(p["lo_corr"], src_data, p["truth"])
     n_eff = p["lo_corr"].n_eff
-    _report("lo-res  (resampled power spectrum, resample_psf=True)", n_eff, p["n_pix"], pure, with_source)
+    _report(
+        "lo-res  (resampled correlation function, resample_psf=True)", n_eff, p["n_pix"], pure, with_source
+    )
 
     # _chisquare masks out the rank-deficient surplus band, so chi2/n_eff is calibrated to ~1
     assert 0.85 < pure.mean() / n_eff < 1.2
@@ -336,7 +340,7 @@ def test_from_resampling_masks_sources(paths):
         co_i._match_power_spectrum()
         out.append(float(co_i.goodness_of_fit(z)))
     c_src = float(np.mean(out))
-    xi00 = float(np.asarray(jnp.fft.irfft2(co_src.power_spectrum, s=(NF, NF))[..., 0, 0]).ravel()[0])
+    xi00 = float(np.asarray(jnp.fft.irfft2(co_src._power_spectrum, s=(NF, NF))[..., 0, 0]).ravel()[0])
     print(f"\nfrom_resampling source masking:  chi2/n_eff = {c_src:.3f}   per-pixel variance = {xi00:.3f}")
 
     # a 40-sigma source leaking into the correlation function would blow up the per-pixel variance

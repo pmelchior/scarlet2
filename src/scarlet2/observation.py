@@ -385,18 +385,15 @@ class CorrelatedObservation(Observation):
     the expensive computation of/with an inverse banded matrix in configuration space.
     """
 
-    power_spectrum: jnp.ndarray
-    """Noise power spectrum on the data grid, in `rfft2` layout
-
-    Has shape `(C, H, W // 2 + 1)` for data of shape `(C, H, W)`.
-    """
+    correlation_function: dict
+    """Measured data correlation function, from py:meth:`scarlet2.measure.correlation_function`"""
     mask: jnp.ndarray
     """Mask for invalid pixels"""
     n_eff: int = eqx.field(static=True)
     """Effective number of degrees of freedom of the noise model, see :py:attr:`N`"""
     _data_fft: jnp.ndarray = eqx.field(repr=False)
-    """:py:attr:`data`, transformed onto the padded grid. `None` whenever `_power_spectrum_padded` is."""
-    _power_spectrum_padded: jnp.ndarray = eqx.field(repr=False)
+    """:py:attr:`data`, transformed onto the padded grid. `None` whenever `_power_spectrum` is."""
+    _power_spectrum: jnp.ndarray = eqx.field(repr=False)
     """Power spectrum on the padded grid of a trailing :py:class:`~scarlet2.ConvolutionTransformation`
 
     `None` unless :py:meth:`_match_power_spectrum` found that the faster Fourier-space path applies.
@@ -416,7 +413,6 @@ class CorrelatedObservation(Observation):
         channels=None,
         renderer=None,
         name="",
-        power_spectrum=None,
         correlation_function=None,
         mask=None,
         native_scale=None,
@@ -434,8 +430,6 @@ class CorrelatedObservation(Observation):
             Observed data, 2D or 3D `(C, H, W)`.
         psf, wcs, channels, renderer, name:
             As for :py:class:`Observation`.
-        power_spectrum: array, optional
-            Noise power spectrum on the data grid, in `rfft2` layout, shape `(C, H, W // 2 + 1)`.
         correlation_function: dict, optional
             2D pixel correlation function keyed by integer `(dy, dx)` lag, as returned by
             :py:func:`scarlet2.measure.correlation_function`.
@@ -448,27 +442,16 @@ class CorrelatedObservation(Observation):
             then independent, and chi^2 is restricted to the spatial frequencies the native sampling
             supports. Requires `wcs`.
         """
+        assert correlation_function is not None
+        self.correlation_function = correlation_function
+
         data = jnp.asarray(data, dtype=float)
         if data.ndim == 2:
             data = data[None, ...]
 
-        assert (power_spectrum is None) != (correlation_function is None), (
-            "Provide either power_spectrum or correlation_function"
-        )
-        # weights ignore pixel covariance: per-pixel variance only, i.e. the zero-lag correlation xi(0,0).
-        # Prefer the measured value when the correlation function is given: it is the direct estimate,
-        # whereas inverting the power spectrum picks up the distortion that the taper introduces there.
-        if power_spectrum is None:
-            variance = correlation_function[0, 0]
-            power_spectrum = _power_spectrum_from(correlation_function, data.shape)
-        else:
-            variance = jnp.fft.irfft2(power_spectrum, s=data.shape[-2:], axes=(-2, -1))[..., 0, 0]
-        self.power_spectrum = jnp.asarray(power_spectrum, dtype=float)
-        assert self.power_spectrum.shape == data.shape[:-1] + (data.shape[-1] // 2 + 1,), (
-            f"power_spectrum shape {self.power_spectrum.shape} does not match data shape {data.shape}"
-        )
-
         self.mask = mask if mask is not None else jnp.zeros(data.shape, dtype=bool)
+        # weights ignore pixel covariance: per-pixel variance only, i.e. the zero-lag correlation xi(0,0).
+        variance = correlation_function[0, 0]
         weights = jnp.ones(data.shape) / variance[:, None, None] * ~self.mask
 
         # effective degrees of freedom: every unmasked pixel, unless the data sit on a grid finer than
@@ -485,7 +468,7 @@ class CorrelatedObservation(Observation):
             if oversampling > 1.01:  # ignore a native scale within rounding of the delivered one
                 self.n_eff = max(1, round(n_unmasked / oversampling**2))
 
-        self._power_spectrum_padded = None
+        self._power_spectrum = None
         self._data_fft = None
         self._mode_mask = None
         super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer, name=name)
@@ -514,6 +497,8 @@ class CorrelatedObservation(Observation):
         self._match_power_spectrum()
 
     def _match_power_spectrum(self):
+        power_spectrum = _power_spectrum_from(self.correlation_function, self.data.shape)
+
         # If the last transformation is a convolution, it can hand us the model in Fourier space on its
         # padded grid, which saves the inverse transform and the transform back for every likelihood
         # evaluation. chi^2 is then evaluated there, against a power spectrum that accounts for the data
@@ -521,12 +506,12 @@ class CorrelatedObservation(Observation):
         # Masked pixels rule this out: masking is a real-space operation, so the model cannot be masked in
         # Fourier space, and masked pixels would score the model against zero data.
         _renderer = self.renderer[-1]
-        power_spectrum, data_fft = None, None
+        data_fft = None
         if isinstance(_renderer, ConvolutionTransformation) and not self.mask.any():
             fft_shape = tuple(_renderer._fft_shape)
-            power_spectrum = _padded_power_spectrum(self.power_spectrum, self.data.shape, fft_shape)
+            power_spectrum = _padded_power_spectrum(power_spectrum, self.data.shape, fft_shape)
             data_fft = transform(self.data, fft_shape, axes=(-2, -1))
-        object.__setattr__(self, "_power_spectrum_padded", power_spectrum)
+        object.__setattr__(self, "_power_spectrum", power_spectrum)
         object.__setattr__(self, "_data_fft", data_fft)
 
         # A rank-deficient (resampled) noise model has independent noise only in the modes below the
@@ -538,26 +523,26 @@ class CorrelatedObservation(Observation):
         mode_mask = None
         if self.n_eff < int(self.data.size - jnp.sum(self.mask)):
             n_pix = int(np.prod(self.data.shape[-2:]))
-            if power_spectrum is not None:
+            if data_fft is not None:  # padded FFT path
                 n_keep = round(self.n_eff * int(np.prod(fft_shape[-2:])) / (2 * n_pix))
                 mode_mask = _informative_mode_mask(power_spectrum, n_keep)
             else:
-                mode_mask = _informative_mode_mask(self.power_spectrum, round(self.n_eff / 2))
+                mode_mask = _informative_mode_mask(power_spectrum, round(self.n_eff / 2))
         object.__setattr__(self, "_mode_mask", mode_mask)
 
     def _chisquare(self, model):
-        # NOTE: when `power_spectrum` was built from resampled noise (see `from_observation`), the modes
+        # NOTE: when `_power_spectrum` was built from resampled noise (see `from_observation`), the modes
         # above the original Nyquist carry no independent information. `_mode_mask` drops them from the
         # sum below. It also sidesteps the fact that convolution and resampling do not commute in that
         # band, so the render and the noise model would otherwise disagree there.
-        if self._power_spectrum_padded is not None:
+        if self._data_fft is not None:
             # take the model straight from the convolution in Fourier space and zero-pad the data onto the
             # same grid, so that the residual there is the zero-padded data-grid residual that
             # `_padded_power_spectrum` is matched to
             model_fft = self.render(model, return_fft=True)
             n_pad = jnp.prod(jnp.asarray(self.renderer[-1]._fft_shape))
             res_fft = (model_fft - self._data_fft) / jnp.sqrt(n_pad / 2)
-            chi2_modes = (res_fft * jnp.conjugate(res_fft)).real / self._power_spectrum_padded
+            chi2_modes = (res_fft * jnp.conjugate(res_fft)).real / self._power_spectrum
             if self._mode_mask is not None:
                 chi2_modes = chi2_modes * self._mode_mask
             return jnp.sum(chi2_modes)
@@ -574,7 +559,7 @@ class CorrelatedObservation(Observation):
         # no accounting either, they carry zero residual and drop out of the transform on their own.
         n_pix = jnp.prod(jnp.asarray(self.data.shape[-2:]))
         res_fft = jnp.fft.rfft2(res, axes=(-2, -1)) / jnp.sqrt(n_pix / 2)
-        chi2_modes = (res_fft * jnp.conjugate(res_fft)).real / self.power_spectrum
+        chi2_modes = (res_fft * jnp.conjugate(res_fft)).real / self._power_spectrum
         if self._mode_mask is not None:
             chi2_modes = chi2_modes * self._mode_mask
         return jnp.sum(chi2_modes)
@@ -693,27 +678,17 @@ class CorrelatedObservation(Observation):
         to_frame,
         lanczos_order=9,
         resample_psf=True,
-        compute_power_spectrum=False,
         patch_size=50,
         maxlength=12,
-        n_realizations=64,
-        batch_size=8,
     ):
         """Create a :py:class:`CorrelatedObservation` by resampling `obs` onto the grid of `to_frame`.
 
         The Lanczos resampling correlates the pixels, so the result needs a correlated-noise
-        likelihood. Two ways to get the noise power spectrum:
+        likelihood. This method measures the correlation function of the resampled
+        data.
 
-        * ``compute_power_spectrum=False`` (default): measure the correlation function of the resampled
-          data via :py:meth:`from_observation`. This is the general route -- it also works if `obs` was
-          itself a coadd with its own (typically shorter-range) correlations.
-        * ``compute_power_spectrum=True``: assume the *original* pixels were uncorrelated and build the
-          power spectrum generatively, by averaging periodograms of `n_realizations` noise fields drawn
-          from `obs.weights` and pushed through the same resampling. Tighter and cheaper to tune, but
-          only valid for genuinely uncorrelated input.
-
-        Either way, `to_frame` is finer than `obs` in the typical (upsampling) case, so the resampled
-        noise is rank-deficient: chi^2 is automatically restricted to the frequencies the native
+        If the spatial grid of `to_frame` is finer than `obs`, the resampled
+        noise is rank-deficient: chi^2 will automatically be restricted to the frequencies the native
         (`obs`) sampling supports.
 
         Parameters
@@ -727,13 +702,8 @@ class CorrelatedObservation(Observation):
         resample_psf: bool, optional
             Whether to resample `obs.psf` to `to_frame`. Set to False only if the PSF is already
             sampled at the resolution of `to_frame`.
-        compute_power_spectrum: bool, optional
-            Use the generative periodogram route (see above) instead of the correlation function.
         patch_size, maxlength: int
-            Passed to :py:meth:`from_observation`. No effect if `compute_power_spectrum` is True.
-        n_realizations, batch_size: int
-            Number of noise fields averaged into the generative power spectrum, and how many are
-            resampled at once. No effect unless `compute_power_spectrum` is True.
+            Passed to :py:meth:`from_observation`.
 
         Returns
         -------
@@ -772,8 +742,7 @@ class CorrelatedObservation(Observation):
             shift = tuple(full_psf_image.shape[d] // 2 - psf_image.shape[d] // 2 for d in range(full_box.D))
             psf_box = Box(psf_image.shape) + shift
             to_resample.append(insert_into(full_psf_image, psf_image, psf_box))
-        if not compute_power_spectrum:
-            to_resample.append(jax.random.normal(key, obs.data.shape) * sigma)
+        to_resample.append(jax.random.normal(key, obs.data.shape) * sigma)
 
         resampled = trafo(jnp.concatenate(to_resample, axis=0))
         data = resampled[:n_c]
@@ -785,63 +754,22 @@ class CorrelatedObservation(Observation):
         else:
             psf = psf_image
 
-        if not compute_power_spectrum:
-            # from_observation locates bad and bright (i.e. source) pixels from the weight map, and needs
-            # the *resampled* noise level to do so. That is not trafo(obs.weights) -- resampling does not
-            # propagate inverse variance -- so estimate it per channel from one resampled noise field.
-            sigma_resampled = jnp.std(resampled[next_c : next_c + n_c], axis=(-2, -1), keepdims=True)
-            weights = jnp.where(mask, 0.0, 1 / sigma_resampled**2)
-            obs_ = Observation(
-                data,
-                weights,
-                psf=psf,
-                wcs=wcs,
-                channels=obs.frame.channels,
-                name=obs.name,
-                renderer=None,
-            )
-            return CorrelatedObservation.from_observation(
-                obs_, patch_size=patch_size, maxlength=maxlength, native_scale=native_scale
-            )
-
-        # measure the noise power spectrum directly:
-        # the resampling is what creates the pixel correlations, so noise instances drawn from the
-        # original (uncorrelated) weights and pushed through `trafo` have the correct correlation
-        # structure. This avoids the detour via a correlation function truncated at `maxlength`,
-        # which is not positive semi-definite and therefore yields negative power spectrum modes.
-        # Averaging is essential: a single periodogram has 100% scatter per mode.
-        #
-        # CAVEAT: the noise here is resampled (`trafo(noise)`), but during the fit the model is
-        # rendered by convolving on the resampled grid with the resampled PSF (`match()` builds a
-        # ConvolutionTransformation, not a resampler). Convolution and resampling commute only for
-        # band-limited signals. Above the original (coarser) Nyquist frequency the resampled data
-        # carry no independent information (`n_eff` counts the modes below it), and there the
-        # resampled power spectrum, the render, and `trafo(model_coarse * psf)` all disagree at the
-        # Lanczos side-lobe level. `_chisquare` therefore drops those modes from the sum entirely
-        # via `_mode_mask`, which also removes this ambiguity.
-
-        def _periodogram(key):
-            noise_field = jax.random.normal(key, shape=obs.data.shape) * sigma
-            return jnp.abs(jnp.fft.rfft2(trafo(noise_field), axes=(-2, -1))) ** 2
-
-        # the resampling dominates this loop, and it vectorizes well, so realizations are processed in
-        # batches. lax.map keeps memory at `batch_size` noise fields instead of `n_realizations`
-        keys = jax.random.split(key, n_realizations)
-        power_spectrum = jax.lax.map(_periodogram, keys, batch_size=batch_size).mean(axis=0)
-        power_spectrum /= jnp.prod(jnp.asarray(data.shape[-2:]))
-
-        # `native_scale` (the pre-resampling pixel scale) tells the constructor how many of the modes
-        # carry independent noise; nothing else to do about the rank deficiency here.
-        return CorrelatedObservation(
+        # from_observation locates bad and bright (i.e. source) pixels from the weight map, and needs
+        # the *resampled* noise level to do so. That is not trafo(obs.weights) -- resampling does not
+        # propagate inverse variance -- so estimate it per channel from one resampled noise field.
+        sigma_resampled = jnp.std(resampled[next_c : next_c + n_c], axis=(-2, -1), keepdims=True)
+        weights = jnp.where(mask, 0.0, 1 / sigma_resampled**2)
+        obs_ = Observation(
             data,
-            mask=mask,
+            weights,
             psf=psf,
             wcs=wcs,
             channels=obs.frame.channels,
             name=obs.name,
             renderer=None,
-            power_spectrum=power_spectrum,
-            native_scale=native_scale,
+        )
+        return CorrelatedObservation.from_observation(
+            obs_, patch_size=patch_size, maxlength=maxlength, native_scale=native_scale
         )
 
 
