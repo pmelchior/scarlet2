@@ -360,7 +360,7 @@ def _padded_power_spectrum(power_spectrum, shape, fft_shape, n_realizations=64, 
 
 
 def _informative_mode_mask(power_spectrum, n_keep):
-    """Boolean `rfft2` mask keeping the `n_keep` highest-power modes.
+    """Boolean `rfft2` mask keeping the `n_keep` highest-power modes, per channel.
 
     A power spectrum measured from resampled noise falls by orders of magnitude past the original
     Nyquist frequency. Those modes carry only interpolation leakage, no independent noise, so summing
@@ -368,12 +368,25 @@ def _informative_mode_mask(power_spectrum, n_keep):
     mode, keeping the `n_keep` strongest ones selects exactly the informative band, whatever its
     (possibly rotated) shape. `n_keep` is set by the caller so the retained modes carry ~`n_eff`
     degrees of freedom.
+
+    Parameters
+    ----------
+    power_spectrum: array
+        Power spectrum in `rfft2` layout, shape `(C, ky, kx)`.
+    n_keep: int or sequence of int
+        Number of modes to keep, either shared or one value per channel. Channels are masked
+        independently so that a stacked observation with heterogeneous noise models (some full rank,
+        some resampled) is handled correctly.
     """
     ps = np.asarray(power_spectrum)
-    n_keep = int(np.clip(n_keep, 1, ps.size))
-    keep = np.argpartition(ps.reshape(-1), ps.size - n_keep)[ps.size - n_keep :]
-    mask = np.zeros(ps.size, dtype=bool)
-    mask[keep] = True
+    n_modes = ps.shape[-2] * ps.shape[-1]
+    n_keep = np.broadcast_to(np.asarray(n_keep), (ps.shape[0],))
+    flat = ps.reshape(ps.shape[0], -1)
+    mask = np.zeros(flat.shape, dtype=bool)
+    for c in range(flat.shape[0]):
+        k = int(np.clip(n_keep[c], 1, n_modes))
+        keep = np.argpartition(flat[c], n_modes - k)[n_modes - k :]
+        mask[c, keep] = True
     return jnp.asarray(mask.reshape(ps.shape))
 
 
@@ -389,8 +402,13 @@ class CorrelatedObservation(Observation):
     """Measured data correlation function, from py:meth:`scarlet2.measure.correlation_function`"""
     mask: jnp.ndarray
     """Mask for invalid pixels"""
-    n_eff: int = eqx.field(static=True)
-    """Effective number of degrees of freedom of the noise model, see :py:attr:`N`"""
+    n_eff: tuple = eqx.field(static=True)
+    """Per-channel effective number of degrees of freedom of the noise model, see :py:attr:`N`
+
+    One entry per channel. For a channel without resampling this is its number of unmasked pixels;
+    for a channel resampled onto a finer grid it is the smaller count of independent noise values on
+    the native grid. :py:attr:`N` is the sum over channels.
+    """
     _data_fft: jnp.ndarray = eqx.field(repr=False)
     """:py:attr:`data`, transformed onto the padded grid. `None` whenever `_power_spectrum` is."""
     _power_spectrum: jnp.ndarray = eqx.field(repr=False)
@@ -416,13 +434,15 @@ class CorrelatedObservation(Observation):
         correlation_function=None,
         mask=None,
         native_scale=None,
+        n_eff=None,
     ):
         """Create an observation with a correlated-noise Gaussian likelihood.
 
-        Provide the noise model either as `power_spectrum` (on the data grid) or as a measured
-        `correlation_function`; exactly one is required. In most cases it is easier to use
+        The noise model is given by the measured `correlation_function`; the power spectrum used by
+        the likelihood is derived from it. In most cases it is easier to use
         :py:meth:`from_observation` (for a coadd already on the desired grid) or
-        :py:meth:`from_resampling` (to resample the data here).
+        :py:meth:`from_resampling` (to resample the data here), or :py:func:`stack_observations` to
+        combine several correlated observations that share a grid.
 
         Parameters
         ----------
@@ -430,9 +450,9 @@ class CorrelatedObservation(Observation):
             Observed data, 2D or 3D `(C, H, W)`.
         psf, wcs, channels, renderer, name:
             As for :py:class:`Observation`.
-        correlation_function: dict, optional
+        correlation_function: dict
             2D pixel correlation function keyed by integer `(dy, dx)` lag, as returned by
-            :py:func:`scarlet2.measure.correlation_function`.
+            :py:func:`scarlet2.measure.correlation_function`. Required.
         mask: array, optional
             Boolean array marking invalid pixels. Defaults to all-valid.
         native_scale: :py:class:`astropy.units.Quantity`, optional
@@ -440,9 +460,13 @@ class CorrelatedObservation(Observation):
             data sit on a grid finer than their true resolution (resampled by an upstream pipeline or by
             :py:meth:`from_resampling`). Only ``1 / (native_scale / pixel_scale) ** 2`` of the pixels are
             then independent, and chi^2 is restricted to the spatial frequencies the native sampling
-            supports. Requires `wcs`.
+            supports. Requires `wcs`. Mutually exclusive with `n_eff`.
+        n_eff: sequence of int, optional
+            Per-channel effective degrees of freedom, one entry per channel. Overrides the count
+            derived from `mask` and `native_scale`. Used by :py:func:`stack_observations` to carry
+            through the (possibly heterogeneous) counts of the stacked observations.
         """
-        assert correlation_function is not None
+        assert correlation_function is not None, "correlation_function is required"
         self.correlation_function = correlation_function
 
         data = jnp.asarray(data, dtype=float)
@@ -454,19 +478,28 @@ class CorrelatedObservation(Observation):
         variance = correlation_function[0, 0]
         weights = jnp.ones(data.shape) / variance[:, None, None] * ~self.mask
 
-        # effective degrees of freedom: every unmasked pixel, unless the data sit on a grid finer than
-        # their native resolution (`native_scale`). Then the noise covariance is rank-deficient and only
-        # 1 / oversampling^2 of the pixels carry independent information.
-        n_unmasked = int(data.size - jnp.sum(self.mask))
-        self.n_eff = n_unmasked
-        if native_scale is not None:
-            assert wcs is not None, "native_scale requires a wcs"
-            assert u.get_physical_type(native_scale) == "angle", (
-                "native_scale must be an astropy angle Quantity, e.g. 0.17 * u.arcsec"
+        # effective degrees of freedom, per channel: every unmasked pixel of the channel, unless the
+        # data sit on a grid finer than their native resolution (`native_scale`). Then the noise
+        # covariance is rank-deficient and only 1 / oversampling^2 of the pixels are independent.
+        n_unmasked = np.asarray(data.shape[-2] * data.shape[-1] - jnp.sum(self.mask, axis=(-2, -1)))
+        n_unmasked = n_unmasked.astype(int)  # (C,)
+        if n_eff is not None:
+            assert native_scale is None, "provide either n_eff or native_scale, not both"
+            assert len(n_eff) == data.shape[0], (
+                f"n_eff must have one entry per channel ({data.shape[0]}), got {len(n_eff)}"
             )
-            oversampling = float((native_scale / get_pixel_size(wcs)).to_value(u.dimensionless_unscaled))
-            if oversampling > 1.01:  # ignore a native scale within rounding of the delivered one
-                self.n_eff = max(1, round(n_unmasked / oversampling**2))
+            n_eff_per_channel = np.asarray(n_eff).astype(int)
+        else:
+            n_eff_per_channel = n_unmasked.copy()
+            if native_scale is not None:
+                assert wcs is not None, "native_scale requires a wcs"
+                assert u.get_physical_type(native_scale) == "angle", (
+                    "native_scale must be an astropy angle Quantity, e.g. 0.17 * u.arcsec"
+                )
+                oversampling = float((native_scale / get_pixel_size(wcs)).to_value(u.dimensionless_unscaled))
+                if oversampling > 1.01:  # ignore a native scale within rounding of the delivered one
+                    n_eff_per_channel = np.maximum(1, np.round(n_unmasked / oversampling**2)).astype(int)
+        self.n_eff = tuple(int(n) for n in n_eff_per_channel)
 
         self._power_spectrum = None
         self._data_fft = None
@@ -484,8 +517,10 @@ class CorrelatedObservation(Observation):
         covariance is rank-deficient: there are only as many independent noise values as unmasked pixels
         in the *original* observation. Using the pixel count there would dilute :py:meth:`goodness_of_fit`
         and the likelihood normalization by the surplus modes, which carry no information.
+
+        This is the sum of the per-channel :py:attr:`n_eff`.
         """
-        return self.n_eff
+        return sum(self.n_eff)
 
     def match(self, frame, renderer=None):
         """Construct the mapping between `frame` (from the model) and this observation frame
@@ -520,14 +555,22 @@ class CorrelatedObservation(Observation):
         # of freedom so that `goodness_of_fit` stays ~1 for a calibrated fit. Every retained mode
         # contributes on average `2` to chi^2 on the data grid, and `2 * n_pix / n_pad` on the padded
         # grid (where the padded power spectrum is normalized by the data pixel count, not `n_pad`).
+        # The count is per channel: a stacked observation can mix full-rank and resampled channels.
+        n_eff = np.asarray(self.n_eff)
+        n_unmasked = np.asarray(
+            self.data.shape[-2] * self.data.shape[-1] - jnp.sum(self.mask, axis=(-2, -1))
+        ).astype(int)
+        n_modes = int(power_spectrum.shape[-2] * power_spectrum.shape[-1])
         mode_mask = None
-        if self.n_eff < int(self.data.size - jnp.sum(self.mask)):
+        if np.any(n_eff < n_unmasked):
             n_pix = int(np.prod(self.data.shape[-2:]))
             if data_fft is not None:  # padded FFT path
-                n_keep = round(self.n_eff * int(np.prod(fft_shape[-2:])) / (2 * n_pix))
-                mode_mask = _informative_mode_mask(power_spectrum, n_keep)
+                n_keep = np.round(n_eff * int(np.prod(fft_shape[-2:])) / (2 * n_pix)).astype(int)
             else:
-                mode_mask = _informative_mode_mask(power_spectrum, round(self.n_eff / 2))
+                n_keep = np.round(n_eff / 2).astype(int)
+            # full-rank channels keep every mode
+            n_keep = np.where(n_eff < n_unmasked, n_keep, n_modes)
+            mode_mask = _informative_mode_mask(power_spectrum, n_keep)
         object.__setattr__(self, "_mode_mask", mode_mask)
 
     def _chisquare(self, model):
@@ -797,14 +840,33 @@ def _align_boxes(observations, model_frame):
     return boxes
 
 
-def _stack_channel_arrays(observations, boxes, model_box):
-    """Pad/trim each observation's `data` and `weights` to `model_box` and concatenate over channels."""
-    data_stack, weight_stack = [], []
-    for obs, box in zip(observations, boxes, strict=True):
-        empty = jnp.zeros((obs.frame.C,) + model_box.shape)
-        data_stack.append(insert_into(empty, obs.data, box))
-        weight_stack.append(insert_into(empty, obs.weights, box))
-    return jnp.concatenate(data_stack, axis=0), jnp.concatenate(weight_stack, axis=0)
+def _pad_to_model(arrays, boxes, model_box, fill=0.0):
+    """Pad/trim each `(C, h, w)` array to `model_box` (filling new pixels with `fill`), concatenate."""
+    out = []
+    for arr, box in zip(arrays, boxes, strict=True):
+        full = jnp.full((box.shape[0],) + model_box.shape, fill, dtype=arr.dtype)
+        out.append(insert_into(full, arr, box))
+    return jnp.concatenate(out, axis=0)
+
+
+def _stack_correlation_function(observations):
+    """Merge the per-channel correlation-function dicts along the channel axis.
+
+    A lag measured by only some of the observations is filled with zero for the others: their
+    correlations are taken to vanish past the largest lag they were measured to, which is the same
+    truncation assumption that the individual measurements already make.
+    """
+    keys = set()
+    for obs in observations:
+        keys.update(obs.correlation_function)
+    stacked = {}
+    for key in keys:
+        parts = [
+            obs.correlation_function[key] if key in obs.correlation_function else jnp.zeros(obs.frame.C)
+            for obs in observations
+        ]
+        stacked[key] = jnp.concatenate(parts, axis=0)
+    return stacked
 
 
 def _stack_psf(observations):
@@ -843,9 +905,10 @@ def stack_observations(observations, model_frame, name=None):
     as extra channels of one observation. Rendering then vectorizes over all channels at once
     instead of looping over observations (see :issue:`287`).
 
-    The :py:attr:`~scarlet2.Observation.data`, :py:attr:`~scarlet2.Observation.weights` and PSF of
-    each observation are padded (with zero weight) or trimmed to the spatial extent of `model_frame`
-    and concatenated along the channel axis; the channel lists are concatenated as well.
+    The ``data``, PSF and (for :py:class:`~scarlet2.CorrelatedObservation`) ``mask`` and
+    ``correlation_function`` of each observation are padded (marking the new pixels invalid) or
+    trimmed to the spatial extent of `model_frame` and concatenated along the channel axis; the
+    channel lists are concatenated as well.
 
     Parameters
     ----------
@@ -888,7 +951,7 @@ def stack_observations(observations, model_frame, name=None):
     )
 
     boxes = _align_boxes(observations, model_frame)
-    data, weights = _stack_channel_arrays(observations, boxes, model_box)
+    data = _pad_to_model([obs.data for obs in observations], boxes, model_box)
     psf = _stack_psf(observations)
 
     if name is None:
@@ -896,11 +959,23 @@ def stack_observations(observations, model_frame, name=None):
         name = " + ".join(names) if names else ""
 
     if types == {CorrelatedObservation}:
-        raise NotImplementedError(
-            "stack_observations() does not support CorrelatedObservation yet; the noise power "
-            "spectra have to be combined on the model grid first"
+        # the padded pixels carry no data, hence no correlation: mark them invalid and let the
+        # per-channel `n_eff` (carried through unchanged) and the derived power spectrum handle it
+        mask = _pad_to_model([obs.mask for obs in observations], boxes, model_box, fill=True)
+        correlation_function = _stack_correlation_function(observations)
+        n_eff = tuple(int(n) for obs in observations for n in obs.n_eff)
+        return CorrelatedObservation(
+            data,
+            psf=psf,
+            wcs=model_frame.wcs,
+            channels=channels,
+            correlation_function=correlation_function,
+            mask=mask,
+            n_eff=n_eff,
+            name=name,
         )
 
+    weights = _pad_to_model([obs.weights for obs in observations], boxes, model_box)
     return Observation(data, weights, psf=psf, wcs=model_frame.wcs, channels=channels, name=name)
 
 
