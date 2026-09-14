@@ -816,25 +816,32 @@ class CorrelatedObservation(Observation):
         )
 
 
+def _shares_grid(obs, model_frame):
+    """Whether `obs` samples the same pixel grid as `model_frame`
+
+    True if the observation's WCS has the same affine matrix as the model frame and sits at an
+    integer pixel offset from it, i.e. it can be placed into the model frame without resampling.
+    """
+    if not jnp.allclose(get_affine(obs.frame.wcs), get_affine(model_frame.wcs)):
+        return False
+    ref_pixel = jnp.array(obs.frame.bbox.spatial.origin)
+    shift = model_frame.get_pixel(obs.frame.get_sky_coord(ref_pixel)) - ref_pixel
+    return bool(jnp.allclose(shift, jnp.round(shift), atol=1e-3))
+
+
 def _align_boxes(observations, model_frame):
     """Integer placement box of each observation within `model_frame`, in `(C, H, W)` layout.
 
-    Also enforces that no observation needs resampling: every one must share the model frame's WCS
-    matrix and sit at an integer pixel offset from it.
+    Every observation must already share the model frame's grid, see :py:func:`_shares_grid`.
     """
-    m_model = get_affine(model_frame.wcs)
     boxes = []
     for obs in observations:
-        assert jnp.allclose(get_affine(obs.frame.wcs), m_model), (
-            f"Observation '{obs.name}' has a different WCS matrix than the model frame; "
+        assert _shares_grid(obs, model_frame), (
+            f"Observation '{obs.name}' does not share the model frame's pixel grid; "
             "stacking would require resampling"
         )
         ref_pixel = jnp.array(obs.frame.bbox.spatial.origin)
         shift = model_frame.get_pixel(obs.frame.get_sky_coord(ref_pixel)) - ref_pixel
-        assert jnp.allclose(shift, jnp.round(shift), atol=1e-3), (
-            f"Observation '{obs.name}' is offset from the model frame by a non-integer number "
-            f"of pixels ({shift}); stacking would require resampling"
-        )
         origin = tuple(int(round(float(s))) for s in shift)
         boxes.append(Box((obs.frame.C,) + obs.frame.bbox.spatial.shape, origin=(0,) + origin))
     return boxes
@@ -898,12 +905,20 @@ def _stack_psf(observations):
 
 
 def stack_observations(observations, model_frame, name=None):
-    """Stack observations that share a pixel grid into a single one
+    """Stack observations into a single one on the grid of `model_frame`
 
-    Observations from different instruments or epochs that sample the *same* sky pixel grid (the
-    same WCS orientation and scale as `model_frame`, up to an integer pixel offset) can be treated
-    as extra channels of one observation. Rendering then vectorizes over all channels at once
-    instead of looping over observations (see :issue:`287`).
+    Observations from different instruments or epochs can be treated as extra channels of one
+    observation. Rendering then vectorizes over all channels at once instead of looping over
+    observations (see :issue:`287`).
+
+    Any observation that does not already sample the same sky pixel grid as `model_frame` (the same
+    WCS orientation and scale, up to an integer pixel offset) is first resampled onto it via
+    :py:meth:`CorrelatedObservation.from_resampling`, which turns it into a
+    :py:class:`~scarlet2.CorrelatedObservation`. If that makes even one input observation correlated
+    (because it was passed in that way, or because it needed resampling), every other observation is
+    promoted to a :py:class:`~scarlet2.CorrelatedObservation` as well, via
+    :py:meth:`CorrelatedObservation.from_observation`, so that they can all be concatenated as one
+    consistent noise model.
 
     The ``data``, PSF and (for :py:class:`~scarlet2.CorrelatedObservation`) ``mask`` and
     ``correlation_function`` of each observation are padded (marking the new pixels invalid) or
@@ -913,9 +928,8 @@ def stack_observations(observations, model_frame, name=None):
     Parameters
     ----------
     observations: list of :py:class:`~scarlet2.Observation`
-        Observations to stack. They must match `model_frame` without resampling, must all carry a
-        PSF, must all be of the same type (all :py:class:`~scarlet2.Observation` or all
-        :py:class:`~scarlet2.CorrelatedObservation`), and their channels must be mutually distinct.
+        Observations to stack. They must all carry a PSF, and their channels must be mutually
+        distinct.
     model_frame: :py:class:`~scarlet2.Frame`
         Frame defining the common spatial grid, typically :py:attr:`scarlet2.Scene.frame`.
     name: str, optional
@@ -925,21 +939,33 @@ def stack_observations(observations, model_frame, name=None):
     -------
     :py:class:`~scarlet2.Observation` or :py:class:`~scarlet2.CorrelatedObservation`
         A single observation on the spatial grid of `model_frame`, with as many channels as all
-        `observations` combined. The return type matches the type of the inputs.
+        `observations` combined. :py:class:`~scarlet2.CorrelatedObservation` unless every input is a
+        plain :py:class:`~scarlet2.Observation` that already shares the grid of `model_frame`.
     """
     if not hasattr(observations, "__iter__"):
         observations = (observations,)
     observations = list(observations)
     assert len(observations) > 0, "Need at least one observation to stack"
-
-    types = {type(obs) for obs in observations}
-    assert types in ({Observation}, {CorrelatedObservation}), (
-        "stack_observations() requires all observations to be of the same type, either "
-        f"Observation or CorrelatedObservation; got {sorted(t.__name__ for t in types)}"
-    )
     assert all(obs.frame.psf is not None for obs in observations), (
         "stack_observations() requires every observation to carry a PSF"
     )
+
+    # resample every observation that doesn't already sit on model_frame's pixel grid
+    observations = [
+        obs if _shares_grid(obs, model_frame) else CorrelatedObservation.from_resampling(obs, model_frame)
+        for obs in observations
+    ]
+
+    # a correlated noise model (whether passed in or produced by resampling) cannot be mixed with a
+    # plain, independent-noise one: promote every remaining plain observation to match
+    if any(isinstance(obs, CorrelatedObservation) for obs in observations):
+        observations = [
+            obs if isinstance(obs, CorrelatedObservation) else CorrelatedObservation.from_observation(obs)
+            for obs in observations
+        ]
+
+    # both promotion steps above ensure every observation is now the same class
+    is_correlated = isinstance(observations[0], CorrelatedObservation)
 
     model_box = model_frame.bbox.spatial
     assert model_box.origin == (0, 0), "model_frame spatial box must have origin (0, 0)"
@@ -958,7 +984,7 @@ def stack_observations(observations, model_frame, name=None):
         names = [obs.name for obs in observations if obs.name]
         name = " + ".join(names) if names else ""
 
-    if types == {CorrelatedObservation}:
+    if is_correlated:
         # the padded pixels carry no data, hence no correlation: mark them invalid and let the
         # per-channel `n_eff` (carried through unchanged) and the derived power spectrum handle it
         mask = _pad_to_model([obs.mask for obs in observations], boxes, model_box, fill=True)
