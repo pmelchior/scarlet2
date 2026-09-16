@@ -308,14 +308,18 @@ class Parameters(dict):
         parameter_registry[key] = self
         Parameterization.parameters = None
 
-        # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
-        from .validation_utils import VALIDATION_SWITCH
+        # (re)-import `VALIDATION_MODE` at runtime to avoid using a static/old value
+        from .validation_utils import VALIDATION_MODE
 
-        if VALIDATION_SWITCH:
+        if VALIDATION_MODE != "off":
             from .validation import check_parameters
 
             validation_results = check_parameters(self)
-            print_validation_results("Parameters validation results", validation_results)
+            print_validation_results(
+                "Parameters validation results",
+                validation_results,
+                verbose=VALIDATION_MODE == "verbose",
+            )
 
     def __repr__(self):
         # equinox-like formatting

@@ -1,7 +1,6 @@
 sphinx-issues
 myst-nb
 sphinx-book-theme
-ipywidgets
 corner
 arviz
 galaxygrad >= 0.3.0

@@ -56,14 +56,18 @@ class Observation(Module):
         self.renderer = renderer
         self.name = name if name is not None else ""
 
-        # (re)-import `VALIDATION_SWITCH` at runtime to avoid using a static/old value
-        from .validation_utils import VALIDATION_SWITCH
+        # (re)-import `VALIDATION_MODE` at runtime to avoid using a static/old value
+        from .validation_utils import VALIDATION_MODE
 
-        if VALIDATION_SWITCH:
+        if VALIDATION_MODE != "off":
             from .validation import check_observation
 
             validation_results = check_observation(self)
-            print_validation_results("Observation validation results", validation_results)
+            print_validation_results(
+                "Observation validation results",
+                validation_results,
+                verbose=VALIDATION_MODE == "verbose",
+            )
 
     @property
     def N(self):  # noqa: N802
