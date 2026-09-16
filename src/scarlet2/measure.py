@@ -577,6 +577,8 @@ def forced_photometry(scene, obs):
     array
         Array of the spectra, in the order of the sources in the scene
     """
+    # make sure obs has a suitable renderer
+    obs.check_set_renderer(scene.frame)
 
     # extract model for every source, assumes all sources are single components
     models = []

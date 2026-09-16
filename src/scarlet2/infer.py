@@ -454,6 +454,9 @@ def fit(
             validation_results = check_fit(scene_, obs)
             print_validation_results(f"Fit validation results for observation {obs.name}", validation_results)
 
+    if len(obs_) == 1:
+        obs_ = obs_[0]
+
     return scene_, obs_
 
 
