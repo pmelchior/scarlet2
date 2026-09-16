@@ -458,6 +458,9 @@ def fit(
                 verbose=VALIDATION_MODE == "verbose",
             )
 
+    if len(obs_) == 1:
+        obs_ = obs_[0]
+
     return scene_, obs_
 
 

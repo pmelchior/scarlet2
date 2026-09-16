@@ -237,8 +237,10 @@ class ConvolutionTransformation(Transformation):
     @property
     def _phase_factor(self):
         # apply shift to frequencies in Fourier space
+        # check if shift is a model itself
+        shift = self.shift() if isinstance(self.shift, Module) else self.shift
         # self.shift is either (2,) for a common shift or (C, 2) for per-channel shifts, in (y, x) convention
-        shift = jnp.atleast_2d(self.shift)  # (n, 2), n in {1, C}
+        shift = jnp.atleast_2d(shift)  # (n, 2), n in {1, C}
         phase = jnp.einsum("yxi,ni->nyx", self._kcoords_out, shift)  # (n, fy, fx)
         return jnp.exp(-1j * 2 * jnp.pi * phase)
 

@@ -9,6 +9,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from .module import Module
+
 
 ### Interpolant class
 class Interpolant(eqx.Module):
@@ -402,6 +404,8 @@ def resample_fourier(
 
     # apply shift
     if shift is not None:
+        # check if shift is a model itself
+        shift_ = shift() if isinstance(shift, Module) else shift
         # shift is either (2,) for a common shift or (C, 2) for per-channel shifts, in (y, x) convention
         shift_ = jnp.atleast_2d(shift)[:, ::-1]  # x,y needed here; (n, 2), n in {1, C}
         pfac = jnp.exp(-1j * 2 * jnp.pi * jnp.einsum("yxi,ni->nyx", kcoords_out, shift_))

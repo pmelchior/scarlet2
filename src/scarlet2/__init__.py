@@ -50,7 +50,7 @@ from .morphology import (
     SersicMorphology,
     StarletMorphology,
 )
-from .observation import CorrelatedObservation, Observation
+from .observation import CorrelatedObservation, Observation, stack_observations
 from .psf import PSF, ArrayPSF, GaussianPSF
 from .scene import Scene
 from .source import Component, DustComponent, PointSource, Source
@@ -93,6 +93,7 @@ __all__ = [
     "StarletMorphology",
     "StaticArraySpectrum",
     "TransientArraySpectrum",
+    "stack_observations",
     "relative_step",
     "set_validation",
 ]

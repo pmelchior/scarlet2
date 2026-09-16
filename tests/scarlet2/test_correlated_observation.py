@@ -9,8 +9,8 @@ Each check builds a noise model from blank sky, then evaluates the reduced chi^2
 many noise realizations, for:
 
 * **hi-res**: ``from_observation`` -- correlation function -> power spectrum, no resampling
-* **lo-res**: ``from_resampling(..., compute_power_spectrum=True)`` -- a low-resolution observation
-  upsampled onto the finer model grid, generative power spectrum
+* **lo-res**: ``from_resampling`` -- a low-resolution observation
+  upsampled onto the finer model grid, measured correlation function
 * **joint**: both together
 * **delivered pre-resampled**: data that arrived already resampled onto a finer grid, so only
   ``from_observation`` is available -- with and without the ``native_scale`` hint
@@ -18,7 +18,7 @@ many noise realizations, for:
 For every path we report two numbers:
 
 * ``chi2 / n_eff`` -- normalized by the effective number of degrees of freedom
-  (:py:attr:`CorrelatedObservation.n_eff`)
+  (:py:attr:`CorrelatedObservation.N`)
 * ``chi2 / n_pix`` -- normalized by the raw pixel count
 
 and each is measured for a residual that is exactly the modeled noise (*pure noise*,
@@ -107,7 +107,7 @@ def _reduced_chi2(co, data_list, model):
     for data in data_list:
         co_i = eqx.tree_at(lambda o: o.data, co, jnp.asarray(data, dtype=float))
         co_i._match_power_spectrum()  # refresh cached padded spectrum / data FFT for the new data
-        out.append(float(co_i.goodness_of_fit(model)) * co.n_eff)
+        out.append(float(co_i.goodness_of_fit(model)) * co.N)
     return np.array(out)
 
 
@@ -166,7 +166,9 @@ def paths():
         channels=["v"],
     )
     lo_corr = CorrelatedObservation.from_resampling(
-        lo_blank, model_frame, resample_psf=True, compute_power_spectrum=True, n_realizations=N_MODEL
+        lo_blank,
+        model_frame,
+        resample_psf=True,
     )
     lo_corr.match(model_frame)
 
@@ -198,7 +200,7 @@ def test_hires_correlation_function_path(paths):
 
     pure = _reduced_chi2(p["hi_corr"], [n[None] for n in noise], jnp.zeros_like(p["truth"]))
     with_source = _reduced_chi2(p["hi_corr"], [p["hi_signal"] + n[None] for n in noise], p["truth"])
-    n_eff = p["hi_corr"].n_eff
+    n_eff = p["hi_corr"].N
     _report("hi-res  (correlation function -> power spectrum)", n_eff, p["n_pix"], pure, with_source)
 
     # realistic short-range correlations: this path is well calibrated and full rank
@@ -218,8 +220,10 @@ def test_resampled_lowres_power_spectrum_path(paths):
 
     pure = _reduced_chi2(p["lo_corr"], pure_data, jnp.zeros_like(p["truth"]))
     with_source = _reduced_chi2(p["lo_corr"], src_data, p["truth"])
-    n_eff = p["lo_corr"].n_eff
-    _report("lo-res  (resampled power spectrum, resample_psf=True)", n_eff, p["n_pix"], pure, with_source)
+    n_eff = p["lo_corr"].N
+    _report(
+        "lo-res  (resampled correlation function, resample_psf=True)", n_eff, p["n_pix"], pure, with_source
+    )
 
     # _chisquare masks out the rank-deficient surplus band, so chi2/n_eff is calibrated to ~1
     assert 0.85 < pure.mean() / n_eff < 1.2
@@ -238,8 +242,8 @@ def test_joint(paths):
     hi_data = [p["hi_signal"] + n[None] for n in hi_noise]
     lo_data = [np.asarray(up(jnp.asarray(p["ref_lo"] + w))) for w in whites]
 
-    ne_h = p["hi_corr"].n_eff
-    ne_l = p["lo_corr"].n_eff
+    ne_h = p["hi_corr"].N
+    ne_l = p["lo_corr"].N
     chi2_h = _reduced_chi2(p["hi_corr"], hi_data, p["truth"])
     chi2_l = _reduced_chi2(p["lo_corr"], lo_data, p["truth"])
     joint = (chi2_h + chi2_l) / (ne_h + ne_l)
@@ -287,15 +291,15 @@ def test_delivered_pre_resampled(paths):
 
     print(
         f"\ndelivered pre-resampled (correlation function only)"
-        f"\n  n_eff:  naive = {co_naive.n_eff}   with native_scale = {co.n_eff}"
-        f"\n  reduced chi2:  naive = {naive.mean() / co_naive.n_eff:.2f}"
-        f"   with native_scale = {good.mean() / co.n_eff:.3f} +- {good.std(ddof=1) / np.sqrt(len(good)) / co.n_eff:.3f}"
+        f"\n  n_eff:  naive = {co_naive.N}   with native_scale = {co.N}"
+        f"\n  reduced chi2:  naive = {naive.mean() / co_naive.N:.2f}"
+        f"   with native_scale = {good.mean() / co.N:.3f} +- {good.std(ddof=1) / np.sqrt(len(good)) / co.N:.3f}"
     )
 
-    assert co.n_eff < co_naive.n_eff  # native_scale reduced the DOF count
+    assert co.N < co_naive.N  # native_scale reduced the DOF count
     assert co._mode_mask is not None
-    assert naive.mean() / co_naive.n_eff > 5.0  # naive is badly off
-    assert 0.8 < good.mean() / co.n_eff < 1.3  # native_scale restores calibration
+    assert naive.mean() / co_naive.N > 5.0  # naive is badly off
+    assert 0.8 < good.mean() / co.N < 1.3  # native_scale restores calibration
 
 
 def test_from_resampling_masks_sources(paths):
@@ -336,7 +340,7 @@ def test_from_resampling_masks_sources(paths):
         co_i._match_power_spectrum()
         out.append(float(co_i.goodness_of_fit(z)))
     c_src = float(np.mean(out))
-    xi00 = float(np.asarray(jnp.fft.irfft2(co_src.power_spectrum, s=(NF, NF))[..., 0, 0]).ravel()[0])
+    xi00 = float(np.asarray(jnp.fft.irfft2(co_src._power_spectrum, s=(NF, NF))[..., 0, 0]).ravel()[0])
     print(f"\nfrom_resampling source masking:  chi2/n_eff = {c_src:.3f}   per-pixel variance = {xi00:.3f}")
 
     # a 40-sigma source leaking into the correlation function would blow up the per-pixel variance
