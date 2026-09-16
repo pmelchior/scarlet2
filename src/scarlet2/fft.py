@@ -171,7 +171,7 @@ def _kspace_op(image, kernel, f, padding=3, axes=None, fft_shape=None, return_ff
     return image_
 
 
-def _get_fast_shape(im_or_shape1, im_or_shape2, axes=None, padding=3, max_shape=False):
+def _get_fast_shape(im_or_shape1, im_or_shape2, axes=None, padding=3, max_shape=True):
     """Return the fast fft shapes for each spatial axis
 
     Calculate the fast fft shape for each dimension in
