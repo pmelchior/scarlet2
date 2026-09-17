@@ -67,14 +67,16 @@ In addition, we can now interface with deep learning methods. In particular, we 
 data-driven priors, which helps break the degeneracies that arise when multiple components need to be
 fit at the same time.
 
-### Constraints
+### Constraints and Priors
 
 _scarlet1_ uses constrained optimization to help with fitting degeneracies, but that requires non-standard
 (namely proximal) optimization because these constraints are not differentiable.
-That can lead to problems with calibration, but, more importantly, it prevents the use of gradient-based
-optimization or sampling. As a result, we could never calculate errors for _scarlet1_ models.
-**_scarlet2_ uses only constraints that can be differentiated.** It supports any continuous optimization or sampling
-method, including error estimates.
+That can lead to problems with convergence, but, more importantly, it prevents the use of gradients on the 
+constrained objective function. As a result, we could never calculate errors for _scarlet1_ models.
+**_scarlet2_ uses only constraints that can be differentiated.**
+
+_scarlet2_ also permit differentiable priors on all parameters,  so that one can express Bayesian posterior as
+the objective for sampling, optimization, and error estimation.
 
 ## Ideas, Questions or Problems?
 
