@@ -27,6 +27,7 @@ dependencies = [
     "optax",
     "numpyro",
     "h5py",
+    "ipywidgets",
     "colorama",
 ]
 
