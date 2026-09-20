@@ -70,7 +70,7 @@ def best_box_moments(obs, center_pix, sizes=[11, 17, 25, 35, 47, 61, 77], min_sn
     moments = []
     for i in range(len(sizes)):
         box2d = Box((sizes[i], sizes[i]))
-        box2d.set_center(center_pix.astype(int))
+        box2d.set_center(center_pix.round().astype(int))
 
         edge_pixels = _get_edge_pixels(obs.data, box2d)
         valid_edge_pixel = edge_pixels != 0
@@ -92,7 +92,7 @@ def best_box_moments(obs, center_pix, sizes=[11, 17, 25, 35, 47, 61, 77], min_sn
             spec_corr < min_corr or jnp.any(edge_spectrum > last_spectrum) or jnp.any(jnp.isnan(m.size))
         ):
             box2d = Box((sizes[i - 1], sizes[i - 1]))
-            box2d.set_center(center_pix.astype(int))
+            box2d.set_center(center_pix.round().astype(int))
             m = moments[-1]
             break
 
@@ -313,16 +313,24 @@ def from_gaussian_moments(
 
     # average box size across observations
     if frame.wcs is not None:
-        size = jnp.mean(
-            jnp.array(
-                [
-                    frame.u_to_pixel(obs.frame.pixel_to_angle(max(box.spatial.shape)))
-                    for (box, moments), obs in zip(boxes_moments, observations, strict=False)
-                ]
+        size = (
+            jnp.mean(
+                jnp.array(
+                    [
+                        frame.u_to_pixel(obs.frame.pixel_to_angle(max(box.spatial.shape)))
+                        for (box, moments), obs in zip(boxes_moments, observations, strict=False)
+                    ]
+                )
             )
-        ).astype(int)
+            .round()
+            .astype(int)
+        )
     else:
-        size = jnp.mean(jnp.array([max(box.spatial.shape) for box, moments in boxes_moments])).astype(int)
+        size = (
+            jnp.mean(jnp.array([max(box.spatial.shape) for box, moments in boxes_moments]))
+            .round()
+            .astype(int)
+        )
 
     # create morphology and evaluate at center
     morph = GaussianMorphology.from_moments(m, shape=(size, size))
@@ -400,7 +408,7 @@ def pixel_spectrum(obs, pos, correct_psf=False):
 
     assert isinstance(obs, Observation)
 
-    pixel = obs.frame.get_pixel(pos).astype(int)
+    pixel = obs.frame.get_pixel(pos).round().astype(int)
 
     if not obs.frame.bbox.spatial.contains(pixel):
         raise ValueError(f"Pixel coordinate expected, got {pixel}")
@@ -500,7 +508,7 @@ def _footprints_to_sources(obs, detect, footprints, catalog):
     obs.check_set_renderer(frame)
     # spatial differences
     jac, shift = get_relative_jacobian_shift(frame, obs.frame)
-    if not jnp.allclose(jnp.linalg.det(jac), 1) or not jnp.allclose(shift, shift.astype(int)):
+    if not jnp.allclose(jnp.linalg.det(jac), 1) or not jnp.allclose(shift, shift.round().astype(int)):
         warnings.warn(
             "hierarchical_sources does not support resampling. Align `obs` first!",
             stacklevel=2,
@@ -548,7 +556,7 @@ def _footprints_to_sources(obs, detect, footprints, catalog):
     if catalog is not None:
         for i, peak in enumerate(catalog):
             if footprints[i] is None:
-                pixel = peak.astype(int)
+                pixel = peak.round().astype(int)
                 spectrum = jnp.asarray(_images[:, pixel[0], pixel[1]])
                 spectrum = jnp.maximum(spectrum, 0)
                 if frame.channels != obs.frame.channels:
