@@ -25,7 +25,7 @@ dependencies = [
     "matplotlib",
     "varname",
     "optax",
-    "numpyro",
+    "numpyro<0.22", # 0.22 is so slow that the sampling notebook fails to execute: https://github.com/pmelchior/scarlet2/actions/runs/35525056334/job/106121960985
     "h5py",
     "ipywidgets",
     "colorama",
