@@ -763,6 +763,9 @@ def get_scene_samples(scene, uncertainties, samples=100, key=None):
     samples. Each sample is inserted back into `scene` to produce one
     self-consistent variant of the model.
 
+    Parameters that are not included in `scene` (e.g. observational parameters)
+    will be ignored.
+
     Parameters
     ----------
     scene : :py:class:`~scarlet2.Scene`
@@ -782,7 +785,12 @@ def get_scene_samples(scene, uncertainties, samples=100, key=None):
         in ``uncertainties`` substituted in.
     """
     # define normal distribution with parameter means from `scene` and stds from `uncertainties`
-    normals = {name: dist.Normal(scene.get(name), scale=uncertainties.get(name)) for name in uncertainties}
+    # because there can be parameters that are not from `scene` (e.g. observational parameters), we need to exclude those
+    normals = {
+        name: dist.Normal(scene.get(name), scale=uncertainties.get(name))
+        for name in uncertainties
+        if name in scene.parameters
+    }
     # if parameters are higher-dimensional, we need to declare these dimensions as event dim
     for name in normals:
         if jnp.ndim(scene.get(name)) > 1:
@@ -791,7 +799,7 @@ def get_scene_samples(scene, uncertainties, samples=100, key=None):
     # dictionary: parameter name -> sampled values
     if key is None:
         key = jax.random.PRNGKey(0)
-    samples = {name: normals[name].sample(key, sample_shape=(samples,)) for name in uncertainties}
+    samples = {name: normals[name].sample(key, sample_shape=(samples,)) for name in normals}
     # convert dict of lists to list of dicts
     samples = [dict(zip(samples, s, strict=False)) for s in zip(*samples.values(), strict=False)]
 
