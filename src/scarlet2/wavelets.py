@@ -1,6 +1,8 @@
 """Wavelet functions"""
 # from https://github.com/pmelchior/scarlet/blob/master/scarlet/wavelet.py
 
+import math
+
 import jax
 import jax.numpy as jnp
 
@@ -216,6 +218,49 @@ def starlet_reconstruction(starlets, generation=2, convolve2d=None, scales=None)
     return c
 
 
+def starlet_filter_norms(scales, levels=None, generation=2, convolve2d=None):
+    """Compute the L2 norms of the starlet analysis filters.
+
+    The starlet transform is linear, so white noise with standard deviation `sigma` in the image
+    yields coefficients at level `j` with standard deviation ``sigma * norms[j]``.
+    The norms are determined from the transform of a unit impulse.
+
+    Parameters
+    ----------
+    scales: int
+        The number of starlet scales, as in :py:func:`starlet_transform`.
+        The transform has `scales+1` levels, the last one being the coarse residual.
+    levels: list of int, optional
+        The levels (0 being the smallest) for which the norms are returned.
+        If `None`, all `scales+1` levels are returned.
+    generation: int
+        The generation of the transform.
+        This must be `1` or `2`. Default is `2`.
+    convolve2d: function
+        The filter function to use to convolve the image
+        with starlets in 2D.
+
+    Returns
+    -------
+    array
+        Filter norms for each of the requested `levels`.
+
+    Examples
+    --------
+    >>> norms = starlet_filter_norms(4)
+    >>> [round(float(n), 3) for n in norms]
+    [0.943, 0.23, 0.1, 0.049, 0.03]
+    """
+    # impulse image large enough that the widest filter (radius < 6 * 2**scales) is not truncated
+    n = 2 ** (scales + 4) + 1
+    delta = jnp.zeros((n, n)).at[n // 2, n // 2].set(1.0)
+    coeffs = starlet_transform(delta, scales=scales, generation=generation, convolve2d=convolve2d)
+    norms = jnp.sqrt(jnp.sum(coeffs**2, axis=(-2, -1)))
+    if levels is not None:
+        norms = norms[jnp.asarray(list(levels))]
+    return norms
+
+
 def get_multiresolution_support(
     image, starlets, sigma, K=3, epsilon=1e-1, max_iter=20, image_type="ground", rng_key=None
 ):
@@ -345,7 +390,7 @@ def get_scales(image_shape, scales=None):
         the image at all scales higher than `scales`.
     """
     # Number of levels for the Starlet decomposition
-    max_scale = int(jnp.log2(min(image_shape[-2:]))) - 1
+    max_scale = int(math.log2(min(image_shape[-2:]))) - 1
     if (scales is None) or scales > max_scale:
         scales = max_scale
     return int(scales)
