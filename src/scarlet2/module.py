@@ -591,10 +591,11 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
         """
         validation_results: list[ValidationResult] = []
         name, node, param = self.name, self.node, self.parameter
-        constraint_is_none = param.constraint is None
-        if not constraint_is_none:
-            is_feasible = param.constraint.check(node)
-        if param.constraint is not None and not is_feasible.all():
+        if param.constraint is None:
+            return validation_results
+        # constraint.check returns a python bool for python scalars
+        is_feasible = jnp.asarray(param.constraint.check(jnp.asarray(node)))
+        if not is_feasible.all():
             validation_results.append(
                 ValidationError(
                     f"Parameter {name} value is infeasible.",
