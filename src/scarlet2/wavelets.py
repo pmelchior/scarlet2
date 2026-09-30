@@ -200,18 +200,19 @@ def starlet_reconstruction(starlets, generation=2, convolve2d=None, scales=None)
     if convolve2d is None:
         convolve2d = bspline_convolve
 
-    # scales sorted in reverse order: from largest to smallest
+    # index of the coarse residual c_J
     max_scale = len(starlets) - 1
     if scales is None:
-        scales = tuple(max_scale - i for i in range(1, max_scale + 1))
-    else:
-        scales = sorted(tuple(scale for scale in scales if scale <= max_scale), reverse=True)
+        scales = range(max_scale + 1)
+    scales = set(scales)
 
-    # reconstruct: initialize from largest, go to smallest
-    c = starlets[scales[0]]
-    for j in scales[1:]:
-        cj = convolve2d(c, j)
-        c = cj + starlets[j]
+    # reconstruct: initialize from the coarse residual, go to smallest: c_j = H_j c_{j+1} + w_j
+    # the convolutions need to be applied at every scale, even when w_j is excluded
+    c = starlets[max_scale] if max_scale in scales else jnp.zeros_like(starlets[max_scale])
+    for j in range(max_scale - 1, -1, -1):
+        c = convolve2d(c, j)
+        if j in scales:
+            c = c + starlets[j]
     return c
 
 
