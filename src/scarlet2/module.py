@@ -87,8 +87,7 @@ class Module(eqx.Module):
         Examples
         --------
         >>> sersic = SersicMorphology(n=jnp.array(2.), size=jnp.array(2.), shape=morph.shape)
-        >>> def sersic_parameters(scene):
-        >>>     morph = scene.sources[0].morphology
+        >>> def sersic_parameters(morph):
         >>>     Parameter(morph.n, name="n:0", prior=dist.Uniform(0.5, 6))
         >>>     Parameter(morph.size, name="size:0", constraint=constraints.positive, stepsize=0.1)
         >>>
@@ -110,7 +109,7 @@ class Module(eqx.Module):
             if len(old_parameters):
                 new_parameters.remap(old_parameters, exclude=where)
             if parameters is not None:
-                parameters(new)
+                parameters(value)
         return new
 
     @property
