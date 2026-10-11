@@ -58,6 +58,60 @@ class Module(eqx.Module):
         # is_leaf=lambda x: x is None lets tree_at locate fields whose current value is None
         return eqx.tree_at(lambda x: getattr(x, name), self, replace=value, is_leaf=lambda x: x is None)
 
+    def replace_subtree(self, where, value, parameters=None):
+        """Replace the subtree `where(self)` with `value` and carry over all other parameters
+
+        Unlike :py:meth:`replace`, `value` does not need to have the same structure
+        as the subtree it replaces, e.g. an array morphology can be replaced by a
+        :py:class:`~scarlet2.SersicMorphology`. Parameters defined for this module
+        remain attached to the same nodes, except those inside the replaced subtree,
+        which are dropped.
+
+        Parameters
+        ----------
+        where: callable
+            Function `module -> node` that selects the subtree to replace, as in :py:func:`equinox.tree_at`
+        value: any
+            Replacement for the subtree. If this module has a `frame`, attributes of `value`
+            given in sky coordinates are converted to pixel coordinates of that frame.
+        parameters: callable, optional
+            Function `module -> None` that is called with the new module inside of a
+            :py:class:`~scarlet2.Parameters` context to define parameters for the replacement,
+            e.g. by calling :py:class:`~scarlet2.Parameter` on nodes of `value`.
+
+        Returns
+        -------
+        Module
+            The modified module.
+
+        Examples
+        --------
+        >>> sersic = SersicMorphology(n=jnp.array(2.), size=jnp.array(2.), shape=morph.shape)
+        >>> def sersic_parameters(morph):
+        >>>     Parameter(morph.n, name="n:0", prior=dist.Uniform(0.5, 6))
+        >>>     Parameter(morph.size, name="size:0", constraint=constraints.positive, stepsize=0.1)
+        >>>
+        >>> scene_ = scene.replace_subtree(lambda sc: sc.sources[0].morphology, sersic, sersic_parameters)
+
+        See Also
+        --------
+        :py:meth:`~scarlet2.Parameters.remap`
+        """
+        if hasattr(self, "frame"):
+            value = _to_pixels(self.frame, value)
+        new = eqx.tree_at(where, self, replace=value, is_leaf=lambda x: x is None)
+
+        old_parameters = self.parameters
+        if len(old_parameters) == 0 and parameters is None:
+            return new
+
+        with Parameters(new) as new_parameters:
+            if len(old_parameters):
+                new_parameters.remap(old_parameters, exclude=where)
+            if parameters is not None:
+                parameters(value)
+        return new
+
     @property
     def parameters(self):
         """Parameters defined for this module
@@ -178,6 +232,23 @@ def _sanitize_attr_name(name: str) -> str:
     if sanitized and sanitized[0].isdigit():
         sanitized = "_" + sanitized
     return sanitized
+
+
+def _leaf_paths(tree):
+    """Key paths of all leaves of `tree`, in the order of `jax.tree.leaves(tree)`"""
+    return [path for path, _ in jax.tree_util.tree_flatten_with_path(tree)[0]]
+
+
+class _Marker:
+    """Placeholder leaf to locate subtrees"""
+
+
+def _subtree_paths(tree, where):
+    """Key paths of the subtree(s) selected by `where(tree)`"""
+    marked = eqx.tree_at(where, tree, replace_fn=lambda _: _Marker(), is_leaf=lambda x: x is None)
+    return [
+        path for path, leaf in jax.tree_util.tree_flatten_with_path(marked)[0] if isinstance(leaf, _Marker)
+    ]
 
 
 class Parameter:
@@ -371,6 +442,63 @@ class Parameters(dict):
         self.pop(name, None)
         return self
 
+    def remap(self, other, exclude=None):
+        """Add parameters from `other` to this collection
+
+        Every parameter is stored with the index of its node in the leaves of its
+        :py:attr:`base`. If the structure of `base` changes, e.g. because a model
+        component is replaced by one of a different type, these indices are invalid.
+        This method matches nodes of `other.base` and :py:attr:`base` by their path
+        in the tree, so that every parameter of `other` refers to the node at the
+        same location in :py:attr:`base`. The :py:class:`~scarlet2.Parameter` instances
+        of `other` are reused without modification.
+
+        Note that nodes are matched by location, so parameters are associated with
+        the wrong nodes if elements are inserted into or removed from a list
+        (e.g. :py:attr:`~scarlet2.Scene.sources`).
+
+        Parameters
+        ----------
+        other: :py:class:`~scarlet2.Parameters`
+            Collection for a module with a (partially) matching structure
+        exclude: callable, optional
+            Function `other.base -> node` that selects subtree(s) whose parameters are not added,
+            as in :py:func:`equinox.tree_at`
+
+        Returns
+        -------
+        :py:class:`~scarlet2.Parameters`
+            This collection
+
+        Raises
+        ------
+        RuntimeError
+            If a parameter of `other` is not excluded and has no node at the same path in :py:attr:`base`
+
+        Examples
+        --------
+        >>> scene_ = eqx.tree_at(lambda sc: sc.sources[0].morphology, scene, sersic)
+        >>> with Parameters(scene_) as parameters:
+        >>>     parameters.remap(scene.parameters, exclude=lambda sc: sc.sources[0].morphology)
+        >>>     Parameter(scene_.sources[0].morphology.size, name="size:0", stepsize=0.1)
+
+        See Also
+        --------
+        :py:meth:`~scarlet2.Module.replace_subtree`
+        """
+        old_paths = _leaf_paths(other.base)
+        new_index = {path: idx for idx, path in enumerate(_leaf_paths(self.base))}
+        excluded = _subtree_paths(other.base, exclude) if exclude is not None else []
+
+        for name, (idx, parameter) in other.items():
+            path = old_paths[idx]
+            if any(path[: len(prefix)] == prefix for prefix in excluded):
+                continue
+            if path not in new_index:
+                raise RuntimeError(f"Parameter {name} not found in {self.base}")
+            self[name] = (new_index[path], parameter)
+        return self
+
 
 def relative_step(x, *args, factor=0.01, minimum=1e-6):
     """Step size set at `factor` times the norm of `x`
@@ -462,10 +590,11 @@ class ParameterValidator(metaclass=ValidationMethodCollector):
         """
         validation_results: list[ValidationResult] = []
         name, node, param = self.name, self.node, self.parameter
-        constraint_is_none = param.constraint is None
-        if not constraint_is_none:
-            is_feasible = param.constraint.check(node)
-        if param.constraint is not None and not is_feasible.all():
+        if param.constraint is None:
+            return validation_results
+        # constraint.check returns a python bool for python scalars
+        is_feasible = jnp.asarray(param.constraint.check(jnp.asarray(node)))
+        if not is_feasible.all():
             validation_results.append(
                 ValidationError(
                     f"Parameter {name} value is infeasible.",
