@@ -506,11 +506,10 @@ def _make_step(
 ):
     loss_fn = lambda values: _loss_fn(values, params, scene, observations, pair_cfg)
     (loss, (pair,)), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(values)
-    step = opt_state[1].count  # ScaleByScheduleState.count, 0-based
     updates, opt_state = optim.update(grads, opt_state, values)
     # apply per-parameter stepsizes; minus sign because we want gradient descent
     updates = jt.map(
-        lambda u, s, p: None if u is None else (-s(p, step) * u if callable(s) else -s * u),
+        lambda u, s, p: None if u is None else (-s(p) * u if callable(s) else -s * u),
         updates,
         steps,
         values,
