@@ -5,8 +5,9 @@ import jax.numpy as jnp
 import numpy as np
 
 from .bbox import Box, insert_into, overlap_slices
+from .channel import BAND
 from .fft import transform
-from .frame import Frame, get_affine, get_pixel_size
+from .frame import Frame, _common_channel_format, get_affine, get_pixel_size
 from .measure import correlation_function
 from .module import Module
 from .renderer import (
@@ -41,7 +42,17 @@ class Observation(Module):
     name: str
     """Name to describe the observation"""
 
-    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None, name=None):
+    def __init__(
+        self,
+        data,
+        weights,
+        psf=None,
+        wcs=None,
+        channels=None,
+        renderer=None,
+        name=None,
+        channel_format=BAND,
+    ):
         self.data = jnp.asarray(data, dtype=float)
         if self.data.ndim == 2:
             # add a channel dimension if it is missing
@@ -52,7 +63,7 @@ class Observation(Module):
             # add a channel dimension if it is missing
             self.weights = self.weights[None, ...]
 
-        self.frame = Frame(Box(self.data.shape), psf, wcs, channels=channels)
+        self.frame = Frame(Box(self.data.shape), psf, wcs, channels=channels, channel_format=channel_format)
         self.renderer = renderer
         self.name = name if name is not None else ""
 
@@ -439,6 +450,7 @@ class CorrelatedObservation(Observation):
         mask=None,
         native_scale=None,
         n_eff=None,
+        channel_format=BAND,
     ):
         """Create an observation with a correlated-noise Gaussian likelihood.
 
@@ -452,7 +464,7 @@ class CorrelatedObservation(Observation):
         ----------
         data: array
             Observed data, 2D or 3D `(C, H, W)`.
-        psf, wcs, channels, renderer, name:
+        psf, wcs, channels, renderer, name, channel_format:
             As for :py:class:`Observation`.
         correlation_function: dict
             2D pixel correlation function keyed by integer `(dy, dx)` lag, as returned by
@@ -508,7 +520,16 @@ class CorrelatedObservation(Observation):
         self._power_spectrum = None
         self._data_fft = None
         self._mode_mask = None
-        super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer, name=name)
+        super().__init__(
+            data,
+            weights,
+            psf=psf,
+            wcs=wcs,
+            channels=channels,
+            renderer=renderer,
+            name=name,
+            channel_format=channel_format,
+        )
         if self.renderer is not None:
             self._match_power_spectrum()
 
@@ -714,6 +735,7 @@ class CorrelatedObservation(Observation):
             renderer=renderer,
             correlation_function=xi,
             channels=obs.frame.channels,
+            channel_format=obs.frame.channel_format,
             name=obs.name,
             native_scale=native_scale,
         )
@@ -757,9 +779,21 @@ class CorrelatedObservation(Observation):
         :py:class:`CorrelatedObservation`
         """
         # reverse renderer without PSF corrections or channel filtering: obs grid -> to_frame grid
-        _obs_frame = Frame(obs.frame.bbox, psf=None, wcs=obs.frame.wcs, channels=obs.frame.channels)
+        _obs_frame = Frame(
+            obs.frame.bbox,
+            psf=None,
+            wcs=obs.frame.wcs,
+            channels=obs.frame.channels,
+            channel_format=obs.frame.channel_format,
+        )
         _new_box = obs.frame.bbox[:-2] @ to_frame.bbox.spatial
-        _model_frame = Frame(_new_box, psf=None, wcs=to_frame.wcs, channels=obs.frame.channels)
+        _model_frame = Frame(
+            _new_box,
+            psf=None,
+            wcs=to_frame.wcs,
+            channels=obs.frame.channels,
+            channel_format=obs.frame.channel_format,
+        )
         trafo = LanczosResamplingTranformation(_obs_frame, _model_frame, lanczos_order=lanczos_order)
         wcs = to_frame.wcs
         # the data's native resolution is the pre-resampling pixel scale
@@ -812,6 +846,7 @@ class CorrelatedObservation(Observation):
             psf=psf,
             wcs=wcs,
             channels=obs.frame.channels,
+            channel_format=obs.frame.channel_format,
             name=obs.name,
             renderer=None,
         )
@@ -980,6 +1015,8 @@ def stack_observations(observations, model_frame, name=None):
         f"Cannot stack observations with duplicate channels: got {channels}"
     )
 
+    channel_format = _common_channel_format(observations)
+
     boxes = _align_boxes(observations, model_frame)
     data = _pad_to_model([obs.data for obs in observations], boxes, model_box)
     psf = _stack_psf(observations)
@@ -999,6 +1036,7 @@ def stack_observations(observations, model_frame, name=None):
             psf=psf,
             wcs=model_frame.wcs,
             channels=channels,
+            channel_format=channel_format,
             correlation_function=correlation_function,
             mask=mask,
             n_eff=n_eff,
@@ -1006,7 +1044,15 @@ def stack_observations(observations, model_frame, name=None):
         )
 
     weights = _pad_to_model([obs.weights for obs in observations], boxes, model_box)
-    return Observation(data, weights, psf=psf, wcs=model_frame.wcs, channels=channels, name=name)
+    return Observation(
+        data,
+        weights,
+        psf=psf,
+        wcs=model_frame.wcs,
+        channels=channels,
+        channel_format=channel_format,
+        name=name,
+    )
 
 
 def chi_square_in_box_and_border(residuals, weights, bbox, border_width):
