@@ -54,7 +54,15 @@ from .morphology import (
 from .observation import CorrelatedObservation, Observation, stack_observations
 from .psf import PSF, ArrayPSF, GaussianPSF
 from .scene import Scene
-from .source import Component, DustComponent, PointSource, Source
+from .source import (
+    Component,
+    DustComponent,
+    MovingComponent,
+    MovingPointSource,
+    MovingSource,
+    PointSource,
+    Source,
+)
 from .spectrum import Spectrum, StaticArraySpectrum, TransientArraySpectrum
 from .validation_utils import set_validation
 from .wavelets import Starlet
@@ -82,6 +90,9 @@ __all__ = [
     "GaussianPSF",
     "Module",
     "Morphology",
+    "MovingComponent",
+    "MovingPointSource",
+    "MovingSource",
     "Observation",
     "PairSimilarity",
     "Parameter",

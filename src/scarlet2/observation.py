@@ -1057,20 +1057,26 @@ def chi_square_in_box_and_border(residuals, weights, bbox, border_width):
         source box`
     border_width: int
         width of the border around the source box
+
+    Returns
+    -------
+    tuple
+        Chi-square in the box and in the border. Both boxes are clipped to the extent of
+        `residuals`. If no pixels remain in the box or the border (e.g. if the source box covers
+        the entire image), the respective chi-square is `nan`.
     """
-    bbox_out = bbox.grow([0, border_width, border_width])
+    image_box = Box(residuals.shape)
+    bbox_in = bbox & image_box
+    bbox_out = bbox.grow([0, border_width, border_width]) & image_box
 
-    sub_res_in = jax.lax.dynamic_slice(residuals, bbox.start, bbox.shape)
-    sub_res_out = jax.lax.dynamic_slice(residuals, bbox_out.start, bbox_out.shape)
-    weights_in = jax.lax.dynamic_slice(weights, bbox.start, bbox.shape)
-    weights_out = jax.lax.dynamic_slice(weights, bbox_out.start, bbox_out.shape)
+    chi2_out = weights[bbox_out.slices] * residuals[bbox_out.slices] ** 2
+    # border: grown box without the source box, located relative to the grown box
+    border = np.ones(bbox_out.shape, dtype=bool)
+    border[(bbox_in - bbox_out.origin).slices] = False
 
-    border = jax.lax.dynamic_update_slice(
-        jnp.ones_like(sub_res_out), jnp.zeros_like(sub_res_in), (0, 3, 3)
-    ).astype("bool")
-
-    chi_square_box = (weights_in * (sub_res_in**2)).mean()
-    chi_square_border = (weights_out * (sub_res_out**2))[border].mean()
+    chi2_in = weights[bbox_in.slices] * residuals[bbox_in.slices] ** 2
+    chi_square_box = chi2_in.mean() if chi2_in.size else jnp.nan
+    chi_square_border = chi2_out[border].mean() if border.any() else jnp.nan
 
     return chi_square_box, chi_square_border
 
