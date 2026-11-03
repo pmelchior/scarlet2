@@ -8,7 +8,7 @@ import numpy as np
 
 from . import Scenery
 from .bbox import Box, overlap_slices
-from .channel import EPOCH, unique
+from .channel import EPOCH
 from .module import Module, _to_pixels
 from .morphology import Morphology
 from .spectrum import Spectrum
@@ -111,13 +111,15 @@ class MovingComponent(Component):
     its epoch. The slices are stacked into a 3D model, whose spatial bounding box
     is the union of the boxes of all epochs.
 
-    The epochs are taken from the `EPOCH` component of the model frame
-    :py:attr:`~scarlet2.Frame.channels`. If the channel format has no `EPOCH`, every
-    channel is treated as a separate epoch.
+    Without `epochs`, every channel has its own center. With `epochs`, the channels are
+    assigned to centers by the `EPOCH` component of the model frame
+    :py:attr:`~scarlet2.Frame.channels`, so that all channels of the same epoch share
+    the same center.
     """
 
-    epochs: tuple = eqx.field(static=True)
-    """Identifiers of the epochs, in the order of :py:attr:`center`"""
+    epochs: (tuple, None) = eqx.field(static=True)
+    """Identifiers of the epochs, in the order of :py:attr:`center`, or `None` if every
+    channel has its own center"""
     _epochindex: tuple = eqx.field(static=True, repr=False)
     _origins: tuple = eqx.field(static=True, repr=False)
     _box_centers: tuple = eqx.field(static=True, repr=False)
@@ -127,8 +129,8 @@ class MovingComponent(Component):
         Parameters
         ----------
         center: array, :py:class:`astropy.coordinates.SkyCoord`
-            Center positions, one for every epoch the moving object is present,
-            with shape `(N_epochs, 2)` in pixel coordinates of the model frame,
+            Center positions, one for every channel (if `epochs` is `None`) or one for every
+            epoch in `epochs`, with shape `(N, 2)` in pixel coordinates of the model frame,
             or as an array of astropy sky coordinates.
         spectrum: array, :py:class:`~scarlet2.Spectrum`
             The spectrum of the component, with one element for every channel of the model frame.
@@ -137,8 +139,9 @@ class MovingComponent(Component):
         bbox: :py:class:`~scarlet2.Box`, optional
             Ignored, the bounding box is determined from the centers of all epochs.
         epochs: list, optional
-            Identifiers of the epochs, in the order of `center`. If `None`, uses the unique
-            epochs of the model frame channels, in their order of appearance.
+            Identifiers of the epochs, in the order of `center`. Every epoch in the `EPOCH`
+            component of the model frame channels needs to be listed. If `None`, every
+            channel has its own center.
 
         Examples
         --------
@@ -168,16 +171,24 @@ class MovingComponent(Component):
         if spectrum.shape != (n_channels,):
             raise ValueError(f"Spectrum shape {spectrum.shape} does not match {n_channels} model channels")
 
-        channel_epochs = frame.channels.get_component(EPOCH)
-        if channel_epochs is None:
-            channel_epochs = list(range(n_channels))
-        epochs = unique(channel_epochs) if epochs is None else list(epochs)
-        if self.center.ndim != 2 or self.center.shape != (len(epochs), 2):
-            raise ValueError(
-                f"Center needs shape ({len(epochs)}, 2) for epochs {epochs}, got {self.center.shape}"
-            )
-        self.epochs = tuple(epochs)
-        self._epochindex = tuple(epochs.index(epoch) for epoch in channel_epochs)
+        if epochs is None:
+            # one center per channel
+            n_centers = n_channels
+            self.epochs = None
+            self._epochindex = tuple(range(n_channels))
+        else:
+            channel_epochs = frame.channels.get_component(EPOCH)
+            if channel_epochs is None:
+                raise ValueError(f"Channel format {frame.channels.format!r} of the model frame has no EPOCH")
+            epochs = list(epochs)
+            missing = [epoch for epoch in channel_epochs if epoch not in epochs]
+            if missing:
+                raise ValueError(f"Epochs {missing} of the model frame channels are not in {epochs}")
+            n_centers = len(epochs)
+            self.epochs = tuple(epochs)
+            self._epochindex = tuple(epochs.index(epoch) for epoch in channel_epochs)
+        if self.center.shape != (n_centers, 2):
+            raise ValueError(f"Center needs shape ({n_centers}, 2), got {self.center.shape}")
 
         # integer box of every epoch, same as for Component
         boxes = []
@@ -199,7 +210,7 @@ class MovingComponent(Component):
         if isinstance(self.morphology, Module):
             morphs = jax.vmap(lambda d: self.morphology(delta_center=d))(delta_center)
         else:
-            morphs = jnp.broadcast_to(self.morphology, (len(self.epochs), *self.morphology.shape))
+            morphs = jnp.broadcast_to(self.morphology, (len(self.center), *self.morphology.shape))
 
         # one 2D slice per channel, from the morphology of its epoch
         epochindex = np.array(self._epochindex)
@@ -381,15 +392,17 @@ class MovingSource(Source, MovingComponent):
         Parameters
         ----------
         center: array, :py:class:`astropy.coordinates.SkyCoord`
-            Center positions, one for every epoch, with shape `(N_epochs, 2)` in pixel
-            coordinates of the model frame, or as an array of astropy sky coordinates.
+            Center positions, one for every channel (if `epochs` is `None`) or one for every
+            epoch in `epochs`, with shape `(N, 2)` in pixel coordinates of the model frame,
+            or as an array of astropy sky coordinates.
         spectrum: array, :py:class:`~scarlet2.Spectrum`
             The spectrum of the source, with one element for every channel of the model frame.
         morphology: array, :py:class:`~scarlet2.Morphology`
             The morphology of the source, the same in all epochs.
         epochs: list, optional
-            Identifiers of the epochs, in the same order as `center`. If `None`, uses the unique
-            epochs of the model frame channels, in their order of appearance.
+            Identifiers of the epochs, in the order of `center`. Every epoch in the `EPOCH`
+            component of the model frame channels needs to be listed. If `None`, every
+            channel has its own center.
 
         Examples
         --------
@@ -410,12 +423,15 @@ class MovingPointSource(MovingSource):
         Parameters
         ----------
         center: array, :py:class:`astropy.coordinates.SkyCoord`
-            Center positions, one for every epoch, with shape `(N_epochs, 2)` in pixel
-            coordinates of the model frame, or as an array of astropy sky coordinates.
+            Center positions, one for every channel (if `epochs` is `None`) or one for every
+            epoch in `epochs`, with shape `(N, 2)` in pixel coordinates of the model frame,
+            or as an array of astropy sky coordinates.
         spectrum: array, :py:class:`~scarlet2.Spectrum`
             The spectrum of the point source, with one element for every channel of the model frame.
         epochs: list, optional
-            Identifiers of the epochs, in the order of `center`.
+            Identifiers of the epochs, in the order of `center`. Every epoch in the `EPOCH`
+            component of the model frame channels needs to be listed. If `None`, every
+            channel has its own center.
         """
         try:
             frame = Scenery.scene.frame
