@@ -21,7 +21,7 @@ class StaticArraySpectrum(Spectrum):
     """Static (non-variable) source in a transient scene
 
     In the frames of transient scenes, the attribute :py:attr:`~scarlet2.Frame.channels`
-    has a spectral and a temporal component, e.g. `channel_format=(BAND, EPOCH)`.
+    has a spectral and a temporal component, e.g. `Channels(..., (BAND, EPOCH))`.
     This class is for models that do not vary in time, i.e. only have a spectral dependency.
     The length of :py:attr:`data` is thus given by the number of distinct spectral bands.
     """
@@ -51,10 +51,10 @@ class StaticArraySpectrum(Spectrum):
 
         Examples
         --------
-        >>> from scarlet2 import BAND, EPOCH, Frame, Scene
+        >>> from scarlet2 import BAND, EPOCH, Channels, Frame, Scene
         >>> from scarlet2.bbox import Box
         >>> channels = [('G',0),('G',1),('R',0),('R',1),('R',2)]
-        >>> frame = Frame(Box((5, 10, 10)), channels=channels, channel_format=(BAND, EPOCH))
+        >>> frame = Frame(Box((5, 10, 10)), channels=Channels(channels, (BAND, EPOCH)))
         >>> with Scene(frame):
         ...     spectrum = StaticArraySpectrum(jnp.array([1., 2.]))
         >>> spectrum.bands
@@ -77,16 +77,16 @@ class StaticArraySpectrum(Spectrum):
             raise
 
         if band_selector is None:
-            channel_bands = frame.get_component(BAND)
+            channel_bands = frame.channels.get_component(BAND)
             if channel_bands is None:
-                raise ValueError(f"Channel format {frame.channel_format!r} of the model frame has no BAND")
+                raise ValueError(f"Channel format {frame.channels.format!r} of the model frame has no BAND")
         else:
             warn(
-                "`band_selector` is deprecated, use `channel_format` of the frame to define the bands",
+                "`band_selector` is deprecated, use `Channels` with a channel format to define the bands",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            channel_bands = [band_selector(c) for c in frame.channels]
+            channel_bands = [band_selector(c) for c in frame.channels.values]
         bands = unique(channel_bands) if bands is None else list(bands)
 
         assert len(data) == len(bands)
@@ -108,7 +108,7 @@ class TransientArraySpectrum(Spectrum):
     """Variable source in a transient scene with possible quiescent periods
 
     In the frames of transient scenes, the attribute :py:attr:`~scarlet2.Frame.channels`
-    has a spectral and a temporal component, e.g. `channel_format=(BAND, EPOCH)`. This class is for models that vary in time, especially
+    has a spectral and a temporal component, e.g. `Channels(..., (BAND, EPOCH))`. This class is for models that vary in time, especially
     if they have periods of inactivity. The length of :py:attr:`data` is given by the
     number of active channels in the model frame; calling this spectrum reinserts a
     zero for every inactive (quiescent) channel, so that the result matches the full
@@ -143,10 +143,10 @@ class TransientArraySpectrum(Spectrum):
 
         Examples
         --------
-        >>> from scarlet2 import BAND, EPOCH, Frame, Scene
+        >>> from scarlet2 import BAND, EPOCH, Channels, Frame, Scene
         >>> from scarlet2.bbox import Box
         >>> channels = [('G',0),('G',1),('R',0),('R',1),('R',2)]
-        >>> frame = Frame(Box((5, 10, 10)), channels=channels, channel_format=(BAND, EPOCH))
+        >>> frame = Frame(Box((5, 10, 10)), channels=Channels(channels, (BAND, EPOCH)))
         >>> with Scene(frame):
         ...     # one value per active (band, epoch) channel
         ...     spectrum = TransientArraySpectrum(jnp.ones(4), epochs=[0, 1])
@@ -174,18 +174,18 @@ class TransientArraySpectrum(Spectrum):
             is_active = [True] * len(frame.channels)
         else:
             if epoch_selector is None:
-                channel_epochs = frame.get_component(EPOCH)
+                channel_epochs = frame.channels.get_component(EPOCH)
                 if channel_epochs is None:
                     raise ValueError(
-                        f"Channel format {frame.channel_format!r} of the model frame has no EPOCH"
+                        f"Channel format {frame.channels.format!r} of the model frame has no EPOCH"
                     )
             else:
                 warn(
-                    "`epoch_selector` is deprecated, use `channel_format` of the frame to define the epochs",
+                    "`epoch_selector` is deprecated, use `Channels` with a channel format to define the epochs",
                     DeprecationWarning,
                     stacklevel=2,
                 )
-                channel_epochs = [epoch_selector(c) for c in frame.channels]
+                channel_epochs = [epoch_selector(c) for c in frame.channels.values]
             is_active = [epoch in epochs for epoch in channel_epochs]
         n_active = sum(is_active)
         assert len(data) == n_active

@@ -40,7 +40,7 @@ __citation__ = __bibtex__ = (Path(__file__).parent / "citation.bib").read_text()
 
 from . import constraint, detect, infer, init, measure, plot
 from .bbox import Box
-from .channel import BAND, EPOCH, ChannelType
+from .channel import BAND, EPOCH, Channel, Channels, ChannelType
 from .frame import Frame
 from .infer import PairSimilarity
 from .module import Module, Parameter, Parameters, relative_step
@@ -68,10 +68,15 @@ __all__ = [
     "measure",
     "plot",
     "ArrayPSF",
+    "BAND",
     "Box",
+    "Channel",
+    "Channels",
+    "ChannelType",
     "Component",
     "CorrelatedObservation",
     "DustComponent",
+    "EPOCH",
     "Frame",
     "GaussianMorphology",
     "GaussianPSF",

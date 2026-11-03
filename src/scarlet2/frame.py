@@ -6,7 +6,7 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 
 from .bbox import Box
-from .channel import BAND, check_channel_format, check_channels, get_component
+from .channel import Channels
 from .module import Module
 from .psf import PSF, ArrayPSF, GaussianPSF
 
@@ -17,14 +17,15 @@ class Frame(Module):
     This class combines all elements to determine how a piece of the sky will appear.
     It includes metadata about the spatial and spectral coverage and resolution.
 
-    The `channel_format` states what the identifiers in `channels` contain: a band (default), an epoch, or
-    a tuple of both, e.g.
+    The channels can be given as a list of band identifiers, or as :py:class:`~scarlet2.channel.Channels`,
+    which also identifies epochs, e.g.
 
-    >>> from scarlet2.channel import BAND, EPOCH
-    >>> frame = Frame(Box((3, 10, 10)), channels=[("g", 0), ("g", 1), ("r", 0)], channel_format=(BAND, EPOCH))
-    >>> frame.get_component(BAND)
+    >>> from scarlet2.channel import BAND, EPOCH, Channels
+    >>> channels = Channels([("g", 0), ("g", 1), ("r", 0)], (BAND, EPOCH))
+    >>> frame = Frame(Box((3, 10, 10)), channels=channels)
+    >>> frame.channels.get_component(BAND)
     ['g', 'g', 'r']
-    >>> frame.get_component(EPOCH)
+    >>> [c.epoch for c in frame.channels]
     [0, 1, 0]
 
     See :py:mod:`scarlet2.channel` for details.
@@ -36,12 +37,10 @@ class Frame(Module):
     """PSF of the frame"""
     wcs: astropy.wcs.WCS
     """WCS information of the frame"""
-    channels: list
+    channels: Channels = eqx.field(static=True)
     """Identifiers for the spectral (and temporal) elements"""
-    channel_format: object = eqx.field(static=True)
-    """Channel type, or tuple of channel types, contained in the identifiers of :py:attr:`channels`"""
 
-    def __init__(self, bbox, psf=None, wcs=None, channels=None, channel_format=BAND):
+    def __init__(self, bbox, psf=None, wcs=None, channels=None):
         self.bbox = bbox
         if isinstance(psf, (list, tuple, np.ndarray, jnp.ndarray)):
             psf = jnp.asarray(psf, dtype=float)
@@ -52,33 +51,13 @@ class Frame(Module):
         self.wcs = wcs
 
         if channels is None:
-            channels = list(range(bbox.shape[0]))
-        channel_format = check_channel_format(channel_format)
-        check_channels(channels, channel_format)
+            channels = range(bbox.shape[0])
+        if not isinstance(channels, Channels):
+            channels = Channels(channels)
         self.channels = channels
-        self.channel_format = channel_format
 
     def __hash__(self):
         return hash(self.bbox)
-
-    def get_component(self, kind):
-        """Get the component of type `kind` for every channel
-
-        Parameters
-        ----------
-        kind: :py:class:`~scarlet2.channel.ChannelType`
-            Type of the component, e.g. `BAND` or `EPOCH`
-
-        Returns
-        -------
-        list or None
-            Component of every channel, in the order of :py:attr:`channels`, or `None` if
-            :py:attr:`channel_format` does not contain `kind`
-        """
-        formats = self.channel_format if isinstance(self.channel_format, tuple) else (self.channel_format,)
-        if check_channel_format(kind) not in formats:
-            return None
-        return [get_component(c, self.channel_format, kind) for c in self.channels]
 
     @property
     def C(self) -> int:  # noqa: N802
@@ -221,18 +200,14 @@ class Frame(Module):
         if not hasattr(observations, "__iter__"):
             observations = (observations,)
 
-        channel_format = _common_channel_format(observations)
-
         # Array of pixel sizes for each observation
         pix_tab = []
         # Array of psf size for each psf of each observation
         small_psf_size = None
-        channels = []
-        # Create frame channels and find smallest and largest psf
+        # Concatenate all channels, requires the same channel format
+        channels = combine_channels(observations)
+        # Find smallest and largest psf
         for c, obs in enumerate(observations):
-            # Concatenate all channels
-            channels = channels + obs.frame.channels
-
             # concatenate all pixel sizes
             h_temp = get_pixel_size(obs.frame.wcs)
             if isinstance(h_temp, u.Quantity):
@@ -277,9 +252,7 @@ class Frame(Module):
 
         # Dummy frame for WCS computations
         model_shape = (len(channels), 0, 0)
-        model_frame = Frame(
-            Box(model_shape), channels=channels, psf=model_psf, wcs=model_wcs, channel_format=channel_format
-        )
+        model_frame = Frame(Box(model_shape), channels=channels, psf=model_psf, wcs=model_wcs)
 
         # Determine overlap of all observations in pixel coordinates of the model frame
         for c, obs in enumerate(observations):
@@ -304,13 +277,7 @@ class Frame(Module):
 
         # frame_origin = (0,) + model_box.origin
         frame_shape = (len(channels),) + model_box.shape
-        model_frame = Frame(
-            Box(shape=frame_shape),
-            channels=channels,
-            psf=model_psf,
-            wcs=model_wcs,
-            channel_format=channel_format,
-        )
+        model_frame = Frame(Box(shape=frame_shape), channels=channels, psf=model_psf, wcs=model_wcs)
 
         return model_frame
 
@@ -344,12 +311,18 @@ class Frame(Module):
         return {i: other_idx[c] for i, c in enumerate(self_channels) if c in other_idx}
 
 
-def _common_channel_format(observations):
-    # all observations need to have the same channel format to combine their channels
-    channel_formats = {obs.frame.channel_format for obs in observations}
-    if len(channel_formats) > 1:
-        raise ValueError(f"Observations need to have the same channel format, got {channel_formats}")
-    return channel_formats.pop()
+def combine_channels(observations):
+    """Concatenate the channels of all `observations`
+
+    Raises
+    ------
+    ValueError
+        If the observations have different channel formats
+    """
+    channels = None
+    for obs in observations:
+        channels = obs.frame.channels if channels is None else channels + obs.frame.channels
+    return channels
 
 
 def get_psf_size(psf):
