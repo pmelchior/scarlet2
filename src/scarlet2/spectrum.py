@@ -1,7 +1,10 @@
+from warnings import warn
+
 import equinox as eqx
 import jax.numpy as jnp
 
 from . import Scenery
+from .channel import BAND, EPOCH, unique
 from .module import Module
 
 
@@ -18,8 +21,7 @@ class StaticArraySpectrum(Spectrum):
     """Static (non-variable) source in a transient scene
 
     In the frames of transient scenes, the attribute :py:attr:`~scarlet2.Frame.channels`
-    are overloaded and defined with a spectral and a temporal component, e.g.
-    `channel = (band, epoch)`.
+    has a spectral and a temporal component, e.g. `Channels(..., (BAND, EPOCH))`.
     This class is for models that do not vary in time, i.e. only have a spectral dependency.
     The length of :py:attr:`data` is thus given by the number of distinct spectral bands.
     """
@@ -33,26 +35,32 @@ class StaticArraySpectrum(Spectrum):
     """Identifier for the list of unique bands in the model frame channels"""
     _channelindex: jnp.array = eqx.field(repr=False)
 
-    def __init__(self, data, bands, band_selector=lambda channel: channel[0]):
+    def __init__(self, data, bands=None, band_selector=None):
         """
         Parameters
         ----------
         data: array
             Spectrum without temporal variation. Contains as many elements as there
             are spectral channels in the model.
-        bands: list, array
-            Identifier for the list of unique bands in the model frame channels
+        bands: list, array, optional
+            Identifier for the list of unique bands in the model frame channels.
+            If `None`, uses the unique bands of the model frame channels, in their order of appearance.
         band_selector: callable, optional
-            Identify the spectral "band" component from the name/ID used in the
-            channels of the model frame
+            Deprecated: bands are taken from the `BAND` component of the model frame channels.
+            If set, identifies the spectral "band" component from a channel identifier.
 
         Examples
         --------
-        >>> # model channels: [('G',0),('G',1),('R',0),('R',1),('R',2)]
-        >>> spectrum = jnp.ones(2)
-        >>> bands = ['G','R']
-        >>> band_selector = lambda channel: channel[0]
-        >>> StaticArraySpectrum(spectrum, bands, band_selector=band_selector)
+        >>> from scarlet2 import BAND, EPOCH, Channels, Frame, Scene
+        >>> from scarlet2.bbox import Box
+        >>> channels = [('G',0),('G',1),('R',0),('R',1),('R',2)]
+        >>> frame = Frame(Box((5, 10, 10)), channels=Channels(channels, (BAND, EPOCH)))
+        >>> with Scene(frame):
+        ...     spectrum = StaticArraySpectrum(jnp.array([1., 2.]))
+        >>> spectrum.bands
+        ['G', 'R']
+        >>> spectrum()
+        Array([1., 1., 2., 2., 2.], dtype=float32)
 
         This constructs a 2-element spectrum to describe the spectral properties
         in all epochs 0,1,2.
@@ -68,10 +76,23 @@ class StaticArraySpectrum(Spectrum):
             print("Use 'with Scene(frame) as scene: Source(...)'")
             raise
 
+        if band_selector is None:
+            channel_bands = frame.channels.get_component(BAND)
+            if channel_bands is None:
+                raise ValueError(f"Channel format {frame.channels.format!r} of the model frame has no BAND")
+        else:
+            warn(
+                "`band_selector` is deprecated, use `Channels` with a channel format to define the bands",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            channel_bands = [band_selector(c) for c in frame.channels.values]
+        bands = unique(channel_bands) if bands is None else list(bands)
+
         assert len(data) == len(bands)
         self.data = data
         self.bands = bands
-        self._channelindex = jnp.array([self.bands.index(band_selector(c)) for c in frame.channels])
+        self._channelindex = jnp.array([self.bands.index(band) for band in channel_bands])
 
     def __call__(self):
         """What to run when the StaticArraySpectrum is called"""
@@ -87,8 +108,7 @@ class TransientArraySpectrum(Spectrum):
     """Variable source in a transient scene with possible quiescent periods
 
     In the frames of transient scenes, the attribute :py:attr:`~scarlet2.Frame.channels`
-    are overloaded and defined with a spectral and a temporal component, e.g.
-    `channel = (band, epoch)`. This class is for models that vary in time, especially
+    has a spectral and a temporal component, e.g. `Channels(..., (BAND, EPOCH))`. This class is for models that vary in time, especially
     if they have periods of inactivity. The length of :py:attr:`data` is given by the
     number of active channels in the model frame; calling this spectrum reinserts a
     zero for every inactive (quiescent) channel, so that the result matches the full
@@ -107,28 +127,31 @@ class TransientArraySpectrum(Spectrum):
     considered active"""
     _channelindex: jnp.array = eqx.field(repr=False)
 
-    def __init__(self, data, epochs=None, epoch_selector=lambda channel: channel[1]):
+    def __init__(self, data, epochs=None, epoch_selector=None):
         """
         Parameters
         ----------
         data: array
             Spectrum array, restricted to the active epochs. Contains as many elements
-            as there are spectro-temporal channels in the model for which
-            `epoch_selector(channel)` is in `epochs`.
+            as there are spectro-temporal channels in the model whose epoch is in `epochs`.
         epochs: list, array, optional
             List of temporal "epoch" identifiers for the active phases of the source.
             If `None`, all epochs are considered active.
         epoch_selector: callable, optional
-            Identify the temporal "epoch" component from the name/ID used in the
-            channels of the model frame
+            Deprecated: epochs are taken from the `EPOCH` component of the model frame channels.
+            If set, identifies the temporal "epoch" component from a channel identifier.
 
         Examples
         --------
-        >>> # model channels: [('G',0),('G',1),('R',0),('R',1),('R',2)]
-        >>> spectrum = jnp.ones(4)  # one value per active (band, epoch) channel
-        >>> epochs = [0, 1]
-        >>> epoch_selector = lambda channel: channel[1]
-        >>> TransientArraySpectrum(spectrum, epochs, epoch_selector=epoch_selector)
+        >>> from scarlet2 import BAND, EPOCH, Channels, Frame, Scene
+        >>> from scarlet2.bbox import Box
+        >>> channels = [('G',0),('G',1),('R',0),('R',1),('R',2)]
+        >>> frame = Frame(Box((5, 10, 10)), channels=Channels(channels, (BAND, EPOCH)))
+        >>> with Scene(frame):
+        ...     # one value per active (band, epoch) channel
+        ...     spectrum = TransientArraySpectrum(jnp.ones(4), epochs=[0, 1])
+        >>> spectrum()
+        Array([1., 1., 1., 1., 0.], dtype=float32)
 
         This defines a spectrum with one free parameter for every channel active
         during epochs 0 and 1, i.e. all but `('R',2)`. Calling this spectrum
@@ -147,7 +170,23 @@ class TransientArraySpectrum(Spectrum):
             raise
 
         self.epochs = epochs
-        is_active = [epochs is None or epoch_selector(c) in epochs for c in frame.channels]
+        if epochs is None:
+            is_active = [True] * len(frame.channels)
+        else:
+            if epoch_selector is None:
+                channel_epochs = frame.channels.get_component(EPOCH)
+                if channel_epochs is None:
+                    raise ValueError(
+                        f"Channel format {frame.channels.format!r} of the model frame has no EPOCH"
+                    )
+            else:
+                warn(
+                    "`epoch_selector` is deprecated, use `Channels` with a channel format to define the epochs",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                channel_epochs = [epoch_selector(c) for c in frame.channels.values]
+            is_active = [epoch in epochs for epoch in channel_epochs]
         n_active = sum(is_active)
         assert len(data) == n_active
         self.data = data
