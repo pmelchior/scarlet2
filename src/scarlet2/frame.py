@@ -1,10 +1,12 @@
 import astropy.units as u
 import astropy.wcs
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from astropy.coordinates import SkyCoord
 
 from .bbox import Box
+from .channel import Channels
 from .module import Module
 from .psf import PSF, ArrayPSF, GaussianPSF
 
@@ -14,6 +16,19 @@ class Frame(Module):
 
     This class combines all elements to determine how a piece of the sky will appear.
     It includes metadata about the spatial and spectral coverage and resolution.
+
+    The channels can be given as a list of band identifiers, or as :py:class:`~scarlet2.channel.Channels`,
+    which also identifies epochs, e.g.
+
+    >>> from scarlet2.channel import BAND, EPOCH, Channels
+    >>> channels = Channels([("g", 0), ("g", 1), ("r", 0)], (BAND, EPOCH))
+    >>> frame = Frame(Box((3, 10, 10)), channels=channels)
+    >>> frame.channels.get_component(BAND)
+    ['g', 'g', 'r']
+    >>> [c.epoch for c in frame.channels]
+    [0, 1, 0]
+
+    See :py:mod:`scarlet2.channel` for details.
     """
 
     bbox: Box
@@ -22,8 +37,8 @@ class Frame(Module):
     """PSF of the frame"""
     wcs: astropy.wcs.WCS
     """WCS information of the frame"""
-    channels: list
-    """Identifiers for the spectral elements"""
+    channels: Channels = eqx.field(static=True)
+    """Identifiers for the spectral (and temporal) elements"""
 
     def __init__(self, bbox, psf=None, wcs=None, channels=None):
         self.bbox = bbox
@@ -36,7 +51,9 @@ class Frame(Module):
         self.wcs = wcs
 
         if channels is None:
-            channels = list(range(bbox.shape[0]))
+            channels = range(bbox.shape[0])
+        if not isinstance(channels, Channels):
+            channels = Channels(channels)
         self.channels = channels
 
     def __hash__(self):
@@ -187,12 +204,10 @@ class Frame(Module):
         pix_tab = []
         # Array of psf size for each psf of each observation
         small_psf_size = None
-        channels = []
-        # Create frame channels and find smallest and largest psf
+        # Concatenate all channels, requires the same channel format
+        channels = combine_channels(observations)
+        # Find smallest and largest psf
         for c, obs in enumerate(observations):
-            # Concatenate all channels
-            channels = channels + obs.frame.channels
-
             # concatenate all pixel sizes
             h_temp = get_pixel_size(obs.frame.wcs)
             if isinstance(h_temp, u.Quantity):
@@ -294,6 +309,20 @@ class Frame(Module):
         other_channels = list(other_frame.channels)
         other_idx = {c: i for i, c in enumerate(other_channels)}
         return {i: other_idx[c] for i, c in enumerate(self_channels) if c in other_idx}
+
+
+def combine_channels(observations):
+    """Concatenate the channels of all `observations`
+
+    Raises
+    ------
+    ValueError
+        If the observations have different channel formats
+    """
+    channels = None
+    for obs in observations:
+        channels = obs.frame.channels if channels is None else channels + obs.frame.channels
+    return channels
 
 
 def get_psf_size(psf):

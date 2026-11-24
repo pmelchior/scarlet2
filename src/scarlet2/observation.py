@@ -6,7 +6,7 @@ import numpy as np
 
 from .bbox import Box, insert_into, overlap_slices
 from .fft import transform
-from .frame import Frame, get_affine, get_pixel_size
+from .frame import Frame, combine_channels, get_affine, get_pixel_size
 from .measure import correlation_function
 from .module import Module
 from .renderer import (
@@ -41,7 +41,16 @@ class Observation(Module):
     name: str
     """Name to describe the observation"""
 
-    def __init__(self, data, weights, psf=None, wcs=None, channels=None, renderer=None, name=None):
+    def __init__(
+        self,
+        data,
+        weights,
+        psf=None,
+        wcs=None,
+        channels=None,
+        renderer=None,
+        name=None,
+    ):
         self.data = jnp.asarray(data, dtype=float)
         if self.data.ndim == 2:
             # add a channel dimension if it is missing
@@ -508,7 +517,15 @@ class CorrelatedObservation(Observation):
         self._power_spectrum = None
         self._data_fft = None
         self._mode_mask = None
-        super().__init__(data, weights, psf=psf, wcs=wcs, channels=channels, renderer=renderer, name=name)
+        super().__init__(
+            data,
+            weights,
+            psf=psf,
+            wcs=wcs,
+            channels=channels,
+            renderer=renderer,
+            name=name,
+        )
         if self.renderer is not None:
             self._match_power_spectrum()
 
@@ -757,9 +774,19 @@ class CorrelatedObservation(Observation):
         :py:class:`CorrelatedObservation`
         """
         # reverse renderer without PSF corrections or channel filtering: obs grid -> to_frame grid
-        _obs_frame = Frame(obs.frame.bbox, psf=None, wcs=obs.frame.wcs, channels=obs.frame.channels)
+        _obs_frame = Frame(
+            obs.frame.bbox,
+            psf=None,
+            wcs=obs.frame.wcs,
+            channels=obs.frame.channels,
+        )
         _new_box = obs.frame.bbox[:-2] @ to_frame.bbox.spatial
-        _model_frame = Frame(_new_box, psf=None, wcs=to_frame.wcs, channels=obs.frame.channels)
+        _model_frame = Frame(
+            _new_box,
+            psf=None,
+            wcs=to_frame.wcs,
+            channels=obs.frame.channels,
+        )
         trafo = LanczosResamplingTranformation(_obs_frame, _model_frame, lanczos_order=lanczos_order)
         wcs = to_frame.wcs
         # the data's native resolution is the pre-resampling pixel scale
@@ -975,7 +1002,7 @@ def stack_observations(observations, model_frame, name=None):
     assert model_box.origin == (0, 0), "model_frame spatial box must have origin (0, 0)"
 
     # concatenated channels, which have to be distinct so the renderer can map them one-to-one
-    channels = [c for obs in observations for c in obs.frame.channels]
+    channels = combine_channels(observations)
     assert len(channels) == len(set(channels)), (
         f"Cannot stack observations with duplicate channels: got {channels}"
     )
@@ -1006,7 +1033,14 @@ def stack_observations(observations, model_frame, name=None):
         )
 
     weights = _pad_to_model([obs.weights for obs in observations], boxes, model_box)
-    return Observation(data, weights, psf=psf, wcs=model_frame.wcs, channels=channels, name=name)
+    return Observation(
+        data,
+        weights,
+        psf=psf,
+        wcs=model_frame.wcs,
+        channels=channels,
+        name=name,
+    )
 
 
 def chi_square_in_box_and_border(residuals, weights, bbox, border_width):
@@ -1023,20 +1057,26 @@ def chi_square_in_box_and_border(residuals, weights, bbox, border_width):
         source box`
     border_width: int
         width of the border around the source box
+
+    Returns
+    -------
+    tuple
+        Chi-square in the box and in the border. Both boxes are clipped to the extent of
+        `residuals`. If no pixels remain in the box or the border (e.g. if the source box covers
+        the entire image), the respective chi-square is `nan`.
     """
-    bbox_out = bbox.grow([0, border_width, border_width])
+    image_box = Box(residuals.shape)
+    bbox_in = bbox & image_box
+    bbox_out = bbox.grow([0, border_width, border_width]) & image_box
 
-    sub_res_in = jax.lax.dynamic_slice(residuals, bbox.start, bbox.shape)
-    sub_res_out = jax.lax.dynamic_slice(residuals, bbox_out.start, bbox_out.shape)
-    weights_in = jax.lax.dynamic_slice(weights, bbox.start, bbox.shape)
-    weights_out = jax.lax.dynamic_slice(weights, bbox_out.start, bbox_out.shape)
+    chi2_out = weights[bbox_out.slices] * residuals[bbox_out.slices] ** 2
+    # border: grown box without the source box, located relative to the grown box
+    border = np.ones(bbox_out.shape, dtype=bool)
+    border[(bbox_in - bbox_out.origin).slices] = False
 
-    border = jax.lax.dynamic_update_slice(
-        jnp.ones_like(sub_res_out), jnp.zeros_like(sub_res_in), (0, 3, 3)
-    ).astype("bool")
-
-    chi_square_box = (weights_in * (sub_res_in**2)).mean()
-    chi_square_border = (weights_out * (sub_res_out**2))[border].mean()
+    chi2_in = weights[bbox_in.slices] * residuals[bbox_in.slices] ** 2
+    chi_square_box = chi2_in.mean() if chi2_in.size else jnp.nan
+    chi_square_border = chi2_out[border].mean() if border.any() else jnp.nan
 
     return chi_square_box, chi_square_border
 

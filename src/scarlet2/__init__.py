@@ -40,6 +40,7 @@ __citation__ = __bibtex__ = (Path(__file__).parent / "citation.bib").read_text()
 
 from . import constraint, detect, infer, init, measure, plot
 from .bbox import Box
+from .channel import BAND, EPOCH, Channel, Channels, ChannelType
 from .frame import Frame
 from .infer import PairSimilarity
 from .module import Module, Parameter, Parameters, relative_step
@@ -53,7 +54,15 @@ from .morphology import (
 from .observation import CorrelatedObservation, Observation, stack_observations
 from .psf import PSF, ArrayPSF, GaussianPSF
 from .scene import Scene
-from .source import Component, DustComponent, PointSource, Source
+from .source import (
+    Component,
+    DustComponent,
+    MovingComponent,
+    MovingPointSource,
+    MovingSource,
+    PointSource,
+    Source,
+)
 from .spectrum import Spectrum, StaticArraySpectrum, TransientArraySpectrum
 from .validation_utils import set_validation
 from .wavelets import Starlet
@@ -67,15 +76,23 @@ __all__ = [
     "measure",
     "plot",
     "ArrayPSF",
+    "BAND",
     "Box",
+    "Channel",
+    "Channels",
+    "ChannelType",
     "Component",
     "CorrelatedObservation",
     "DustComponent",
+    "EPOCH",
     "Frame",
     "GaussianMorphology",
     "GaussianPSF",
     "Module",
     "Morphology",
+    "MovingComponent",
+    "MovingPointSource",
+    "MovingSource",
     "Observation",
     "PairSimilarity",
     "Parameter",

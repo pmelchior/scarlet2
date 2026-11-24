@@ -13,6 +13,7 @@ API Documentation
    :template: custom-module-template.rst
    :recursive:
 
+   scarlet2.channel
    scarlet2.constraint
    scarlet2.detect
    scarlet2.fft
